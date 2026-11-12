@@ -1,0 +1,13 @@
+services:
+  book:
+    build: .
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      BOOK_ADMIN_HASH: ${BOOK_ADMIN_HASH:-}
+      BOOK_SECURE_COOKIE: ${BOOK_SECURE_COOKIE:-0}
+    volumes:
+      - book-data:/var/lib/cajeerbook
+    restart: unless-stopped
+volumes:
+  book-data:
