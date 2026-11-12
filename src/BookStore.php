@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 final class BookStore {
+    private const MAX_STORE_BYTES=8*1024*1024;
     public function __construct(private readonly string $dir) {}
     public static function slug(string $s): bool { return preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$s)===1 && !in_array($s,['.','..'],true); }
     public static function key(string $book,string $version,string $path): string {
@@ -13,13 +14,14 @@ final class BookStore {
     public function read(): array {
         $file=$this->dir.'/books.json';
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
+        if(is_file($file)&&filesize($file)>self::MAX_STORE_BYTES) throw new \RuntimeException('Store exceeds size limit');
         return is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
     }
     public function change(callable $fn): void {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $fn($db); Files::json($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $fn($db); $encoded=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n"; if(strlen($encoded)>self::MAX_STORE_BYTES)throw new \DomainException('Store size limit reached'); Files::write($this->dir.'/books.json',$encoded); }
         finally { fclose($h); }
     }
     public function save(array $input, bool $publish): string {

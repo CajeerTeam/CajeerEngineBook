@@ -32,3 +32,7 @@ grep -q 'qa/1.0/start' "$work/response"
 assert "$(status "${auth[@]}" "$base/studio/export")" 200 'backup'
 grep -q 'qa/1.0/start' "$work/response"
 assert "$(status "$base/var/books.json")" 404 'private store unreachable'
+numeric=("${auth[@]}" --data-urlencode 'book=qa' --data-urlencode 'version=2' --data-urlencode 'path=start' --data-urlencode 'title=Version 2' --data-urlencode 'section=Start' --data-urlencode 'order=1' --data-urlencode 'body=Numeric version')
+assert "$(status "${numeric[@]}" -d "action=publish&revision=0&csrf=$csrf" "$base/studio")" 303 'numeric version publish'
+assert "$(status "$base/docs/qa/2/start")" 200 'numeric version reader'
+grep -q '/docs/qa/1.0/start' "$work/response"

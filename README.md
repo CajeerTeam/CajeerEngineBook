@@ -59,7 +59,7 @@ Use the Studio UI to author and publish. For direct links use `/docs/{book}/{ver
 
 ## Persistence and restore
 
-`BOOK_DATA_DIR` defaults to `var/` outside the public document root. First write creates `books.json`; until then seed data is used. The JSON store is limited to 1000 pages, 256 KiB Markdown per page; it is a single-node small-team implementation. Keep the data directory private and writable by the web process. Export from Studio or back up the file while the server is stopped. To restore: stop the server, preserve the existing data, replace `books.json` with a trusted export from the same schema, set owner to the web user and mode 0600, restart and verify pages. Do not expose `var/`, source, or data via a web server.
+`BOOK_DATA_DIR` defaults to `var/` outside the public document root. First write creates `books.json`; until then seed data is used. The JSON store is limited to 1000 pages, 256 KiB Markdown per page and 8 MiB total JSON; it is a single-node small-team implementation. Keep the data directory private and writable by the web process. Export from Studio or back up the file while the server is stopped. To restore: stop the server, preserve the existing data, replace `books.json` with a trusted export from the same schema, set owner to the web user and mode 0600, restart and verify pages. Do not expose `var/`, source, or data via a web server.
 
 ## Development
 
