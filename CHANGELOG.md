@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3 — Tables & Rich Text
+
+- Edit existing and new GFM tables visually: cell-level formatting, add/remove and move body rows and columns, column alignment, keyboard navigation and source-preserving serialization.
+- Paste spreadsheet TSV directly into cells or import quoted CSV/TSV with a preview-independent grid insertion flow. Grow tables within explicit limits; preserve surplus-cell and unsupported tables in Markdown mode.
+- Edit GFM task lists and toggle completion in Studio; published Reader checkboxes remain read-only. Keep nested lists, inline code, links and existing rich formatting.
+- Add safe local lexical highlighting for PHP, JavaScript/TypeScript, Python, Bash, SQL and JSON in Reader and live Preview, with copy-code controls.
+- Extend server and browser regression tests. No runtime dependencies or data migration added.
+
 ## 0.1.2 — WYSIWYG Editor
 
 - Add a real local Visual editor with editable text blocks, headings, lists, quotations, inline marks, links, code blocks, block insertion/removal, undo/redo and Markdown mode.

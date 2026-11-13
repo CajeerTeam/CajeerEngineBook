@@ -40,3 +40,10 @@ foreach ([str_repeat('a',Markdown::MAX_BYTES+1),"\xff"] as $invalid) {
     try { Markdown::validate($invalid); throw new RuntimeException('Invalid Markdown accepted'); }
     catch (InvalidArgumentException) { verify(true,'invalid size or UTF-8 rejected'); }
 }
+
+// Test the raw table guard without external dependencies.
+require dirname(__DIR__).'/src/StudioEditor.php';
+$cellCount = new ReflectionMethod(\CajeerBook\StudioEditor::class, 'sourceCellCount');
+foreach ([['| a | b |', 2], ['a | b', 2], ['| a\\|b | c |', 2], ['| a | b | c |', 3], ['| | |', 2], ['| a\\|', 1]] as [$line,$expected]) {
+    verify($cellCount->invoke(null,$line)===$expected, 'table raw cell count '.json_encode($line));
+}

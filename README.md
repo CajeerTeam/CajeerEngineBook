@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -31,11 +31,11 @@ php -S 127.0.0.1:8080 -t public public/router.php
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
 
-## Upgrade to 0.1.2
+## Upgrade to 0.1.3
 
 Back up `BOOK_DATA_DIR`, including `books.json`. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
 
-## Studio visual editor (0.1.2)
+## Studio visual editor (0.1.3)
 
 Open `/studio` and authenticate. Visual mode is enabled by default when JavaScript and the browser editing APIs are available; Markdown remains usable without JavaScript or if conversion fails. All assets are served locally, and there is no npm/CDN dependency.
 
@@ -44,7 +44,15 @@ Open `/studio` and authenticate. Visual mode is enabled by default when JavaScri
 - **Preview:** renders the current unsaved document on the server with the same CommonMark/GFM engine and URL policy as Reader. Existing page paths resolve relative links and images against their published URL. No publishing is required to preview.
 - **Save:** Save draft and Publish commit through the existing revision-checked store. Existing drafts autosave after approximately 1.8 seconds of idle editing; a new page needs an explicit first save or publication. Autosave never changes the published snapshot. Ctrl/Cmd+S saves the draft. A revision conflict stops writes, keeps the local text in Studio and asks the author to copy Markdown and reload/merge. Failed requests do not discard unsaved content. Refresh or leave Studio only after saving; the browser warns about unsaved changes.
 
-Visual editing is intentionally source-preserving, not a wholesale HTML-to-Markdown rewrite: unchanged blocks and gaps (including reference definitions) retain their source. Modified supported blocks are serialized to canonical Markdown and separated safely; a modified reference link may become an equivalent inline link. Browsers normalize textarea line endings to LF. Existing tables, task lists, images, raw HTML, custom directives, nested code blocks and other unsupported AST structures remain visible but protected in Visual mode; edit them in Markdown mode. Visual table editing and the media library are planned for subsequent releases. The editor uses native contenteditable/selection and browser editing commands; Chromium is the browser tested in CI. Markdown mode is the reliable fallback for unsupported browser commands or complex formatting. No new database migration is required.
+Visual editing is intentionally source-preserving, not a wholesale HTML-to-Markdown rewrite: unchanged blocks and gaps (including reference definitions) retain their source. Modified supported blocks are serialized to canonical Markdown and separated safely; a modified reference link may become an equivalent inline link. Browsers normalize textarea line endings to LF. GFM tables and task lists are editable. Images, raw HTML, custom directives, nested code blocks and other unsupported AST structures remain visible but protected in Visual mode; edit them in Markdown mode. Tables that contain unsupported inline content, surplus source cells, or exceed visual limits are also protected. The editor uses native contenteditable/selection and browser editing commands; Chromium is the browser tested in CI. Markdown mode is the reliable fallback for unsupported browser commands or complex formatting. No new database migration is required.
+
+### Tables & Rich Text
+
+Choose **Table** in Add block or open an existing GFM table. Select a cell to edit its text, then use the main formatting toolbar for bold, italic, strike, inline code and links. Tab/Shift+Tab moves between cells; Enter is disabled because GFM cells are single-line. The first row is always the header. Add/delete body rows, move body rows up/down, add/delete/move columns and choose column alignment using the table controls. The header and final column cannot be deleted; remove the entire block instead. Undo/Redo and Ctrl/Cmd+Z support recent cell and structural edits (up to 25 bounded table snapshots per editing session). Structural edits are saved immediately in the local Markdown source; Save draft/Publish uses the existing revision checks.
+
+Paste tab-separated spreadsheet data directly into a selected cell, or open **Import CSV / TSV**, choose the delimiter, paste text and select Insert data. The grid expands as needed and replaces the destination rectangle (existing cells outside the rectangle are untouched); quoted fields and doubled quotes are supported. Embedded newlines in fields become spaces. CSV uses comma delimiters; use TSV for spreadsheet clipboard data. Import is limited to 200 rows, 50 columns, 2500 total cells (including header) and the existing 256 KiB document limit. Unsupported or oversized existing tables are kept as source-protected blocks. GFM has no merged cells or multiline block content in cells. Structural edits normalize the changed table to GFM, including escaped pipe characters and alignment markers; unchanged tables retain their original Markdown.
+
+Choose **Task list** in Add block or use Task list in the formatting toolbar to toggle a selected list item's task marker. Checkboxes in Studio update the Markdown `[x]` / `[ ]` state; Reader checkboxes remain disabled. The existing code-block language field accepts a language identifier. Reader and Preview highlight common lexical tokens locally for PHP, JavaScript/TypeScript, Python, Bash, SQL and JSON (plus common aliases); other languages and code over 64 KiB remain plain. Copy code copies the original text, not highlighted HTML. The highlighter is intentionally lightweight, not a full grammar parser.
 
 ## Markdown authoring and rendering
 
@@ -127,6 +135,6 @@ python tests/editor-browser.py
 
 Architecture: `src/` Book logic, `core/` reused upstream components, `templates/book/` CJR layout, `public/` sole web root, `data/` example content. Source is independent of the CMS release/update pipeline.
 
-## Roadmap (not implemented in 0.1.2)
+## Roadmap (not implemented in 0.1.3)
 
-Visual tables and images, media library, page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, media management, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Visual images, media library, page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, media management, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.

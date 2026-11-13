@@ -25,6 +25,11 @@ final class StudioEditor
         'League\\CommonMark\\Extension\\CommonMark\\Node\\Inline\\Strong',
         'League\\CommonMark\\Extension\\CommonMark\\Node\\Inline\\Link',
         'League\\CommonMark\\Extension\\Strikethrough\\Strikethrough',
+        'League\\CommonMark\\Extension\\TaskList\\TaskListItemMarker',
+        'League\\CommonMark\\Extension\\Table\\Table',
+        'League\\CommonMark\\Extension\\Table\\TableSection',
+        'League\\CommonMark\\Extension\\Table\\TableRow',
+        'League\\CommonMark\\Extension\\Table\\TableCell',
     ];
 
     /** @return list<array{source:string,html:string,kind:string}> */
@@ -48,6 +53,7 @@ final class StudioEditor
             }
             $raw = implode('', array_slice($lines, $start, $end - $start));
             $kind = self::editable($node, $raw) ? 'rich' : 'protected';
+            if ($kind === 'rich' && $node instanceof \League\CommonMark\Extension\Table\Table) $kind = 'table';
             if ($kind === 'rich' && ($node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode || $node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode)) $kind = 'code';
             $out[] = ['source' => $raw, 'html' => $renderer->renderNodes([$node]), 'kind' => $kind];
             $cursor = $end;
@@ -61,18 +67,55 @@ final class StudioEditor
         // A definition can belong to the source range of a paragraph, yet be absent from its AST.
         // Custom directives and definitions remain editable in Markdown mode without normalization.
         if (str_contains($source, ']:') || str_contains($source, '![') || preg_match('/^\h*:{3,}/m', $source)) return false;
+        $table = $node instanceof \League\CommonMark\Extension\Table\Table;
+        $cells = 0;
         $walker = $node->walker();
         while ($event = $walker->next()) {
             if (!$event->isEntering()) continue;
             $child = $event->getNode();
             if (!in_array(get_class($child), self::EDITABLE, true) || $child->data->get('book_editor_unsafe', false)) return false;
+            // Nested tables cannot be represented by a standalone GFM table editor.
+            if ($child instanceof \League\CommonMark\Extension\Table\Table && !$table) return false;
+            if ($child instanceof \League\CommonMark\Extension\Table\TableCell && ++$cells > 2500) return false;
             // Keep nested code and complex code fence attributes in source mode.
             if ($child instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode) {
                 if ($child !== $node || !preg_match('/\A[a-zA-Z0-9_+.-]{0,64}\z/D', trim($child->getInfo() ?? ''))) return false;
             }
             if ($child instanceof \League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode && $child !== $node) return false;
         }
+        if ($table) {
+            // GFM silently discards surplus cells. Do not normalize a table whose
+            // raw rows contain data absent from the rendered model.
+            $rows = 0; $columns = 0;
+            foreach ($node->children() as $section) {
+                foreach ($section->children() as $row) {
+                    ++$rows;
+                    if ($columns === 0) foreach ($row->children() as $cell) ++$columns;
+                }
+            }
+            if ($columns < 1 || $columns > 50 || $rows > 200) return false;
+            $lines = preg_split('/\r\n|\r|\n/', rtrim($source, "\r\n")) ?: [];
+            if (count($lines) !== $rows + 1) return false;
+            foreach ($lines as $line) {
+                if (self::sourceCellCount($line) > $columns) return false;
+            }
+        }
         return true;
+    }
+
+    /** Count raw GFM cells, including cells the renderer would truncate. */
+    private static function sourceCellCount(string $line): int
+    {
+        $line = trim($line);
+        $count = 0; $hasContent = false;
+        for ($i = str_starts_with($line, '|') ? 1 : 0, $length = strlen($line); $i < $length; ++$i) {
+            if ($line[$i] === "\\" && ($line[$i + 1] ?? '') === '|') {
+                $hasContent = true; ++$i;
+            } elseif ($line[$i] === '|') {
+                ++$count; $hasContent = false;
+            } else $hasContent = true;
+        }
+        return $count + (int) $hasContent;
     }
 
     public static function markup(string $source): string
@@ -80,7 +123,7 @@ final class StudioEditor
         $buttons = [
             'bold' => 'Bold', 'italic' => 'Italic', 'strikeThrough' => 'Strike', 'inlineCode' => 'Inline code',
             'insertUnorderedList' => 'Bullets', 'insertOrderedList' => 'Numbered list', 'indent' => 'Indent', 'outdent' => 'Outdent',
-            'link' => 'Link', 'unlink' => 'Unlink', 'undo' => 'Undo', 'redo' => 'Redo',
+            'taskList' => 'Task list', 'link' => 'Link', 'unlink' => 'Unlink', 'undo' => 'Undo', 'redo' => 'Redo',
         ];
         $toolbar = '<label class="editor-format-label">Block style<select data-format aria-label="Block style"><option value="p">Paragraph</option>';
         for ($i = 1; $i <= 6; $i++) $toolbar .= '<option value="h'.$i.'">Heading '.$i.'</option>';
@@ -91,8 +134,8 @@ final class StudioEditor
             .'<button type="button" data-copy-source>Copy Markdown</button><span data-save-state role="status" aria-live="polite">Draft loaded</span></div>'
             .'<div data-markdown-panel><label>Markdown<textarea name="body" rows="16" spellcheck="false">'."\n".Markdown::e($source).'</textarea></label></div>'
             .'<div data-visual-panel hidden><div class="editor-toolbar" role="toolbar" aria-label="Formatting">'.$toolbar.'</div>'
-            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Tables, images and other protected blocks remain intact in Markdown mode.</p>'
-            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
+            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Edit tables directly, or paste spreadsheet cells. Images and unsupported blocks remain intact in Markdown mode.</p>'
+            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="table">Table</option><option value="task">Task list</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
             .'<div data-preview-panel hidden><article data-live-preview></article></div><p data-editor-error class="editor-error" role="alert" hidden></p></section>';
     }
 }
