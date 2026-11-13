@@ -13,6 +13,6 @@
         "sort-packages": true
     },
     "scripts": {
-        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "bash tests/http.sh"]
+        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "@php tests/editor.php", "bash tests/http.sh"]
     }
 }

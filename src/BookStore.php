@@ -23,18 +23,24 @@ final class BookStore {
         finally { fclose($h); }
     }
     public function save(array $input, bool $publish): string {
+        return $this->saveResult($input,$publish)['key'];
+    }
+    /** Save and return the exact revision/publication state committed under the store lock. */
+    public function saveResult(array $input, bool $publish): array {
         $key=self::key((string)$input['book'],(string)$input['version'],(string)$input['path']);
         $title=trim((string)$input['title']); $body=(string)$input['body']; $section=trim((string)$input['section']);
         if($title===''||strlen($title)>200||strlen($section)>100||!preg_match('//u',$title.$section)) throw new \InvalidArgumentException('Invalid page fields');
         Markdown::validate($body);
         $page=['title'=>$title,'section'=>$section,'order'=>max(-9999,min(9999,(int)$input['order'])),'body'=>$body,'updated'=>gmdate('c')];
-        $this->change(function(array &$db)use($key,$page,$publish,$input){
+        $result=[];
+        $this->change(function(array &$db)use($key,$page,$publish,$input,&$result){
             $old=$db['pages'][$key]??['draft'=>null,'published'=>null,'revision'=>0];
             if((int)($input['revision']??0)!==$old['revision']) throw new \DomainException('Page changed. Reload before saving.');
             if(count($db['pages'])>=1000&&!isset($db['pages'][$key])) throw new \DomainException('Page limit reached');
             $old['draft']=$page; if($publish)$old['published']=$page; $old['revision']++;
             $db['pages'][$key]=$old;
-        }); return $key;
+            $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null];
+        }); return $result;
     }
     public function remove(string $key,int $revision,bool $unpublish): void {
         $this->change(function(array &$db)use($key,$revision,$unpublish){

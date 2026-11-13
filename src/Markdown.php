@@ -34,8 +34,8 @@ final class Markdown
         }
     }
 
-    /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>} */
-    public static function render(string $md, ?string $pageKey = null): array
+    /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false): array
     {
         self::validate($md);
         // A fresh environment per document prevents state leaking between conversions.
@@ -80,9 +80,12 @@ final class Markdown
                 }
                 $toc[] = ['id' => $id, 'title' => $title !== '' ? $title : 'Untitled section', 'level' => $node->getLevel()];
             } elseif ($node instanceof Link || $node instanceof Image) {
-                $url = self::safeUrl($node->getUrl(), $node instanceof Image, $pageKey);
+                $originalUrl = $node->getUrl();
+                $url = self::safeUrl($originalUrl, $node instanceof Image, $pageKey);
+                if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
                 $node->setUrl($url ?? '#');
+                if ($url === null) $node->data->set('book_editor_unsafe', true);
                 if ($node instanceof Image && $url === null) {
                     $invalidImages[] = $node;
                 } elseif ($node instanceof Image) {
@@ -101,7 +104,11 @@ final class Markdown
         foreach (array_reverse($invalidImages) as $image) {
             $image->replaceWith(new Text(self::headingText($image)));
         }
-        return ['html' => (string) (new HtmlRenderer($environment))->renderDocument($document), 'toc' => $toc];
+        
+        $renderer = new HtmlRenderer($environment);
+        $result = ['html' => (string) $renderer->renderDocument($document), 'toc' => $toc];
+        if ($editor) $result['blocks'] = StudioEditor::blocks($md, $document, $renderer, $result['html']);
+        return $result;
     }
 
     /** Plain text, not rendered HTML, from the inline tree (including image alt text). */

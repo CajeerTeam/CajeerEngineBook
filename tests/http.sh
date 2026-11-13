@@ -69,3 +69,16 @@ grep -q 'src="https://example.org/logo.png"' "$work/response"
 ! grep -q 'href="javascript:' "$work/response"
 assert "$(status "$base/api/v1/pages/qa/1.0/rich")" 200 'API returns source Markdown'
 php -r '$p=json_decode(file_get_contents($argv[1]),true,512,JSON_THROW_ON_ERROR);if($p["body"]!==file_get_contents($argv[2]))exit(1);' "$work/response" "$work/rich.md"
+
+# Studio visual model and live preview are authenticated, CSRF protected and non-mutating.
+editor=("${auth[@]}" --data-urlencode "csrf=$csrf" --data-urlencode 'book=qa' --data-urlencode 'version=1.0' --data-urlencode 'path=rich' --data-urlencode "body@$work/rich.md")
+assert "$(status --data-urlencode 'mode=visual' "$base/studio/editor/render")" 401 'editor render requires authentication'
+assert "$(status "${auth[@]}" --data-urlencode 'mode=visual' "$base/studio/editor/render")" 403 'editor render rejects missing CSRF'
+assert "$(status "${editor[@]}" -d 'mode=visual' "$base/studio/editor/render")" 200 'visual model renders'
+php -r '$p=json_decode(file_get_contents($argv[1]),true,512,JSON_THROW_ON_ERROR);if(implode("",array_column($p["blocks"],"source"))!==file_get_contents($argv[2]))exit(1);if(!in_array("protected",array_column($p["blocks"],"kind"),true))exit(1);' "$work/response" "$work/rich.md"
+assert "$(status "${editor[@]}" -d 'mode=preview' "$base/studio/editor/render")" 200 'unsaved preview renders'
+php -r '$p=json_decode(file_get_contents($argv[1]),true,512,JSON_THROW_ON_ERROR);if(!str_contains($p["html"],"href=\"/docs/qa/1.0/guide\"")||str_contains($p["html"],"<script>alert(1)</script>"))exit(1);' "$work/response"
+assert "$(status "${editor[@]}" -d 'mode=unknown' "$base/studio/editor/render")" 422 'invalid editor mode rejected'
+assert "$(status "${rich[@]}" -H 'X-Book-Studio: editor' -d "action=save&revision=2&csrf=$csrf" "$base/studio")" 200 'AJAX draft saved'
+php -r '$p=json_decode(file_get_contents($argv[1]),true,512,JSON_THROW_ON_ERROR);if($p["revision"]!==3||$p["published"]!==true)exit(1);' "$work/response"
+assert "$(status "${rich[@]}" -H 'X-Book-Studio: editor' -d "action=save&revision=2&csrf=$csrf" "$base/studio")" 409 'stale AJAX revision rejected'

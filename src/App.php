@@ -36,18 +36,36 @@ final class App {
         header('Cache-Control: no-store');header('X-Robots-Tag: noindex');$hash=getenv('BOOK_ADMIN_HASH')?:'';
         if(!$hash){http_response_code(503);$this->page('Studio disabled','<h1>Studio disabled</h1><p>Set BOOK_ADMIN_HASH to enable editing.</p>');return;}
         if(($_SERVER['PHP_AUTH_USER']??'')!=='admin'||!password_verify($_SERVER['PHP_AUTH_PW']??'',$hash)){header('WWW-Authenticate: Basic realm="CajeerEngine Book Studio", charset="UTF-8"');http_response_code(401);echo 'Authentication required';return;}
-        session_start(['use_strict_mode'=>1,'cookie_httponly'=>1,'cookie_samesite'=>'Strict','cookie_secure'=>getenv('BOOK_SECURE_COOKIE')==='1']);$_SESSION['csrf']??=bin2hex(random_bytes(32));$csrf=$_SESSION['csrf'];$hidden='<input type="hidden" name="csrf" value="'.$csrf.'">';
+        session_start(['use_strict_mode'=>1,'cookie_httponly'=>1,'cookie_samesite'=>'Strict','cookie_secure'=>getenv('BOOK_SECURE_COOKIE')==='1']);$_SESSION['csrf']??=bin2hex(random_bytes(32));$csrf=$_SESSION['csrf'];session_write_close();$hidden='<input type="hidden" name="csrf" value="'.$csrf.'">';
         if($method==='POST'){
             if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);echo 'Invalid CSRF token';return;}
             $action=$_POST['action']??'';$str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';
-            if($action==='save'||$action==='publish'){$key=$this->store->save(['book'=>$str('book'),'version'=>$str('version'),'path'=>$str('path'),'title'=>$str('title'),'section'=>$str('section'),'order'=>$str('order'),'body'=>$str('body'),'revision'=>$str('revision')],$action==='publish');header('Location: /studio?edit='.rawurlencode($key),true,303);return;}
+            if($path==='/studio/editor/render'){
+                try {
+                    $body=$str('body'); Markdown::validate($body);
+                    if(!in_array($str('mode'),['visual','preview'],true))throw new \InvalidArgumentException('Unknown editor mode');
+                    $key=null;try{$key=BookStore::key($str('book'),$str('version'),$str('path'));}catch(\InvalidArgumentException){}
+                    $this->json(Markdown::render($body,$key,$str('mode')==='visual'));return;
+                }catch(\InvalidArgumentException $e){http_response_code(422);$this->json(['error'=>$e->getMessage()]);return;}
+            }
+            if($path!=='/studio'){http_response_code(404);return;}
+            if($action==='save'||$action==='publish'){
+                $ajax=($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor';
+                try {
+                    if(!preg_match('/\A(?:0|[1-9][0-9]{0,17})\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision');
+                    $result=$this->store->saveResult(['book'=>$str('book'),'version'=>$str('version'),'path'=>$str('path'),'title'=>$str('title'),'section'=>$str('section'),'order'=>$str('order'),'body'=>$str('body'),'revision'=>$str('revision')],$action==='publish');
+                    if($ajax){$this->json($result);return;}
+                    header('Location: /studio?edit='.rawurlencode($result['key']),true,303);return;
+                }catch(\DomainException $e){if(!$ajax)throw $e;http_response_code(409);$this->json(['error'=>$e->getMessage()]);return;}
+                catch(\InvalidArgumentException $e){if(!$ajax)throw $e;http_response_code(422);$this->json(['error'=>$e->getMessage()]);return;}
+            }
             if($action==='delete'||$action==='unpublish'){$this->store->remove($str('key'),(int)$str('revision'),$action==='unpublish');}elseif($action==='copy'){$this->store->copyVersion($str('book'),$str('from'),$str('to'));}else throw new \InvalidArgumentException('Unknown action');header('Location: /studio',true,303);return;
         }
         $db=$this->store->read();if($path==='/studio/export'){header('Content-Disposition: attachment; filename="cajeerbook-backup.json"');$this->json($db);return;}if($path!=='/studio'){http_response_code(404);return;}
         $edit=is_string($_GET['edit']??null)?$_GET['edit']:'';$entry=$db['pages'][$edit]??null;$p=$entry['draft']??['title'=>'','section'=>'Getting started','order'=>10,'body'=>''];$parts=$entry?explode('/',$edit,3):['handbook','1.0',''];
         $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::e($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
-        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/export','Download backup').'</div><div class="editor-list">';foreach($db['pages'] as $key=>$e)$html.='<div>'.self::link('/studio?edit='.rawurlencode($key),$key).' <small>'.($e['published']?'Published':'Draft').'</small></div>';$html.='</div><h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="/studio" class="editor">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Order',$p['order']).'<label>Markdown<textarea name="body" rows="16">'.self::e($p['body']).'</textarea></label><div class="actions"><button name="action" value="save">Save draft</button><button class="primary" name="action" value="publish">Publish</button></div></form>';
-        if($entry){$html.='<h2>Draft preview</h2><article>'.Markdown::render($p['body'],$edit)['html'].'</article><form method="post" action="/studio" class="actions">'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">Unpublish</button><button name="action" value="delete" data-confirm="Delete this page permanently?">Delete</button></form>';}
+        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/export','Download backup').'</div><div class="editor-list">';foreach($db['pages'] as $key=>$e)$html.='<div data-page-key="'.self::e($key).'">'.self::link('/studio?edit='.rawurlencode($key),$key).' <small>'.($e['published']?'Published':'Draft').'</small></div>';$html.='</div><h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="/studio" class="editor" data-editor-form>'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Order',$p['order']).StudioEditor::markup($p['body']).'<div class="actions"><button name="action" value="save">Save draft</button><button class="primary" name="action" value="publish">Publish</button></div></form>';
+        if($entry){$html.='<div data-saved-preview><h2>Saved draft preview</h2><article>'.Markdown::render($p['body'],$edit)['html'].'</article></div><form method="post" action="/studio" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">Unpublish</button><button name="action" value="delete" data-confirm="Delete this page permanently?">Delete</button></form>';}
         $html.='<h2>Copy version to drafts</h2><form method="post" action="/studio" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">Copy published pages</button></form>';$this->page('Studio',$html,BookStore::published($db));
     }
 }
