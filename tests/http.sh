@@ -13,6 +13,8 @@ for i in {1..20}; do curl -fsS "$base/health/live" >/dev/null 2>&1 && break; sle
 status(){ curl -sS -o "$work/response" -w '%{http_code}' "$@"; }
 assert(){ if [[ "$1" != "$2" ]]; then cat "$work/response" "$work/server.log"; exit 1; fi; echo "PASS $3"; }
 assert "$(status "$base/docs/handbook/1.0/welcome")" 200 'public document'
+grep -q 'id="section-1"' "$work/response"
+grep -q 'id="start-here"' "$work/response"
 assert "$(status "$base/api/v1/pages/handbook/1.0/welcome")" 200 'page API'
 assert "$(status "$base/studio")" 401 'Studio unauthorized'
 auth=(-u admin:test-only-password -b "$work/cookies" -c "$work/cookies")
@@ -32,3 +34,38 @@ grep -q 'qa/1.0/start' "$work/response"
 assert "$(status "${auth[@]}" "$base/studio/export")" 200 'backup'
 grep -q 'qa/1.0/start' "$work/response"
 assert "$(status "$base/var/books.json")" 404 'private store unreachable'
+
+# End-to-end rendering through the existing editor and public Reader.
+cat > "$work/rich.md" <<'MD'
+## Rich Markdown
+
+| Feature | Result |
+| --- | --- |
+| GFM | **working** |
+
+- [x] task
+
+[relative](guide) ![image](https://example.org/logo.png)
+
+<script>alert(1)</script>
+
+[bad](javascript:evil)
+MD
+rich=("${auth[@]}" --data-urlencode 'book=qa' --data-urlencode 'version=1.0' --data-urlencode 'path=rich' --data-urlencode 'title=Rich' --data-urlencode 'section=Start' --data-urlencode 'order=2' --data-urlencode "body@$work/rich.md")
+assert "$(status "${rich[@]}" -d "action=save&revision=0&csrf=$csrf" "$base/studio")" 303 'rich Markdown draft saved'
+assert "$(status "${auth[@]}" "$base/studio?edit=qa%2F1.0%2Frich")" 200 'rich draft preview'
+grep -q '<table>' "$work/response"
+grep -q 'href="/docs/qa/1.0/guide"' "$work/response"
+grep -q 'type="checkbox"' "$work/response"
+! grep -q '<script>alert(1)</script>' "$work/response"
+assert "$(status "$base/docs/qa/1.0/rich")" 404 'rich draft private'
+assert "$(status "${rich[@]}" -d "action=publish&revision=1&csrf=$csrf" "$base/studio")" 303 'rich Markdown published'
+assert "$(status "$base/docs/qa/1.0/rich")" 200 'rich published Reader'
+grep -q '<table>' "$work/response"
+grep -q 'href="/docs/qa/1.0/guide"' "$work/response"
+grep -q 'href="#rich-markdown"' "$work/response"
+grep -q 'src="https://example.org/logo.png"' "$work/response"
+! grep -q '<script>alert(1)</script>' "$work/response"
+! grep -q 'href="javascript:' "$work/response"
+assert "$(status "$base/api/v1/pages/qa/1.0/rich")" 200 'API returns source Markdown'
+php -r '$p=json_decode(file_get_contents($argv[1]),true,512,JSON_THROW_ON_ERROR);if($p["body"]!==file_get_contents($argv[2]))exit(1);' "$work/response" "$work/rich.md"

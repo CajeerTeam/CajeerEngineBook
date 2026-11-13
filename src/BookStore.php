@@ -25,7 +25,8 @@ final class BookStore {
     public function save(array $input, bool $publish): string {
         $key=self::key((string)$input['book'],(string)$input['version'],(string)$input['path']);
         $title=trim((string)$input['title']); $body=(string)$input['body']; $section=trim((string)$input['section']);
-        if($title===''||strlen($title)>200||strlen($section)>100||strlen($body)>262144||!preg_match('//u',$body.$title.$section)) throw new \InvalidArgumentException('Invalid page fields');
+        if($title===''||strlen($title)>200||strlen($section)>100||!preg_match('//u',$title.$section)) throw new \InvalidArgumentException('Invalid page fields');
+        Markdown::validate($body);
         $page=['title'=>$title,'section'=>$section,'order'=>max(-9999,min(9999,(int)$input['order'])),'body'=>$body,'updated'=>gmdate('c')];
         $this->change(function(array &$db)use($key,$page,$publish,$input){
             $old=$db['pages'][$key]??['draft'=>null,'published'=>null,'revision'=>0];

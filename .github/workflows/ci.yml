@@ -10,6 +10,11 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-      - run: find . -name '*.php' -print0 | xargs -0 -n1 php -l
-      - run: php tests/smoke.php
-      - run: bash tests/http.sh
+          extensions: mbstring
+          tools: composer:v2
+      - run: composer validate --strict
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: composer audit --locked
+      - run: find src core data public tests -name '*.php' -print0 | xargs -0 -n1 php -l
+      - run: php -l bootstrap.php
+      - run: composer test

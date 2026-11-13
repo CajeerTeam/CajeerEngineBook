@@ -1,0 +1,18 @@
+{
+    "name": "cajeerteam/cajeer-engine-book",
+    "description": "Self-hosted documentation and knowledge-base platform",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=8.4.1 <9.0",
+        "ext-mbstring": "*",
+        "league/commonmark": "^2.10.7"
+    },
+    "config": {
+        "allow-plugins": false,
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "bash tests/http.sh"]
+    }
+}

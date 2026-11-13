@@ -1,20 +1,21 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
 - Multiple books and versions, hierarchical URL paths, section navigation, page order, previous/next links, headings table of contents, responsive layout and light/dark theme.
 - Studio: create/edit/delete pages, draft preview, explicit publishing and unpublishing, version cloning to drafts, optimistic revision checks.
-- Safe Markdown subset (headings, paragraphs, lists, emphasis, links, blockquotes, fenced code, copy button). Raw HTML and executable MDX are not supported; links allow absolute HTTP(S), site-root paths and anchors.
+- CommonMark 0.31.1 and GitHub-Flavored Markdown (GFM), powered by League CommonMark: nested lists, ATX/Setext headings, reference links, inline/fenced/indented code, blockquotes, tables, task lists, strikethrough, autolinks and images. Shared rendering in Reader and Studio with stable heading slugs and legacy anchors.
 - Published-only search and JSON read API, health probes, authenticated JSON backup download.
-- Local file persistence with locking and atomic replacement, no SaaS, database, Node, Composer or external assets required at runtime.
+- Local file persistence with locking and atomic replacement, no SaaS, database, Node, CDN or external API required at runtime. Composer installs PHP dependencies at build/install time.
 
 ## Start locally
 
-Requirements: PHP 8.4.1+ with standard extensions (JSON, ctype, PCRE, sessions); Linux is the tested filesystem environment.
+Requirements: PHP 8.4.1+ with `mbstring`, JSON, ctype, PCRE and sessions; Composer 2 for dependency installation. Linux is the supported filesystem environment.
 
 ```sh
+composer install --no-dev --prefer-dist --no-interaction
 # Read-only demo (Studio is disabled until configured)
 php -S 127.0.0.1:8080 -t public public/router.php
 ```
@@ -29,6 +30,43 @@ php -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
+
+## Upgrade 0.1.0 to 0.1.1
+
+Back up `BOOK_DATA_DIR`, including `books.json`. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
+
+## Markdown authoring and rendering
+
+The application uses [League CommonMark](https://commonmark.thephpleague.com/) with the CommonMark core and GFM extensions. Markdown source stays unchanged in the store and API. Reader and Studio share the parser, and the preview resolves relative links and images against the document's public URL, not the Studio route. The following works in the existing Markdown textarea:
+
+````markdown
+## Installation
+
+1. Install PHP and dependencies.
+   - Enable `mbstring`.
+2. Start the server.
+
+- [x] Markdown engine
+- [ ] Visual editor
+
+| Package | Version |
+| --- | ---: |
+| PHP | 8.4 |
+
+See [setup](getting-started#run-locally), https://example.org or ~~old~~ **new**.
+
+![Diagram](/assets/example.png "Example title")
+
+```sh
+composer install --no-dev
+```
+````
+
+Heading IDs use lowercase Unicode text with runs of punctuation/whitespace replaced by hyphens; duplicates gain `-2`, `-3`, etc. Empty titles and reserved IDs receive a safe alternative. Existing `#section-N` links from 0.1.0 remain aliases for their original ATX headings. These legacy numbers follow the old parser's counter, including its handling of triple-backtick fences. Headings newly recognized by CommonMark, such as Setext headings, do not consume legacy numbers. Slugs are stable across renders and unrelated heading edits; editing a heading or reordering identical headings can change its slug. Use the TOC link for the actual anchor. GFM itself does not specify heading IDs.
+
+Security policy: all raw HTML is escaped (including HTML otherwise allowed by GFM), executable MDX is disabled, unsafe URL schemes and protocol-relative URLs are rejected, `mailto:` is allowed only for links, and HTTP(S)/same-origin paths are allowed for links and images. Unsafe images render as plain alt text; unsafe links are inert. Data URLs are disabled. External images are fetched by the reader's browser, not the PHP server; they may disclose the reader's IP address to the image host, so use trusted or local images. HTTPS pages may block insecure HTTP images. No upload manager is included in this release.
+
+The parser limits Markdown to valid UTF-8 and 256 KiB, 64 levels of block nesting, 1000 delimiters per line and 10000 auto-completed table cells. These deliberate safety policies and heading attributes differ from unrestricted specification HTML examples. GFM means the standardized extensions (not all GitHub website features); footnotes, alerts/callouts, tabs, cards and Mermaid rendering remain later releases. Code fences for `mermaid` render as code for now.
 
 ## Docker Compose
 
@@ -64,13 +102,16 @@ Use the Studio UI to author and publish. For direct links use `/docs/{book}/{ver
 ## Development
 
 ```sh
-find . -name '*.php' -print0 | xargs -0 -n1 php -l
-php tests/smoke.php
-bash tests/http.sh
+composer install --prefer-dist --no-interaction
+composer validate --strict
+composer audit --locked
+find src core data public tests -name '*.php' -print0 | xargs -0 -n1 php -l
+php -l bootstrap.php
+composer test
 ```
 
 Architecture: `src/` Book logic, `core/` reused upstream components, `templates/book/` CJR layout, `public/` sole web root, `data/` example content. Source is independent of the CMS release/update pipeline.
 
-## Roadmap (not implemented in 0.1.0)
+## Roadmap (not implemented in 0.1.1)
 
-Full CommonMark/GFM and advanced blocks, rich-text editor, user/team RBAC and private books, revision history, Git sync, media management, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Advanced blocks, rich-text editor, user/team RBAC and private books, revision history, Git sync, media management, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
