@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — Identity & Authentication
+
+- Replace Studio Basic Auth with individual username/password accounts, server-side hashed session tokens, CSRF-protected sign-in/sign-out and account pages. Installation owner alone can access Studio and manage users; ordinary accounts have personal profiles only until organizational authorization arrives.
+- Support trusted CLI first-owner initialization, or migrate the previous `admin` account on a successful form login using `BOOK_ADMIN_HASH` only before initialization. Once initialized the environment hash is ignored. No changes to documentation data or URLs.
+- Persist private versioned identity state under `BOOK_DATA_DIR/identity`, with atomic writes, account/IP rate limits, idle and absolute session expiry, per-account session limits, revocation and password rotation.
+- Add one-time operator-issued recovery tokens (30 minutes), password reset, separate user backup/restore without sessions or recovery tokens, and readiness checks. Preserve content-only TAR and JSON exports without credential hashes.
+- Stop Studio autosave on expired/denied sessions while retaining local Markdown. Convert existing integration tests to cookie login; add identity storage, HTTP and browser tests.
+- No new runtime dependencies; content schema remains 1.
+
 ## 0.2.0 — Advanced Editor Stable
 
 - Harden private data directory resolution (including missing descendants, symlink aliases and parent traversal), CLI backup/restore destinations and Apache document-root symlink policy.

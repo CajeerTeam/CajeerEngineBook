@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 export BOOK_DATA_DIR="$work/data" BOOK_SECURE_COOKIE=0
+export BOOK_SECURE_COOKIE=0
 export BOOK_ADMIN_HASH=$(php -r 'echo password_hash("tree-test-password",PASSWORD_DEFAULT);')
 # Seed realistic legacy entries without involving the Markdown parser: these HTTP
 # checks exercise the real App, router, template engine and transaction store.
@@ -13,7 +14,10 @@ pid=$!;trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
 for i in {1..30}; do curl -fsS "$base/health/live" >/dev/null 2>&1 && break; sleep .1; done
 status(){ curl -sS -D "$work/headers" -o "$work/body" -w '%{http_code}' "$@"; }
 assert(){ if [[ "$1" != "$2" ]]; then cat "$work/headers" "$work/body" "$work/server.log"; exit 1; fi; echo "PASS $3"; }
-auth=(-u admin:tree-test-password -b "$work/cookies" -c "$work/cookies")
+auth=(-b "$work/cookies" -c "$work/cookies")
+assert "$(status "${auth[@]}" "$base/login")" 200 'login form'
+login_csrf=$(grep -o 'name="csrf" value="[a-f0-9]*"' "$work/body" | head -1 | cut -d'"' -f4)
+assert "$(status "${auth[@]}" --data-urlencode "csrf=$login_csrf" --data-urlencode 'username=admin' --data-urlencode 'password=tree-test-password' "$base/login")" 303 'cookie login' 
 refresh(){ assert "$(status "${auth[@]}" "$base/studio/tree?scope=handbook%2F1.0")" 200 'Studio tree renders'; csrf=$(grep -o 'name="csrf" value="[a-f0-9]*"' "$work/body" | head -1 | cut -d'"' -f4); token=$(grep -o 'name="token" value="[a-f0-9]*"' "$work/body" | head -1 | cut -d'"' -f4); }
 assert "$(status "$base/studio/tree")" 401 'tree requires admin'
 refresh; [[ ${#csrf} == 64 && ${#token} == 64 ]]

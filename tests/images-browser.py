@@ -2,6 +2,7 @@
 import base64, json, os, re, socket, subprocess, tempfile, time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==')
@@ -12,7 +13,7 @@ def check(ok, message):
     print('PASS', message, flush=True)
 
 def exercise(pw, base):
-    api = pw.request.new_context(http_credentials={'username':'admin','password':PASSWORD})
+    api = login(pw.request.new_context(),base,PASSWORD)
     public = pw.request.new_context()
     csrf = re.search(r'name="csrf" value="([a-f0-9]{64})"', api.get(base+'/studio/media').text()).group(1)
     def upload(name, content):
@@ -26,7 +27,7 @@ def exercise(pw, base):
     check(api.get(base+'/studio/media/picker?kind=attachment&q=guide').json()['items'][0]['id']==aid,'attachment picker includes documents')
     launch={'headless':True}
     if os.environ.get('BOOK_CHROMIUM'):launch['executable_path']=os.environ['BOOK_CHROMIUM']
-    browser=pw.chromium.launch(**launch);ctx=browser.new_context(http_credentials={'username':'admin','password':PASSWORD});page=ctx.new_page();errors=[]
+    browser=pw.chromium.launch(**launch);ctx=browser.new_context();login(ctx.request,base,PASSWORD);page=ctx.new_page();errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto(base+'/studio');page.locator('[data-visual-panel]').wait_for()
     for name,val in {'book':'qa','version':'1.0','path':'images','title':'Images QA'}.items():page.locator(f'[data-editor-form] [name={name}]').fill(val)

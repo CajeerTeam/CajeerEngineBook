@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = 'interactive-test-password'
@@ -134,7 +135,7 @@ def main():
                         try:
                             with socket.create_connection(('127.0.0.1',port),timeout=.2):break
                         except OSError:time.sleep(.1)
-                    auth={'username':'admin','password':PASSWORD};context=browser.new_context(http_credentials=auth);page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+                    context=browser.new_context();login(context.request,base,PASSWORD);page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
                     page.goto(base+'/studio');source=editor(page)
                     page.locator('[data-editor-form] button[value=save]').click();expect(page.locator('[data-save-state]')).to_have_text('Draft saved')
                     page.locator('[data-editor-form] button[value=publish]').click();expect(page.locator('[data-save-state]')).to_have_text('Published')

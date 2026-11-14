@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = 'rich-blocks-test-password'
@@ -97,13 +98,13 @@ def main():
                     except OSError:time.sleep(.1)
                 with sync_playwright() as pw:
                     auth={'username':'admin','password':PASSWORD}
-                    api=pw.request.new_context(http_credentials=auth);public=pw.request.new_context()
+                    api=login(pw.request.new_context(),base,PASSWORD);public=pw.request.new_context()
                     csrf=re.search(r'name="csrf" value="([a-f0-9]{64})"',api.get(base+'/studio/media').text()).group(1)
                     upload=api.post(base+'/studio/media',headers={'X-Book-Media':'1'},multipart={'csrf':csrf,'action':'upload','folder':'qa','file':{'name':'diagram.png','mimeType':'image/png','buffer':PNG}})
                     assert upload.ok,upload.text();image_id=upload.json()['item']['id']
                     launch={'headless':True}
                     if os.environ.get('BOOK_CHROMIUM'):launch['executable_path']=os.environ['BOOK_CHROMIUM']
-                    browser=pw.chromium.launch(**launch);context=browser.new_context(http_credentials=auth);page=context.new_page();errors=[]
+                    browser=pw.chromium.launch(**launch);context=browser.new_context();login(context.request,base,PASSWORD);page=context.new_page();errors=[]
                     page.on('pageerror',lambda e:errors.append(str(e)))
                     page.goto(base+'/studio');source=ui(page,image_id)
                     page.locator('[data-editor-form] button[value=save]').click();expect(page.locator('[data-save-state]')).to_have_text('Draft saved')

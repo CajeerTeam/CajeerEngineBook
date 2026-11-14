@@ -5,10 +5,11 @@ use CajeerEngine\Template\{CajeerTemplateEngine,TemplateSandbox};
 use CajeerEngine\Runtime\ServiceContainer;
 final class App {
     private BookStore $store; private MediaStore $media; private MediaController $mediaController; private CajeerTemplateEngine $view;
-    private readonly string $dataDir;
+    private readonly string $dataDir; private AuthController $auth; private IdentityStore $identityStore;
     public function __construct(private readonly string $root){
         $this->dataDir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
         $c=new ServiceContainer();$c->set('store',fn()=>new BookStore($this->dataDir));$this->store=$c->get('store');
+        $this->identityStore=new IdentityStore($this->dataDir);$this->auth=new AuthController($this->identityStore);
         $this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
         $t=$root.'/templates';$this->view=new CajeerTemplateEngine(new TemplateSandbox($t),$t);
     }
@@ -26,12 +27,13 @@ final class App {
         try{
             if($path==='/diagram-frame'){DiagramFrame::serve($method);return;}
             if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/studio'||str_starts_with($path,'/studio/')){$this->studio($path,$method);return;}
             if($method==='POST'){http_response_code(405);header('Allow: GET, HEAD');return;}
             if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method);return;}
             if($path==='/health/live'){$this->json(['status'=>'ok']);return;}
             if($path==='/health/ready'){
-                try { $this->store->checkReady(); ReleaseHealth::check($this->root); $this->json(['status'=>'ok']); }
+                try { $this->store->checkReady(); $this->identityStore->checkReady(); ReleaseHealth::check($this->root); $this->json(['status'=>'ok']); }
                 catch(\Throwable $e){error_log('Readiness: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);}
                 return;
             }
@@ -50,10 +52,11 @@ final class App {
         header('Cache-Control: no-store');header('Location: '.$path,true,308);
     }
     private function studio(string $path,string $method):void{
-        header('Cache-Control: no-store');header('X-Robots-Tag: noindex');$hash=getenv('BOOK_ADMIN_HASH')?:'';
-        if(!$hash){http_response_code(503);$this->page('Studio disabled','<h1>Studio disabled</h1><p>Set BOOK_ADMIN_HASH to enable editing.</p>');return;}
-        if(($_SERVER['PHP_AUTH_USER']??'')!=='admin'||!password_verify($_SERVER['PHP_AUTH_PW']??'',$hash)){header('WWW-Authenticate: Basic realm="CajeerEngine Book Studio", charset="UTF-8"');http_response_code(401);echo 'Authentication required';return;}
-        if(!session_start(['use_strict_mode'=>1,'use_only_cookies'=>1,'use_trans_sid'=>0,'cookie_httponly'=>1,'cookie_samesite'=>'Strict','cookie_secure'=>getenv('BOOK_SECURE_COOKIE')==='1']))throw new \RuntimeException('Session storage unavailable');$_SESSION['csrf']??=bin2hex(random_bytes(32));$csrf=$_SESSION['csrf'];session_write_close();$hidden='<input type="hidden" name="csrf" value="'.$csrf.'">';
+        header('Cache-Control: no-store');header('X-Robots-Tag: noindex');
+        $identity=$this->auth->current();
+        if(!$identity){http_response_code(401);if(($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor'||($_SERVER['HTTP_X_BOOK_MEDIA']??'')==='1'){$this->json(['error'=>'Session expired. Sign in again; retain your local edits.']);return;}$this->page('Sign in required','<h1>Sign in required</h1><p><a href="/login">Sign in to Studio</a></p>');return;}
+        if(!$identity['user']['owner']){http_response_code(403);if(($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor'||($_SERVER['HTTP_X_BOOK_MEDIA']??'')==='1'){$this->json(['error'=>'Installation owner permission required.']);return;}$this->page('Forbidden','<h1>Installation owner permission required</h1><p><a href="/account">Your account</a></p>');return;}
+        $csrf=$identity['session']['csrf'];$hidden='<input type="hidden" name="csrf" value="'.$csrf.'">';
         if($method==='POST'){
             if(empty($_POST) && ini_parse_quantity((string)ini_get('post_max_size'))>0 && (int)($_SERVER['CONTENT_LENGTH']??0)>ini_parse_quantity((string)ini_get('post_max_size'))){http_response_code(413);echo 'Request exceeds server upload limit';return;}
             if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);echo 'Invalid CSRF token';return;}
@@ -101,7 +104,7 @@ final class App {
         if($edit!==''&&!$entry){if($target=PageTree::draftRedirect($db,$edit)){header('Location: /studio?edit='.rawurlencode($target),true,303);return;}http_response_code(404);$this->page('Page not found','<h1>Page not found</h1><a href="/studio/tree">Open page tree</a>');return;}$p=$entry['draft']??['title'=>'','section'=>'Getting started','order'=>10,'body'=>''];$parts=$entry?explode('/',$edit,3):['handbook','1.0',''];
         if(!$entry&&is_string($_GET['new_under']??null))$parts=PageTreeView::newUnder($db,$_GET['new_under'])??$parts;
         $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::e($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
-        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/export','Download JSON backup').self::link('/studio/media','Media library').self::link('/studio/media/backup','Full backup (.tar)').self::link('/studio/tree','Page tree').'</div>'.PageTreeView::list($db,$edit).'<p>Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="/studio" class="editor" data-editor-form>'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<div class="actions"><button name="action" value="save">Save draft</button><button class="primary" name="action" value="publish">Publish</button></div></form>';
+        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/export','Download JSON backup').self::link('/studio/media','Media library').self::link('/studio/media/backup','Content backup (.tar)').self::link('/studio/tree','Page tree').'</div>'.PageTreeView::list($db,$edit).'<p>Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="/studio" class="editor" data-editor-form>'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<div class="actions"><button name="action" value="save">Save draft</button><button class="primary" name="action" value="publish">Publish</button></div></form>';
         if($entry){$html.='<div data-saved-preview><h2>Saved draft preview</h2><article>'.Markdown::render($p['body'],$edit,false,true,$p['link_base']??null,PageTree::linkMap($db))['html'].'</article></div><form method="post" action="/studio" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">Unpublish</button><button name="action" value="delete" data-confirm="Delete this page permanently?">Delete</button></form>';}
         $html.='<h2>Copy version to drafts</h2><form method="post" action="/studio" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">Copy published pages</button></form>';$this->page('Studio',$html,BookStore::published($db));
     }

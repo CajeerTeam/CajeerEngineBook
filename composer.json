@@ -16,6 +16,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/identity.php",
+            "python3 tests/identity-http.py",
             "@php tests/smoke.php",
             "@php tests/markdown-policy.php",
             "@php tests/markdown.php",

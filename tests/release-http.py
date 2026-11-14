@@ -5,7 +5,6 @@ Set BOOK_TEST_URL and BOOK_TEST_PASSWORD to use a disposable external installati
 The default creates a fresh temporary store and PHP server. Never use a live site.
 """
 import argparse
-import base64
 import contextlib
 import http.cookiejar
 import json
@@ -42,7 +41,11 @@ class Client:
     def __init__(self, base, auth=False):
         self.base = base
         self.opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.ProxyHandler({}))
-        self.headers = {'Authorization': 'Basic ' + base64.b64encode(f'admin:{PASSWORD}'.encode()).decode()} if auth else {}
+        self.headers = {}
+        if auth:
+            _, _, form = self.request('/login')
+            csrf = re.search(rb'name="csrf" value="([a-f0-9]{64})"', form).group(1).decode()
+            self.request('/login', 'POST', {'csrf':csrf,'username':'admin','password':PASSWORD}, expected=303)
 
     def request(self, path, method='GET', data=None, headers=None, expected=200):
         h = {**self.headers, **(headers or {})}
@@ -82,13 +85,14 @@ def fence(kind, value):
 
 def run(base, persisted=False):
     wait_ready(base)
-    public, admin = Client(base), Client(base, True)
+    public = Client(base)
     if persisted:
         _, _, b = public.request('/api/v1/pages/' + NEW)
         check('Mixed release content' in json.loads(b)['body'], 'published page persists after restart')
         _, h, _ = public.request('/docs/' + PAGE, expected=308)
         check(h['Location'] == '/docs/' + NEW, 'redirect persists after restart')
         return
+    admin = Client(base, True)
     _, _, b = public.request('/health/live')
     check(json.loads(b)['status'] == 'ok', 'liveness')
     public.request('/studio', expected=401)

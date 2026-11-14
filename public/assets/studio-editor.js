@@ -53,6 +53,11 @@
         try {
             const response = await fetch(path, {method: 'POST', credentials: 'same-origin', cache: 'no-store',
                 signal: controller.signal, headers: {'Accept': 'application/json', 'X-Book-Studio': 'editor'}, body: data});
+            if (response.status === 401 || response.status === 403) {
+                conflicted = true; clearTimeout(timer); lockButtons();
+                announce('Access expired');
+                throw Object.assign(new Error('Session expired or access denied. Your edits are retained. Copy your Markdown, sign in at /login in another tab, then reload Studio. Autosave is stopped.'), {status: response.status});
+            }
             let result;
             try { result = await response.json(); } catch (e) {
                 if (controller.signal.aborted) throw e;
@@ -871,7 +876,7 @@
             if (dirty) scheduleSave();
         } catch (e) {
             if (e.status === 409) { conflicted = true; announce('Revision conflict'); fail('Another session changed this page. Your edits are retained. Copy your Markdown before reloading; autosave is stopped.'); }
-            else { announce('Save failed'); fail(e.message); }
+            else { announce(e.status === 401 || e.status === 403 ? 'Access expired' : 'Save failed'); fail(e.message); }
         } finally { pending = false; if (Number(value('revision')) === 0 && !conflicted) for (const name of ['book','version','path']) form.elements[name].readOnly = false; lockButtons(); }
     }
     function updatePageActions(result) {

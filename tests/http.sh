@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 export BOOK_DATA_DIR="$work/data"
+export BOOK_SECURE_COOKIE=0
 export BOOK_ADMIN_HASH=$(php -r 'echo password_hash("test-only-password",PASSWORD_DEFAULT);')
 port=${BOOK_TEST_PORT:-8099}
 base="http://127.0.0.1:$port"
@@ -17,7 +18,10 @@ grep -q 'id="section-1"' "$work/response"
 grep -q 'id="start-here"' "$work/response"
 assert "$(status "$base/api/v1/pages/handbook/1.0/welcome")" 200 'page API'
 assert "$(status "$base/studio")" 401 'Studio unauthorized'
-auth=(-u admin:test-only-password -b "$work/cookies" -c "$work/cookies")
+auth=(-b "$work/cookies" -c "$work/cookies")
+assert "$(status "${auth[@]}" "$base/login")" 200 'login form'
+login_csrf=$(grep -o 'name="csrf" value="[a-f0-9]*"' "$work/response" | head -1 | cut -d'"' -f4)
+assert "$(status "${auth[@]}" --data-urlencode "csrf=$login_csrf" --data-urlencode 'username=admin' --data-urlencode 'password=test-only-password' "$base/login")" 303 'cookie login' 
 assert "$(status "${auth[@]}" "$base/studio")" 200 'Studio authenticated'
 csrf=$(sed -n 's/.*name="csrf" value="\([a-f0-9]*\)".*/\1/p' "$work/response" | head -1)
 [[ ${#csrf} == 64 ]]

@@ -9,6 +9,7 @@ import time
 import urllib.request
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = 'editor-test-only-password'
@@ -226,7 +227,8 @@ def main():
                     options = {'headless': True}
                     if os.environ.get('BOOK_TEST_CHROMIUM'): options['executable_path'] = os.environ['BOOK_TEST_CHROMIUM']
                     browser = p.chromium.launch(**options)
-                    context = browser.new_context(http_credentials={'username': 'admin', 'password': PASSWORD})
+                    context = browser.new_context()
+                    login(context.request, base, PASSWORD)
                     page = context.new_page()
                     page_errors = []
                     page.on('pageerror', lambda error: page_errors.append(str(error)))

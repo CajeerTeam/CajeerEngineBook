@@ -7,6 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +40,8 @@ with tempfile.TemporaryDirectory() as work:
                 if os.environ.get('BOOK_CHROMIUM_EXECUTABLE'):
                     launch.update(executable_path=os.environ['BOOK_CHROMIUM_EXECUTABLE'], args=['--no-sandbox'])
                 browser = pw.chromium.launch(**launch)
-                context = browser.new_context(http_credentials={'username': 'admin', 'password': password})
+                context = browser.new_context()
+                login(context.request, base, password)
                 page = context.new_page()
                 page.set_default_timeout(10000)
                 errors = []
@@ -48,7 +50,7 @@ with tempfile.TemporaryDirectory() as work:
                 # real server-rendered markup and forward the real form payload to PHP.
                 # Normal CI navigates and submits forms in the browser directly.
                 bridged = os.environ.get('BOOK_TEST_BROWSER_TRANSPORT') == '1'
-                api = pw.request.new_context(http_credentials={'username': 'admin', 'password': password})
+                api = login(pw.request.new_context(),base,password)
                 def load_tree(url):
                     response = api.get(url)
                     assert response.ok, response.text()

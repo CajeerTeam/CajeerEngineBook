@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = 'mermaid-test-password'
@@ -28,11 +29,12 @@ def main():
         try:
             with sync_playwright() as p:
                 browser=p.chromium.launch(headless=True)
-                ctx=browser.new_context(http_credentials={'username':'admin','password':PASSWORD},accept_downloads=True)
+                ctx=browser.new_context(accept_downloads=True)
                 for _ in range(50):
                     try:
                         if ctx.request.get(base+'/health/live',timeout=1000).ok:break
                     except Exception:time.sleep(.1)
+                login(ctx.request,base,PASSWORD)
                 page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(base+'/studio');expect(page.locator('[data-visual-panel]')).to_be_visible()
                 for key,value in {'book':'qa','version':'1.0','path':'diagram','title':'Diagram QA'}.items():page.locator(f'[data-editor-form] [name="{key}"]').fill(value)

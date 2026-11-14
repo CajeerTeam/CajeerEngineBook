@@ -1,8 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
+
+- Individual user accounts, password sign-in, personal profiles, server-side revocable sessions, operator recovery tokens and installation-owner user management. Studio is owner-only until organization/workspace roles are implemented.
 
 - Multiple books and versions, hierarchical URL paths, section navigation, page order, previous/next links, headings table of contents, responsive layout and light/dark theme.
 - Studio page tree: nested page/folder navigation, native drag-and-drop, keyboard/touch move form, slug rename, branch duplication, stable IDs and published redirects. Draft structure and public navigation are separate.
@@ -27,16 +29,59 @@ sh bin/install-mermaid.sh # Node 22/npm; install the local diagram library
 php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
-Open http://127.0.0.1:8080/ and `/studio`. To enable Studio, generate a password hash without storing the plaintext in the repository:
+Open http://127.0.0.1:8080/ and `/login`. Public documentation is readable without initialization. To enable Studio on a fresh installation, initialize the owner from the trusted local CLI (run as the same OS user that owns the data directory):
 
 ```sh
-read -rs -p 'Admin password: ' BOOK_PASSWORD; echo
-export BOOK_ADMIN_HASH="$(printf '%s' "$BOOK_PASSWORD" | php -r 'echo password_hash(stream_get_contents(STDIN), PASSWORD_DEFAULT);')"
+export BOOK_DATA_DIR="$PWD/var"
+export BOOK_SECURE_COOKIE=0 # local HTTP only; use 1 on HTTPS
+read -rs -p 'Owner password (12–72 bytes): ' BOOK_PASSWORD; echo
+printf '%s' "$BOOK_PASSWORD" | php bin/identity.php init admin admin@example.com 'Administrator'
 unset BOOK_PASSWORD
 php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
-Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
+No default password, public registration or Basic Auth fallback. Sign in via `/login` and use `/account` to manage profile, password and sessions; `/account/users` is owner-only. Use HTTPS and `BOOK_SECURE_COOKIE=1` outside localhost. Secure cookies have the `__Host-` prefix, HttpOnly, SameSite=Strict and path `/`; do not use HTTP for real credentials. Reverse proxies should rate-limit `/login`, `/account/reset` and Studio; rate limiting inside the application uses `REMOTE_ADDR`, not client-supplied forwarded headers.
+
+## Upgrade to 0.2.1 — Identity & Authentication
+
+1. Stop writes and back up the complete `BOOK_DATA_DIR` before overlaying the release. Keep the existing `BOOK_ADMIN_HASH` only for the initial migration.
+2. Rebuild the container or install existing locked dependencies and local Mermaid assets as before. Open `/login`, enter username `admin` and the previous password. Successful authentication atomically creates the owner with the existing password hash (rehashes if required). Failed login cannot initialize an owner. If the previous password is unavailable, run the trusted CLI `init` command before the first successful login instead. Existing passwords exceeding 72 bytes require CLI initialization/recovery rather than accepting bcrypt-truncated passwords.
+3. In `/account` set the owner's email and change the password if needed. Remove `BOOK_ADMIN_HASH` from deployment configuration after initialization and recreate the container. Once an owner exists, that hash is never consulted to authenticate any account, even if left configured. Existing Basic Auth credentials and old PHP session cookies do not authorize Studio.
+4. Create individual users under `/account/users`; ordinary users can sign in, manage their own profile and sessions, but cannot enter any Studio route. Owner is an installation-level bootstrap privilege, not yet an organization role. No organizations, private books, email verification, SMTP, public signup or RBAC beyond this owner gate in this release.
+5. Verify `/health/ready`, public docs, Studio, account and backup. Content `books.json` schema and Markdown are unchanged; identity uses a separate schema-1 file under `BOOK_DATA_DIR/identity/identity.json` with a dedicated lock. This avoids including credentials in content backups. Do not remove that directory to reset a password.
+
+### Identity and session policy
+
+Usernames are case-insensitive ASCII (3–40 characters), email addresses unique case-insensitively (contact data, not login identifiers or verified recovery channels). Passwords are hashed with PHP `PASSWORD_DEFAULT`; new passwords must be 12–72 bytes. Sessions store only a SHA-256 digest of the random 256-bit bearer token; CSRF tokens are bound to each session. Login and reset forms use a separate strict, HttpOnly double-submit cookie. Session lifetime is seven days, idle expiry eight hours, with activity refreshed at most every five minutes; maximum ten sessions per account. Password change and recovery revoke all previous sessions and recovery tokens. Disabling a user revokes sessions immediately for subsequent requests; requests already authorized and executing may finish. Login limits: five failed attempts per account and 30 total attempts per source IP per 15-minute window (successful login clears the account counter, not the IP counter). Recovery and current-password verification have separate rate buckets. No trust in X-Forwarded-For; behind a reverse proxy, configure infrastructure rate limiting and consider the shared IP limit. Maximum 500 users, 4 MiB identity metadata. Account management cannot disable the only installation owner. Session expiry/denial stops Studio autosave; copy local Markdown, sign in again in another tab, then reload before retrying.
+
+### Recover access and back up identity
+
+Only a trusted operator with filesystem access may issue a recovery token. Tokens expire after 30 minutes, are single-use, are stored only as SHA-256 digests, and a new token invalidates the previous one. Pass the token securely to the user; enter it in `/account/reset` (not in a URL). Resetting the password revokes all existing sessions. Do not write tokens to public logs or send them over unencrypted channels.
+
+```sh
+# Run as the data directory owner, with BOOK_DATA_DIR set to the installation.
+php bin/identity.php reset admin
+php bin/identity.php backup /secure/backups/identity-0.2.1.json
+# Restore only to an installation with no initialized identity state.
+BOOK_DATA_DIR=/private/restored-book php bin/identity.php restore /secure/backups/identity-0.2.1.json
+```
+
+The identity backup is a mode-0600 JSON file containing user records and password hashes (sensitive). It excludes sessions, reset tokens and throttling state. It cannot overwrite an existing backup or initialized identity; stop the service, restore documentation TAR into a new data directory, restore the matching identity backup, fix ownership, then point the service at that directory. A content TAR or `/studio/export` remains a **content-only** export (pages, redirects and media; no credentials); for a complete installation backup take both during a maintenance window or copy the entire stopped volume. A raw volume snapshot may contain live session/token hashes; prefer the identity CLI backup when migrating. Do not restore the raw identity state to an internet-facing instance without revoking sessions. Rollback to 0.2.0 requires the old deployment hash and pre-upgrade backup: older code ignores identity users and permissions.
+
+Docker fresh setup (the volume must be writable by `www-data`):
+
+```sh
+docker compose up -d --build
+read -rs -p 'Owner password: ' BOOK_PASSWORD; echo
+printf '%s' "$BOOK_PASSWORD" | docker compose exec -T -u www-data book php bin/identity.php init admin admin@example.com 'Administrator'
+unset BOOK_PASSWORD
+# Recovery (keep output private):
+docker compose exec -T -u www-data book php bin/identity.php reset admin
+```
+
+### Tests
+
+`php tests/identity.php` exercises the real durable identity store without Composer; `python3 tests/identity-http.py` exercises the real PHP application with independent cookie jars; `python3 tests/identity-browser.py` exercises interactive form login, management and revocation. The complete `composer test` and CI browser/Docker gates use the installed CommonMark and Mermaid dependencies and cookie-authenticated Studio. `BOOK_SECURE_COOKIE=0` is used only on disposable loopback tests.
 
 ## Upgrade to 0.2.0
 
@@ -154,10 +199,9 @@ The parser limits Markdown to valid UTF-8 and 256 KiB, 64 levels of block nestin
 
 ## Docker Compose
 
-Create `.env` with the generated hash in single quotes (protects `$` in hashes):
+For a fresh local deployment, create `.env` with loopback cookie settings (no preset password; initialize using the CLI above). Only for a 0.2.0 migration, retain the previous `BOOK_ADMIN_HASH` in single quotes until the first successful form login.
 
 ```dotenv
-BOOK_ADMIN_HASH='$2y$...replace-with-generated-hash...'
 BOOK_SECURE_COOKIE=0
 ```
 
@@ -165,7 +209,7 @@ BOOK_SECURE_COOKIE=0
 docker compose up -d --build
 ```
 
-Compose binds to 127.0.0.1:8080. Place an HTTPS reverse proxy in front of it, pass Authorization and Host headers, set `BOOK_SECURE_COOKIE=1` and recreate the container. Use the named volume `book-data` for persistence. PHP's development server is not a production server. Apache container build is provided; production TLS and Docker runtime have not been certified here.
+Compose binds to 127.0.0.1:8080. Place an HTTPS reverse proxy in front of it, pass Host and configure HTTPS consistently, set `BOOK_SECURE_COOKIE=1` and recreate the container. Use the named volume `book-data` for persistence. PHP's development server is not a production server. Apache container build is provided; production TLS and Docker runtime have not been certified here.
 
 ## Content model and REST API
 
@@ -233,7 +277,7 @@ php bin/media-backup.php backup /var/lib/cajeerbook /secure/backups/book.tar
 php bin/media-backup.php restore /secure/backups/book.tar /var/lib/cajeerbook-restored
 ```
 
-The backup target must be a new `.tar` file. Restore into a **new, non-existing directory**, with an existing parent directory, after stopping the target installation. Restore validates metadata, page keys, file sizes, MIME and SHA-256, and reconstructs media references; it writes a staging directory and only publishes it after validation. It does not extract arbitrary archive paths or overwrite existing data. Point `BOOK_DATA_DIR` to the restored directory (or move it into place with the service stopped), set the web user's ownership and private permissions, then start and verify. For Docker, use a trusted maintenance container with the volume mounted and an accessible backup path, or restore offline and replace the volume contents while the app is stopped. Never replace only `books.json` on a media-enabled installation. Backups contain documentation and files, not deployment secrets such as `BOOK_ADMIN_HASH` or TLS certificates.
+The backup target must be a new `.tar` file. Restore into a **new, non-existing directory**, with an existing parent directory, after stopping the target installation. Restore validates metadata, page keys, file sizes, MIME and SHA-256, and reconstructs media references; it writes a staging directory and only publishes it after validation. It does not extract arbitrary archive paths or overwrite existing data. Point `BOOK_DATA_DIR` to the restored directory (or move it into place with the service stopped), set the web user's ownership and private permissions, then start and verify. For Docker, use a trusted maintenance container with the volume mounted and an accessible backup path, or restore offline and replace the volume contents while the app is stopped. Never replace only `books.json` on a media-enabled installation. Content backups contain documentation and files, not identity records or deployment secrets such as `BOOK_ADMIN_HASH` or TLS certificates. Use the separate identity backup CLI for user records.
 
 If a crash leaves an uncommitted blob, use `php bin/media-backup.php gc /var/lib/cajeerbook` to remove only orphan blobs/thumbnails and temporary media files under the same store lock; live originals are preserved. Run backups regularly. Files are not scanned for malware or replicated to another host.
 
