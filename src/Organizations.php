@@ -74,7 +74,7 @@ final class Organizations
             case 'rename':$o['name']=self::name($p['name']??'');$slug=self::slug($p['slug']??'');self::uniqueSlug($db,$slug,$id);$o['slug']=$slug;break;
             case 'archive':$o['archived']=true;self::clearInvites($db,$id);break;
             case 'restore':if(!$o['archived'])throw new \DomainException('Organization is not archived.');$o['archived']=false;break;
-            case 'delete':if(!$o['archived']||($p['confirm']??'')!==$o['slug'])throw new \DomainException('Archive first and confirm the organization slug.');self::clearInvites($db,$id);unset($db['organizations'][$id]);return ['deleted'=>true];
+            case 'delete':foreach($db['workspaces']??[] as $w)if($w['organization']===$id)throw new \DomainException('Organization has workspaces; deletion is blocked.');if(!$o['archived']||($p['confirm']??'')!==$o['slug'])throw new \DomainException('Archive first and confirm the organization slug.');self::clearInvites($db,$id);unset($db['organizations'][$id]);return ['deleted'=>true];
             case 'leave':if($o['owner']===$uid)throw new \DomainException('Transfer ownership before leaving.');unset($o['members'][$uid]);break;
             case 'remove':if($target===$o['owner']||!isset($o['members'][$target]))throw new \DomainException('Cannot remove this member.');unset($o['members'][$target]);break;
             case 'transfer':if($target===$uid||!isset($o['members'][$target])||!($db['users'][$target]['enabled']??false))throw new \DomainException('Select another enabled member.');$o['owner']=$target;break;

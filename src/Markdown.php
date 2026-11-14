@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/WorkspaceUrls.php';
 
 use League\CommonMark\Environment\Environment;
 use League\CommonMark\Extension\CommonMark\CommonMarkCoreExtension;
@@ -76,6 +77,7 @@ final class Markdown
                 if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
                 if (($studio || $editor) && $url !== null) $url=self::previewMediaUrl($url);
+                if ($url !== null) $url=WorkspaceUrls::markdown($url);
                 // Standalone images remain standard Markdown images; presentation metadata
                 // is carried in their optional title. Only canonical local attachment links
                 // acquire a download query, AFTER reference recognition and preview rewriting.
@@ -124,7 +126,7 @@ final class Markdown
                         $url=self::safeUrl($url,$image,$pageKey,$linkBase);
                         if ($url!==null && !$image && $linkMap) $url=PageTree::rewriteLink($url,$linkMap);
                         if ($url!==null && ($studio || $editor)) $url=self::previewMediaUrl($url);
-                        return $url;
+                        return $url===null?null:WorkspaceUrls::markdown($url);
                     };
                     $node->data->set('book_rich_html',RichBlocks::html($component,$bodyHtml,$resolve));
                     $node->data->set('book_rich_data',$component);
@@ -178,12 +180,12 @@ final class Markdown
 
     private static function mediaId(string $url): ?string
     {
-        return preg_match('~\A/media/([a-f0-9]{32})(?:[?#].*)?\z~D',$url,$m) ? $m[1] : null;
+        return preg_match('~\A/media/([a-f0-9]{32})(?:[?#].*)?\z~D',WorkspaceUrls::normalize($url),$m) ? $m[1] : null;
     }
 
     private static function previewMediaUrl(string $url): string
     {
-        return self::mediaId($url)!==null ? '/studio/media/file/'.substr($url,7) : $url;
+        return self::mediaId($url)!==null ? '/studio/media/file/'.substr(WorkspaceUrls::normalize($url),7) : $url;
     }
 
     /** Only actual CommonMark links/images (including reference links), never code or prose. */

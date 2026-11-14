@@ -1,10 +1,73 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.2.3 — Workspaces
+
+Open `/workspaces` after signing in. Create an organization first, then use **Create workspace** in that organization. Workspace names/slugs can be changed without changing the permanent IDs or URLs. Each organization owner can create, rename, archive and restore spaces; organization members can read published content in its active spaces. Nonmembers (including the installation owner of another organization) cannot access the content. Organization owners alone can edit/publish, upload media and export their spaces until the full RBAC release. New spaces are private to their organization; legacy published content stays public. Archiving a space or its organization disables access to scoped content. An organization containing spaces cannot be permanently deleted in this release.
+
+Each space has its own BookStore, page tree, revisions, redirects, search, API, media library and TAR export. New spaces start empty; use **Books** in its Studio to create a book, then create pages. Book records have stable IDs; the same book slug and page path may exist in different spaces. IDs, not editable slugs, identify the route:
+
+```
+/w/{organization-id}/{workspace-id}/
+/w/{organization-id}/{workspace-id}/studio
+/w/{organization-id}/{workspace-id}/studio/books
+/w/{organization-id}/{workspace-id}/docs/{book}/{version}/{path}
+/w/{organization-id}/{workspace-id}/api/v1/pages
+/w/{organization-id}/{workspace-id}/api/v1/search?q=example
+/w/{organization-id}/{workspace-id}/media/{media-id}
+```
+
+Markdown remains portable: `/docs/...` and `/media/{id}` in a scoped document are resolved within that space, including nested components and private previews. Copy the Markdown URL from its media library; do not paste a full scoped media route as a local attachment reference. Relative links use the existing page-link context. Reader/API/search and media never fall back to another space. Scoped routes require a valid cookie and current membership; Studio additionally requires the current organization owner. The identity lock is held through scoped content operations (identity before content), preventing concurrent membership revocation or ownership transfer from interleaving with authorized writes. This serializes requests across spaces and is intended for bounded self-hosted installations, not high-concurrency multi-server operation.
+
+### Upgrade from 0.2.2 / legacy adoption
+
+Stop writes and back up the complete `BOOK_DATA_DIR` before upgrading. Existing root documentation and URLs (`/docs/...`, `/api/v1/...`, `/media/...`, `/studio`) are unchanged. After upgrade, the installation owner can create or choose an organization they own, open `/workspaces`, and select **Adopt existing documentation (once)**. This creates a legacy workspace registry entry without moving or rewriting content. Its Studio continues at `/studio`, now governed by the owning organization's current owner and archive status. Transfer ownership only if you intend to transfer control of all legacy content. The legacy Reader remains public and cannot be archived separately. New workspaces do not inherit any of the legacy content.
+
+Identity schema 2 receives an additive workspace registry; content schema 1 receives additive book records. No new Composer/npm dependencies. Do not downgrade only the code after workspace creation/adoption: older releases do not enforce the new legacy ownership boundary or understand scoped stores. Restore the pre-upgrade backup to roll back.
+
+### Storage, backups and recovery
+
+```
+BOOK_DATA_DIR/
+  books.json                   # legacy content (may be seed until first write)
+  media/                       # legacy media
+  identity/identity.json       # users, organizations, workspace registry
+  workspaces/{org-id}/{workspace-id}/
+    books.json                 # books, pages, drafts, publications, redirects, media metadata
+    books.lock
+    media/                     # original blobs and generated thumbnails
+```
+
+Each new workspace is initialized with a durable empty database before its registry entry commits. Missing registered content fails closed (503/readiness failure), not a seed fallback. Failed creation may leave an unreferenced directory; an operator may remove it offline after checking the registry and backups. Limits: 100 spaces per installation, 1000 books and 1000 pages per space, 32 MiB metadata per space, 1000 media files / 512 MiB originals per space. Total disk consumption is the sum of all spaces; monitor the volume.
+
+For a full offline backup, stop writes and save the entire data directory, or collect the private identity backup, legacy content TAR and one TAR per nonlegacy space. The browser TAR export only contains the current space (not credentials, other spaces or the registry). Operator commands use `BOOK_DATA_DIR`:
+
+```sh
+php bin/identity.php backup /secure/identity.json
+php bin/media-backup.php backup "$BOOK_DATA_DIR" /secure/legacy.tar
+php bin/workspaces.php list
+php bin/workspaces.php backup WORKSPACE_ID /secure/workspace.tar
+```
+
+Restore the legacy TAR into a new data directory first, restore identity into that same directory, then restore **every** nonlegacy workspace TAR by its original ID before starting the server. The workspace restore refuses to overwrite an existing directory and validates content/media through the existing TAR restore implementation.
+
+```sh
+php bin/media-backup.php restore /secure/legacy.tar /private/restored
+export BOOK_DATA_DIR=/private/restored
+php bin/identity.php restore /secure/identity.json
+php bin/workspaces.php restore WORKSPACE_ID /secure/workspace.tar
+```
+
+Check `/health/ready` after startup; all registered stores must be present. Identity backup does not restore sessions or invitation tokens. Full access controls (Admin/Editor/Viewer, workspace assignments and configurable visibility) are planned for 0.2.4–0.2.5. Cross-workspace book moves and permanent workspace deletion are intentionally not exposed in 0.2.3; archive preserves data.
+
+### Workspace tests
+
+`php tests/workspaces.php` exercises the real registry, storage and authorization without the Markdown parser. `python3 tests/workspaces-http.py` runs real multi-user HTTP, including CommonMark publication and restore. `python3 tests/workspaces-browser.py` exercises the UI and scoped AJAX editor with Chromium. Install dependencies first. The HTTP test also offers `--storage-only` for environments without CommonMark (published fixtures, no render/restore), and the browser test supports `BOOK_TEST_BROWSER_TRANSPORT=1` for loopback-restricted environments (form bridge, no AJAX render/publish).
 
 ## Features
 
-- Individual user accounts, password sign-in, personal profiles, server-side revocable sessions, operator recovery tokens and installation-owner user management. Studio is owner-only until organization/workspace roles are implemented.
+- Individual user accounts, password sign-in, personal profiles, server-side revocable sessions, operator recovery tokens and installation-owner user management. Studio is owner-only in each organization workspace; ordinary members can read its published documentation.
 
 - Multiple books and versions, hierarchical URL paths, section navigation, page order, previous/next links, headings table of contents, responsive layout and light/dark theme.
 - Studio page tree: nested page/folder navigation, native drag-and-drop, keyboard/touch move form, slug rename, branch duplication, stable IDs and published redirects. Draft structure and public navigation are separate.

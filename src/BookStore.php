@@ -4,7 +4,7 @@ namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
-    public function __construct(private readonly string $dir) {}
+    public function __construct(private readonly string $dir, private readonly bool $seed=true) {}
     public static function slug(string $s): bool { return preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$s)===1 && !in_array($s,['.','..'],true); }
     public static function key(string $book,string $version,string $path): string {
         if (!self::slug($book)||!self::slug($version)||strlen($path)>250||!$path) throw new \InvalidArgumentException('Invalid book/version/path');
@@ -15,8 +15,10 @@ final class BookStore {
         $file=$this->dir.'/books.json';
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
+        if(!is_file($file)&&!$this->seed)throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
         if(($db['schema']??null)!==1||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        self::books($db);
         return $db;
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
@@ -36,6 +38,7 @@ final class BookStore {
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
     public static function writeDatabase(string $path,array $db): void {
+        self::books($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
@@ -97,7 +100,9 @@ final class BookStore {
                 if($old['published']!==null){$snapshot['order']=$old['published']['order'];if($publicKey!==$key)$snapshot['link_base']??=$key;}
                 $old['published']=$snapshot;$old['published_key']=$publicKey;
             } $old['revision']++;
-            $db['pages'][$key]=$old;
+            [$book]=explode('/',$key,2);$books=self::books($db);
+            if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}
+            $db['pages'][$key]=$old;$db['books']=$books;
             $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null,'id'=>$old['id'],'navigation_changed'=>$navigationChanged];
         }); return $result;
     }
@@ -134,6 +139,17 @@ final class BookStore {
                 if($field==='redirects')PageTree::remember($db,$dest,$id);else PageTree::retire($db,$dest,$id);
             }
         });
+    }
+    /** Books are real persisted records, with deterministic IDs for pre-registry content. */
+    public static function books(array $db):array{
+        $books=$db['books']??[];if(!is_array($books)||count($books)>1000)throw new \RuntimeException('Invalid book registry');$ids=[];
+        foreach($books as $slug=>$b){if(!self::slug((string)$slug)||!is_array($b)||($b['slug']??null)!==(string)$slug||!is_string($b['id']??null)||!preg_match('/\A[a-f0-9]{32}\z/D',$b['id'])||isset($ids[$b['id']])||!is_string($b['title']??null)||trim($b['title'])===''||strlen($b['title'])>200||!preg_match('//u',$b['title']))throw new \RuntimeException('Invalid book record');$ids[$b['id']]=true;}
+        foreach($db['pages'] as $key=>$entry){$slug=explode('/',$key,2)[0];if(!isset($books[$slug]))$books[$slug]=['slug'=>$slug,'id'=>substr(hash('sha256','legacy-book:'.$slug),0,32),'title'=>$slug];}
+        if(count($books)>1000)throw new \RuntimeException('Book quota exceeded');ksort($books,SORT_STRING);return $books;
+    }
+    public function createBook(string $slug,string $title):void{
+        $title=trim($title);if(!self::slug($slug)||$title===''||strlen($title)>200||!preg_match('//u',$title)||preg_match('/[\x00-\x1f\x7f]/',$title))throw new \InvalidArgumentException('Invalid book fields');
+        $this->change(function(&$db)use($slug,$title){$books=self::books($db);if(isset($books[$slug]))throw new \DomainException('Book already exists');if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$slug]=['slug'=>$slug,'id'=>bin2hex(random_bytes(16)),'title'=>$title];$db['books']=$books;});
     }
     public static function published(array $db): array {
         $pages=[]; foreach($db['pages'] as $key=>$entry)if($entry['published']!==null)$pages[PageTree::publicKey($key,$entry)]=$entry['published']+['id'=>PageTree::id($key,$entry)];

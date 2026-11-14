@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — Workspaces
+
+- Add real organization workspace management, stable IDs, scoped book registry, empty independent stores, archive/restore and explicit legacy adoption preserving existing URLs.
+- Scope Studio, Reader, API/search, page tree, media, editor AJAX and backups; require current organization membership and owner authorization for writes, with identity-before-content locking. Prevent organization deletion while spaces exist and fail closed when a registered store is missing.
+- Add per-workspace TAR backup/restore CLI, registry backup compatibility, readiness checks, canonical Markdown URL resolution and multi-user storage/HTTP/Chromium regression tests. No new runtime dependencies.
+
 ## 0.2.2 — Organizations
 
 - Add persistent organizations with stable IDs, unique case-insensitive slugs, member lists, owner-only settings, transfer of ownership, archive/restore and confirmed deletion. Organization membership is independent of installation-owner privileges; organization owners cannot be disabled until ownership is transferred or the organization is deleted.

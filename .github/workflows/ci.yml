@@ -29,6 +29,7 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python tests/identity-browser.py
       - run: python tests/organizations-browser.py
+      - run: python tests/workspaces-browser.py
       - run: python tests/editor-network-browser.py
       - run: python tests/editor-browser.py
       - run: python tests/media-browser.py

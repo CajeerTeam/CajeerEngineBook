@@ -1,6 +1,7 @@
 /* CajeerEngine Book Studio — local, source-preserving visual editing. */
 (() => {
     'use strict';
+    const scoped = path => (document.documentElement.dataset.workspacePrefix || '') + path;
     const form = document.querySelector('[data-editor-form]');
     if (!form) return;
     const root = form.querySelector('[data-book-editor]');
@@ -51,9 +52,9 @@
         const controller = new AbortController();
         const deadline = setTimeout(() => controller.abort(), 30000);
         try {
-            const response = await fetch(path, {method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            const response = await fetch(scoped(path), {method: 'POST', credentials: 'same-origin', cache: 'no-store',
                 signal: controller.signal, headers: {'Accept': 'application/json', 'X-Book-Studio': 'editor'}, body: data});
-            if (response.status === 401 || response.status === 403) {
+            if (response.status === 401 || response.status === 403 || (document.documentElement.dataset.workspacePrefix && response.status === 404)) {
                 conflicted = true; clearTimeout(timer); lockButtons();
                 announce('Access expired');
                 throw Object.assign(new Error('Session expired or access denied. Your edits are retained. Copy your Markdown, sign in at /login in another tab, then reload Studio. Autosave is stopped.'), {status: response.status});
@@ -442,7 +443,7 @@
     function mediaMarkdown(media) {
         const text = value => escapeText(String(value).replace(/[\r\n]/g, ' '));
         if (!media || !safeUrl(media.url) || !media.url || media.url.startsWith('/studio/media/') || /^(?:mailto:|#|\?)/i.test(media.url)) throw new Error('Choose a valid image or attachment URL.');
-        try { new URL(media.url, new URL('/docs/'+[value('book'),value('version'),value('path')].join('/'), document.baseURI)); } catch { throw new Error('Invalid media URL.'); }
+        try { new URL(media.url, new URL(scoped('/docs/'+[value('book'),value('version'),value('path')].join('/')), document.baseURI)); } catch { throw new Error('Invalid media URL.'); }
         const target = destination(media.url.replace(/&/g, '&amp;'));
         if (media.kind === 'attachment') {
             if (!localMedia(media.url) || !media.label.trim()) throw new Error('Choose a local attachment and enter a label.');
@@ -458,8 +459,15 @@
         return kind === 'image' ? {kind,url:'/media/'+item.id,alt:item.name,caption:'',width:100,align:'center'} : {kind,url:'/media/'+item.id,label:item.name};
     }
     function mediaPreviewUrl(media) {
-        if (localMedia(media.url)) return '/studio/media/file/' + media.url.slice(7);
-        return new URL(media.url, new URL('/docs/'+[value('book'),value('version'),value('path')].join('/'), document.baseURI)).href;
+        if (media.previewUrl) return media.previewUrl;
+        if (localMedia(media.url)) return scoped('/studio/media/file/' + media.url.slice(7));
+        // Resolve canonical Markdown paths before adding the workspace namespace.
+        const target = new URL(media.url, new URL('/docs/'+[value('book'),value('version'),value('path')].join('/'), document.baseURI));
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(media.url) && target.origin === location.origin) {
+            if (/^\/media\/[a-f0-9]{32}$/.test(target.pathname)) return scoped('/studio/media/file/'+target.pathname.slice(7)+target.search+target.hash);
+            if (/^\/(?:docs|studio|media|api\/v1|search)(?:\/|$)/.test(target.pathname)) return scoped(target.pathname+target.search+target.hash);
+        }
+        return target.href;
     }
     function mountMedia(segment, wrapper) {
         const media = segment.media;
@@ -870,13 +878,13 @@
             updatePageActions(result);
             const savedPreview = document.querySelector('[data-saved-preview]');
             if (savedPreview) savedPreview.hidden = true;
-            history.replaceState(null, '', '/studio?edit=' + encodeURIComponent(result.key));
+            history.replaceState(null, '', scoped('/studio?edit=' + encodeURIComponent(result.key)));
             dirty = visualInvalid || snapshot() !== lastSaved;
             announce(dirty ? 'Saved snapshot; newer changes pending' : action === 'publish' ? 'Published' : 'Draft saved');
             if (dirty) scheduleSave();
         } catch (e) {
             if (e.status === 409) { conflicted = true; announce('Revision conflict'); fail('Another session changed this page. Your edits are retained. Copy your Markdown before reloading; autosave is stopped.'); }
-            else { announce(e.status === 401 || e.status === 403 ? 'Access expired' : 'Save failed'); fail(e.message); }
+            else { announce(e.status === 401 || e.status === 403 || (document.documentElement.dataset.workspacePrefix && e.status === 404) ? 'Access expired' : 'Save failed'); fail(e.message); }
         } finally { pending = false; if (Number(value('revision')) === 0 && !conflicted) for (const name of ['book','version','path']) form.elements[name].readOnly = false; lockButtons(); }
     }
     function updatePageActions(result) {
@@ -888,12 +896,12 @@
         }
         if (list) {
             let row = [...list.querySelectorAll('[data-page-key]')].find(el => el.dataset.pageKey === result.key);
-            if (!row) { row = document.createElement('div'); row.dataset.pageKey = result.key; const link = document.createElement('a'); link.href = '/studio?edit=' + encodeURIComponent(result.key); link.textContent = result.key; row.append(link, ' ', document.createElement('small')); list.append(row); }
+            if (!row) { row = document.createElement('div'); row.dataset.pageKey = result.key; const link = document.createElement('a'); link.href = scoped('/studio?edit=' + encodeURIComponent(result.key)); link.textContent = result.key; row.append(link, ' ', document.createElement('small')); list.append(row); }
             row.querySelector('small').textContent = result.published ? 'Published' : 'Draft';
         }
         let actions = document.querySelector('[data-page-actions]');
         if (!actions) {
-            actions = document.createElement('form'); actions.method = 'post'; actions.action = '/studio'; actions.className = 'actions'; actions.dataset.pageActions = '';
+            actions = document.createElement('form'); actions.method = 'post'; actions.action = scoped('/studio'); actions.className = 'actions'; actions.dataset.pageActions = '';
             for (const [name, field] of Object.entries({csrf: value('csrf'), key: result.key, revision: String(result.revision)})) { const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = field; actions.append(input); }
             for (const action of ['unpublish','delete']) { const button = document.createElement('button'); button.name = 'action'; button.value = action; button.textContent = action === 'delete' ? 'Delete' : 'Unpublish'; actions.append(button); }
             form.after(actions);

@@ -1,6 +1,7 @@
 /* Studio media picker: no external services, no HTML interpolation. */
 (() => {
     'use strict';
+    const scoped = path => (document.documentElement.dataset.workspacePrefix || '') + path;
     const idPattern = /^[a-f0-9]{32}$/;
     const make = (tag, text) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; return el; };
     const button = (text, fn) => { const el = make('button', text); el.type = 'button'; el.addEventListener('click', fn); return el; };
@@ -40,7 +41,7 @@
             for (const item of results) {
                 if (!validItem(item, kind)) continue;
                 const select = button('', () => choose(item)); select.className = 'media-picker-item';
-                if (item.mime.startsWith('image/')) { const img = make('img'); img.src = '/studio/media/file/' + item.id + '?thumb=1'; img.alt = ''; img.loading = 'lazy'; select.append(img); }
+                if (item.mime.startsWith('image/')) { const img = make('img'); img.src = scoped('/studio/media/file/' + item.id + '?thumb=1'); img.alt = ''; img.loading = 'lazy'; select.append(img); }
                 else select.append(make('span', item.mime));
                 select.append(make('strong', item.name), make('small', `${item.folder || 'Root'} · ${Math.ceil(item.size/1024)} KiB`));
                 items.append(select);
@@ -54,7 +55,7 @@
             previous.disabled = next.disabled = true; status.textContent = 'Loading media…';
             try {
                 const query = new URLSearchParams({kind, q: search.value, page: String(Math.max(1,wanted))});
-                const response = await fetch('/studio/media/picker?' + query, {credentials:'same-origin',cache:'no-store',signal:current.signal,headers:{Accept:'application/json'}});
+                const response = await fetch(scoped('/studio/media/picker?' + query), {credentials:'same-origin',cache:'no-store',signal:current.signal,headers:{Accept:'application/json'}});
                 if (!response.ok) throw new Error(`Media search failed (${response.status})`);
                 const result = await response.json();
                 if (closed || controller !== current) return;
@@ -71,7 +72,7 @@
             items.querySelectorAll('button').forEach(b => b.disabled = true); progress.hidden = false; progress.value = 0; status.textContent = 'Uploading…';
             const data = new FormData(); data.append('csrf',csrf);data.append('action','upload');data.append('folder',folder.value);data.append('file',chosen);
             function finish(message) { uploadRequest = null; if (closed) return; upload.disabled = file.disabled = folder.disabled = search.disabled = searchButton.disabled = false; previous.disabled = page<=1;next.disabled=page*24>=total; items.querySelectorAll('button').forEach(b=>b.disabled=false);progress.hidden = true; status.textContent = message; }
-            xhr.open('POST','/studio/media'); xhr.setRequestHeader('X-Book-Media','1'); xhr.timeout = 120000;
+            xhr.open('POST',scoped('/studio/media')); xhr.setRequestHeader('X-Book-Media','1'); xhr.timeout = 120000;
             xhr.upload.onprogress = event => { if (event.lengthComputable) progress.value = event.loaded/event.total*100; };
             xhr.onload = () => { if (closed) return; let result; try { result = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300 && validItem(result?.item,kind)) { uploadRequest = null; choose(result.item); } else finish(result?.error || `Upload failed (${xhr.status})`); };
             xhr.onerror = () => finish('Network error'); xhr.ontimeout = () => finish('Upload timed out'); xhr.onabort = () => finish('Upload cancelled'); xhr.send(data);

@@ -42,14 +42,14 @@ final class OrganizationController
             catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$error=$e->getMessage();}
         }
         if($id===''){
-            $html='<div class="auth-panel org-panel"><h1>Your organizations</h1><p><a href="/account">Account</a> · <a href="/organizations/join">Accept invitation</a></p>'.self::notice($error).'<h2>Organizations</h2>';
+            $html='<div class="auth-panel org-panel"><h1>Your organizations</h1><p><a href="/account">Account</a> · <a href="/workspaces">Workspaces</a> · <a href="/organizations/join">Accept invitation</a></p>'.self::notice($error).'<h2>Organizations</h2>';
             foreach($this->store->organizations($session) as $o)$html.='<div class="org-card"><h3><a href="/organizations/'.$o['id'].'">'.self::e($o['name']).'</a></h3><p>'.self::e($o['slug']).' · '.self::e($o['role']).' · '.$o['member_count'].' members'.($o['archived']?' · Archived':'').'</p></div>';
             $html.='<h2>Create organization</h2>'.self::form($path,$csrf,'create',self::field('name','Organization name').self::field('slug','Slug (3–64 characters)','','text',64),'Create organization').'</div>';
             $page('Organizations',$html);return;
         }
         $o=$this->store->organization($session,$id);if(!$o){http_response_code(404);$page('Not found','<h1>Organization not found</h1>');return;}
         $rev=$o['revision'];$owner=$o['role']==='owner';
-        $html='<div class="auth-panel org-panel"><p><a href="/organizations">All organizations</a></p><h1>'.self::e($o['name']).'</h1><p>'.self::e($o['slug']).' · '.self::e($o['role']).' · '.($o['archived']?'Archived':'Active').'</p>'.self::notice($error);
+        $html='<div class="auth-panel org-panel"><p><a href="/organizations">All organizations</a> · <a href="/workspaces">Workspaces</a></p><h1>'.self::e($o['name']).'</h1><p>'.self::e($o['slug']).' · '.self::e($o['role']).' · '.($o['archived']?'Archived':'Active').'</p>'.self::notice($error);
         if($issued){$link='/organizations/join#'.$issued['token'];$html.='<section class="org-card"><h2>Invitation created</h2><p>Share this one-time invitation with '.self::e($issued['username']).'. It expires in seven days. The token is shown only now.</p><label>Invitation link<input readonly data-org-invite-link value="'.self::e($link).'"></label><button type="button" data-org-copy>Copy full link</button><p>Or copy the token: <code>'.self::e($issued['token']).'</code></p><p><a href="'.self::e($link).'">Open invitation form</a></p><p role="status" data-org-copy-status></p></section>';}
         if($owner&&!$o['archived'])$html.='<h2>Settings</h2>'.self::form($path,$csrf,'rename',self::field('name','Organization name',$o['name']).self::field('slug','Slug',$o['slug'],'text',64),'Save settings',$rev).'<h2>Invite participant</h2><p>Use the existing username, or choose a username for a new account. Existing accounts must sign in to accept.</p>'.self::form($path,$csrf,'invite',self::field('username','Invited username','','text',40),'Create / replace invitation',$rev);
         $html.='<h2>Members</h2>';

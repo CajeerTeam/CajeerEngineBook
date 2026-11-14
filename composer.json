@@ -20,6 +20,8 @@
             "python3 tests/identity-http.py",
             "@php tests/organizations.php",
             "python3 tests/organizations-http.py",
+            "@php tests/workspaces.php",
+            "python3 tests/workspaces-http.py",
             "@php tests/smoke.php",
             "@php tests/markdown-policy.php",
             "@php tests/markdown.php",

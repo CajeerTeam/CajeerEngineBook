@@ -5,6 +5,7 @@ namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 require_once __DIR__.'/Organizations.php';
 require_once __DIR__.'/OrganizationAccessException.php';
+require_once __DIR__.'/Workspaces.php';
 
 /** Private, versioned identity state. All mutations (including rate limits) serialize on one lock. */
 final class IdentityStore
@@ -17,7 +18,7 @@ final class IdentityStore
     private const DUMMY='$2y$12$DpzqfIAI7BeOso89k9BBBuHsphbrZMkYKhXVXARXfTDkjhp6ihHSu';
     private readonly string $dir;
     public function __construct(string $dataDir){$this->dir=rtrim($dataDir,'/').'/identity';}
-    private static function empty():array{return ['schema'=>2,'users'=>[],'sessions'=>[],'resets'=>[],'attempts'=>[],'organizations'=>[],'invitations'=>[]];}
+    private static function empty():array{return ['schema'=>2,'users'=>[],'sessions'=>[],'resets'=>[],'attempts'=>[],'organizations'=>[],'invitations'=>[],'workspaces'=>[]];}
     private function transaction(callable $fn):mixed
     {
         Files::dir($this->dir);$lock=Files::path($this->dir,'identity.lock');$path=Files::path($this->dir,'identity.json');
@@ -26,7 +27,7 @@ final class IdentityStore
             if(!chmod($lock,0600)||!flock($h,LOCK_EX))throw new \RuntimeException('Identity lock unavailable');
             $exists=file_exists($path);if($exists&&(!is_file($path)||filesize($path)>self::MAX_BYTES))throw new \RuntimeException('Invalid identity store');
             $db=$exists?Files::read($path):self::empty();$before=$db;
-            if(($db['schema']??null)===1){$db['schema']=2;$db['organizations']=[];$db['invitations']=[];}self::validate($db);
+            if(($db['schema']??null)===1){$db['schema']=2;$db['organizations']=[];$db['invitations']=[];}$db['workspaces']??=[];self::validate($db);
             $result=$fn($db);
             if($db!==$before){self::validate($db);$json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');Files::write($path,$json."\n");}
             return $result;
@@ -53,7 +54,7 @@ final class IdentityStore
         foreach($db['sessions'] as $key=>$s)if(!is_string($key)||!self::hex($key,64)||!is_array($s)||!isset($db['users'][$s['user']??''])||!is_string($s['id']??null)||!self::hex($s['id'],32)||!is_string($s['csrf']??null)||!self::hex($s['csrf'],64)||!is_int($s['created']??null)||!is_int($s['seen']??null)||!is_int($s['expires']??null))throw new \RuntimeException('Invalid identity session');
         foreach($db['resets'] as $key=>$r)if(!is_string($key)||!self::hex($key,64)||!is_array($r)||!isset($db['users'][$r['user']??''])||!is_int($r['expires']??null))throw new \RuntimeException('Invalid reset record');
         foreach($db['attempts'] as $k=>$a)if(!is_string($k)||!self::hex($k,64)||!is_array($a)||!is_int($a['count']??null)||!is_int($a['until']??null)||$a['count']<1)throw new \RuntimeException('Invalid rate limit');
-        Organizations::validate($db);
+        Organizations::validate($db);Workspaces::validate($db);
     }
     private static function safe(array $u):array{return array_intersect_key($u,array_flip(['id','username','name','email','owner','enabled','created']));}
     private static function find(array $db,string $username):?array{foreach($db['users'] as $u)if($u['username']===$username)return $u;return null;}
@@ -113,6 +114,32 @@ final class IdentityStore
     /** Trusted operator only; token never stored in plaintext. */
     public function issueReset(string $username):string{return $this->transaction(function(&$db)use($username){$u=self::find($db,self::username($username));if(!$u||!$u['enabled'])throw new \DomainException('Account unavailable.');self::prune($db,time());foreach($db['resets'] as $k=>$r)if($r['user']===$u['id'])unset($db['resets'][$k]);$token=bin2hex(random_bytes(32));$db['resets'][hash('sha256',$token)]=['user'=>$u['id'],'expires'=>time()+self::RESET_TTL];return $token;});}
     public function reset(string $token,string $password,string $ip):string{return $this->transaction(function(&$db)use($token,$password,$ip){$now=time();self::prune($db,$now);$key=hash('sha256',substr($token,0,128));if(!self::rate($db,'reset',$ip,$key,$now))return 'limited';$r=self::hex($token,64)?($db['resets'][$key]??null):null;if(!$r||!$db['users'][$r['user']]['enabled'])return 'invalid';$db['users'][$r['user']]['hash']=self::password($password);self::revoke($db,$r['user']);return 'ok';});}
+    /** Trusted operator only: no credentials or membership records returned. */
+    public function legacyWorkspaceAvailable(string $token):bool{return $this->transaction(fn($db)=>($db['users'][self::requireSession($db,$token)['user']]['owner']??false)&&Workspaces::legacy($db)===null);}
+    public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
+    public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();});}
+    public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
+    public function createWorkspace(string $token,string $org,string $name,string $slug,bool $legacy=false):array{return $this->transaction(function(&$db)use($token,$org,$name,$slug,$legacy){$w=Workspaces::create($db,self::requireSession($db,$token)['user'],$org,$name,$slug,$legacy);
+        if(!$legacy){$dir=Workspaces::directory(dirname($this->dir),$w);if(file_exists($dir)||is_link($dir))throw new \RuntimeException('Workspace directory already exists');Files::dir($dir);BookStore::writeDatabase($dir.'/books.json',['schema'=>1,'pages'=>[],'media'=>[],'books'=>[]]);}
+        return $w;});}
+    public function mutateWorkspace(string $token,string $id,int $rev,string $action,string $name,string $slug):void{$this->transaction(function(&$db)use($token,$id,$rev,$action,$name,$slug){Workspaces::mutate($db,self::requireSession($db,$token)['user'],$id,$rev,$action,$name,$slug);});}
+    /** Identity lock precedes every scoped content lock. No identity calls inside callback. */
+    public function withWorkspace(string $token,string $org,string $id,callable $fn):mixed{
+        return $this->transaction(function(&$db)use($token,$org,$id,$fn){
+            try{$s=self::requireSession($db,$token);}catch(\DomainException){return $fn(null,null);}
+            if($s['seen']<=time()-300){$s['seen']=time();$db['sessions'][hash('sha256',$token)]=$s;}
+            $ctx=['session'=>$s,'user'=>self::safe($db['users'][$s['user']])];
+            return $fn($ctx,Workspaces::access($db,$s['user'],$org,$id));
+        });
+    }
+    public function withLegacyStudio(string $token,callable $fn):mixed{
+        return $this->transaction(function(&$db)use($token,$fn){
+            try{$s=self::requireSession($db,$token);}catch(\DomainException){return $fn(null,false);}
+            if($s['seen']<=time()-300){$s['seen']=time();$db['sessions'][hash('sha256',$token)]=$s;}
+            $u=self::safe($db['users'][$s['user']]);$w=Workspaces::legacy($db);$o=$w?$db['organizations'][$w['organization']]:null;
+            return $fn(['session'=>$s,'user'=>$u],$o?(!$o['archived']&&$o['owner']===$u['id']):$u['owner']);
+        });
+    }
     public function organizations(string $token):array{return $this->transaction(fn($db)=>Organizations::list($db,self::requireSession($db,$token)['user']));}
     public function organization(string $token,string $id):?array{return $this->transaction(fn($db)=>Organizations::detail($db,self::requireSession($db,$token)['user'],$id));}
     public function createOrganization(string $token,string $name,string $slug):array{return $this->transaction(function(&$db)use($token,$name,$slug){return Organizations::create($db,self::requireSession($db,$token)['user'],$name,$slug);});}
@@ -131,6 +158,6 @@ final class IdentityStore
         });
     }
     /** Backup includes organizations and memberships; never live sessions, reset or invitation credentials. */
-    public function backup():array{return $this->transaction(fn($db)=>['schema'=>2,'users'=>$db['users'],'organizations'=>$db['organizations']]);}
-    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)===2&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']===2?$backup['organizations']:[];self::validate($db);});}
+    public function backup():array{return $this->transaction(fn($db)=>['schema'=>2,'users'=>$db['users'],'organizations'=>$db['organizations'],'workspaces'=>$db['workspaces']]);}
+    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)===2&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']===2?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];self::validate($db);});}
 }

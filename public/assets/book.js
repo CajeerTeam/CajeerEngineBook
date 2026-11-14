@@ -63,7 +63,7 @@
         const actual = document.createElement('button'); actual.type = 'button'; actual.textContent = 'Actual size'; actual.setAttribute('aria-pressed','false');
         actual.addEventListener('click', () => { const enabled = dialog.classList.toggle('book-image-actual'); actual.textContent = enabled ? 'Fit to screen' : 'Actual size'; actual.setAttribute('aria-pressed',String(enabled)); });
         bar.append(close,actual,link);
-        if (/^\/(?:studio\/media\/file|media)\/[a-f0-9]{32}$/.test(href)) {
+        if (/^\/(?:w\/[a-f0-9]{32}\/[a-f0-9]{32}\/)?(?:studio\/media\/file|media)\/[a-f0-9]{32}$/.test(href)) {
             const download = document.createElement('a'); download.href = href+'?download=1'; download.textContent = 'Download image'; bar.append(download);
         }
         const img = document.createElement('img'); img.src = href; img.alt = original.alt; img.referrerPolicy = 'no-referrer';

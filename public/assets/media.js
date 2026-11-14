@@ -1,6 +1,7 @@
 /* Local media uploader; each file is an independent, revision-safe request. */
 (() => {
     'use strict';
+    const scoped = path => (document.documentElement.dataset.workspacePrefix || '') + path;
     const form = document.querySelector('[data-media-upload]');
     if (!form) return;
     const input = form.elements.file, drop = form.querySelector('[data-media-drop]');
@@ -20,7 +21,7 @@
     function send(file, folder, onProgress) {
         return new Promise((resolve,reject) => {
             const data = new FormData(); data.append('csrf',form.elements.csrf.value);data.append('action','upload');data.append('folder',folder);data.append('file',file);
-            const xhr = new XMLHttpRequest();xhr.open('POST','/studio/media');xhr.setRequestHeader('X-Book-Media','1');xhr.timeout=120000;
+            const xhr = new XMLHttpRequest();xhr.open('POST',scoped('/studio/media'));xhr.setRequestHeader('X-Book-Media','1');xhr.timeout=120000;
             xhr.upload.onprogress = e => {if(e.lengthComputable)onProgress(e.loaded/e.total);};
             xhr.onload = () => {let body;try{body=JSON.parse(xhr.responseText);}catch{} if(xhr.status>=200&&xhr.status<300&&body?.item)resolve(body);else reject(new Error(body?.error || `Upload failed (${xhr.status})`));};
             xhr.onerror = () => reject(new Error('Network error'));xhr.ontimeout=()=>reject(new Error('Upload timed out'));xhr.send(data);
@@ -40,8 +41,8 @@
         }
         busy=false;button.disabled=false;input.disabled=false;input.value='';input.required=true;dropped=null;
         status.textContent=`Uploaded ${uploaded}, reused ${duplicates}.`+(errors.length?' Failed: '+errors.join('; '):'');
-        if(!errors.length){location.assign('/studio/media');return;}
-        const refresh=document.createElement('a');refresh.href='/studio/media';refresh.textContent=' Refresh library';status.append(refresh);
+        if(!errors.length){location.assign(scoped('/studio/media'));return;}
+        const refresh=document.createElement('a');refresh.href=scoped('/studio/media');refresh.textContent=' Refresh library';status.append(refresh);
     });
     document.querySelectorAll('[data-media-copy]').forEach(button=>button.addEventListener('click',async()=>{
         const field=button.closest('.media-item').querySelector('input[readonly]');
