@@ -13,6 +13,9 @@ final class AuthController
         if(!setcookie(self::cookieName($name),$value,['expires'=>$expires,'path'=>'/','secure'=>self::secure(),'httponly'=>true,'samesite'=>'Strict']))throw new \RuntimeException('Cannot set authentication cookie');
     }
     private static function readCookie(string $name):string{$s=$_COOKIE[self::cookieName($name)]??'';return is_string($s)&&preg_match('/\A[a-f0-9]{64}\z/D',$s)?$s:'';}
+    public function preauthToken():string{
+        $csrf=self::readCookie('preauth');if($csrf===''&&($_SERVER['REQUEST_METHOD']??'GET')!=='POST'){$csrf=bin2hex(random_bytes(32));self::cookie('preauth',$csrf,time()+1800);}return $csrf;
+    }
     public function token():string{return self::readCookie('session');}
     public function current():?array{return $this->store->current($this->token());}
     private static function field(string $name,string $label,string $type='text',string $value='',string $autocomplete='off'):string{return '<label>'.self::e($label).'<input required name="'.$name.'" type="'.$type.'" value="'.self::e($value).'" autocomplete="'.$autocomplete.'" maxlength="'.($type==='password'?1024:254).'"></label>';}
@@ -49,7 +52,7 @@ final class AuthController
             if($csrf===''){$csrf=bin2hex(random_bytes(32));self::cookie('preauth',$csrf,time()+1800);}
             if($path==='/login'){
                 $setup=!$this->store->initialized()&&!getenv('BOOK_ADMIN_HASH')?'<p>Installation not initialized. Run the operator CLI <code>bin/identity.php init</code>.</p>':'';
-                $page('Sign in','<div class="auth-panel"><h1>Sign in</h1>'.self::notice($error).(isset($_GET['reset'])?'<p>Password reset complete. Sign in with your new password.</p>':'').$setup.self::form('/login',$csrf,self::field('username','Username','text','','username').self::field('password','Password','password','','current-password'),'Sign in').'<p><a href="/account/reset">Recover access</a></p></div>');
+                $page('Sign in','<div class="auth-panel"><h1>Sign in</h1>'.self::notice($error).(isset($_GET['reset'])?'<p>Password reset complete. Sign in with your new password.</p>':'').(isset($_GET['joined'])?'<p>Invitation accepted. Sign in with your new account.</p>':'').$setup.self::form('/login',$csrf,self::field('username','Username','text','','username').self::field('password','Password','password','','current-password'),'Sign in').'<p><a href="/account/reset">Recover access</a></p></div>');
             }else $page('Recover access','<div class="auth-panel"><h1>Recover access</h1><p>Ask the installation operator for a one-time recovery token. It expires after 30 minutes.</p>'.self::notice($error).self::form('/account/reset',$csrf,self::field('token','Recovery token','password','','off').self::field('password','New password','password','','new-password').self::field('confirm','Confirm password','password','','new-password'),'Reset password').'<p><a href="/login">Sign in</a></p></div>');
             return;
         }
@@ -79,7 +82,7 @@ final class AuthController
                 if($error===''){self::redirect($path.'?updated=1');return;}
             }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$error=$e->getMessage();}
         }
-        $html='<div class="auth-panel"><h1>'.($path==='/account/users'?'User management':'Your account').'</h1>'.self::notice($error).(isset($_GET['updated'])?'<p>Changes saved.</p>':'').'<p><a href="/account">Account</a>'.($user['owner']?' · <a href="/studio">Studio</a> · <a href="/account/users">Users</a>':'').'</p>';
+        $html='<div class="auth-panel"><h1>'.($path==='/account/users'?'User management':'Your account').'</h1>'.self::notice($error).(isset($_GET['updated'])?'<p>Changes saved.</p>':'').'<p><a href="/account">Account</a> · <a href="/organizations">Organizations</a>'.($user['owner']?' · <a href="/studio">Studio</a> · <a href="/account/users">Users</a>':'').'</p>';
         if($path==='/account/users'){
             $html.='<h2>Create user</h2>'.self::form($path,$csrf,self::field('username','Username','text','','username').self::field('name','Display name').self::field('email','Email','email').self::field('password','Initial password (12–72 bytes)','password','','new-password'),'Create account','create').'<h2>Accounts</h2>';
             foreach($this->store->users($token) as $u){$html.='<div class="account-row"><strong>'.self::e($u['name']).'</strong><p>'.self::e($u['username'].' · '.$u['email']).' · '.($u['owner']?'Installation owner':($u['enabled']?'Active':'Disabled')).'</p>';if(!$u['owner'])$html.=self::form($path,$csrf,'<input type="hidden" name="id" value="'.$u['id'].'">',$u['enabled']?'Disable account':'Enable account',$u['enabled']?'disable':'enable');$html.='</div>';}

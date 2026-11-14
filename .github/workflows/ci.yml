@@ -28,6 +28,7 @@ jobs:
       - run: python -m pip install playwright==1.57.0
       - run: python -m playwright install --with-deps chromium
       - run: python tests/identity-browser.py
+      - run: python tests/organizations-browser.py
       - run: python tests/editor-network-browser.py
       - run: python tests/editor-browser.py
       - run: python tests/media-browser.py

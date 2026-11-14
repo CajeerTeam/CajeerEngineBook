@@ -28,6 +28,7 @@ final class App {
             if($path==='/diagram-frame'){DiagramFrame::serve($method);return;}
             if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
             if(in_array($path,['/login','/logout','/account','/account/users','/account/reset'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
+            if($path==='/organizations'||str_starts_with($path,'/organizations/')){(new OrganizationController($this->identityStore,$this->auth))->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/studio'||str_starts_with($path,'/studio/')){$this->studio($path,$method);return;}
             if($method==='POST'){http_response_code(405);header('Allow: GET, HEAD');return;}
             if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method);return;}

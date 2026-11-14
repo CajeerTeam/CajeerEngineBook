@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 — Organizations
+
+- Add persistent organizations with stable IDs, unique case-insensitive slugs, member lists, owner-only settings, transfer of ownership, archive/restore and confirmed deletion. Organization membership is independent of installation-owner privileges; organization owners cannot be disabled until ownership is transferred or the organization is deleted.
+- Add CSRF-protected, expiring, single-use username-bound invitations for existing and new accounts, hashed tokens, replacement/revocation, copyable fragment links and manual token entry. Accepting an invitation and creating a new account commit in the same identity transaction.
+- Migrate identity schema 1 to 2 under the existing lock; keep existing accounts, sessions and content unchanged. Include organizations/memberships in private identity backups, exclude active invitations and sessions, and support restoring schema-1 backups.
+- Enforce organization access and revisions server-side; add real storage/concurrency, HTTP and browser tests to CI. Content remains installation-scoped until Workspaces and RBAC; no new runtime dependencies.
+
 ## 0.2.1 — Identity & Authentication
 
 - Replace Studio Basic Auth with individual username/password accounts, server-side hashed session tokens, CSRF-protected sign-in/sign-out and account pages. Installation owner alone can access Studio and manage users; ordinary accounts have personal profiles only until organizational authorization arrives.

@@ -140,3 +140,4 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 
 /* Identity pages */
 .auth-panel{max-width:680px;margin:0 auto}.auth-panel .editor{margin:1rem 0 1.5rem}.auth-panel .editor label{display:grid;gap:.35rem}.auth-panel .editor button{justify-self:start}.auth-notice{border:1px solid currentColor;padding:.75rem;border-radius:.5rem}.account-row{border-bottom:1px solid var(--line,#888);padding:.75rem 0}.account-row .editor{margin:.5rem 0}
+.org-panel{max-width:760px}.org-card{border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0;overflow-wrap:anywhere;background:var(--panel)}.org-card h3{margin:0}.org-card p{margin:.4rem 0}.org-card input[readonly]{width:100%;margin:.5rem 0}.org-card .org-form{margin:.6rem 0}.org-form button{justify-self:start}.org-card code{word-break:break-all}.org-panel h2{margin-top:2rem}

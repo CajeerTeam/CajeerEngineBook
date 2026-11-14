@@ -18,7 +18,7 @@ try{
         if($command==='backup'){
             if(!is_dir($parent)||file_exists($path)||is_link($path))throw new InvalidArgumentException('Backup requires a new file in an existing directory');
             $backup=$store->backup();if($backup['users']===[])throw new RuntimeException('Identity not initialized');
-            $temp=$parent.'/.identity-backup-'.bin2hex(random_bytes(12));try{Files::json($temp,$backup);if(!link($temp,$path))throw new RuntimeException('Cannot publish backup');Files::syncDir($parent);}finally{if(is_file($temp))unlink($temp);}
+            $temp=$parent.'/.identity-backup-'.bin2hex(random_bytes(12));try{Files::write($temp,json_encode($backup,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");if(!link($temp,$path))throw new RuntimeException('Cannot publish backup');Files::syncDir($parent);}finally{if(is_file($temp))unlink($temp);}
         }else{if(!is_file($path)||is_link($path)||filesize($path)>4*1024*1024)throw new InvalidArgumentException('Invalid identity backup');$store->restore(Files::read($path));}
         echo 'Identity '.$command." complete.\n";
     }else{fwrite(STDERR,"Usage (BOOK_DATA_DIR selects installation):\n  php bin/identity.php init USERNAME EMAIL 'Display name' < password-input\n  php bin/identity.php reset USERNAME\n  php bin/identity.php backup /private/new-file.json\n  php bin/identity.php restore /private/file.json\n");exit(2);}

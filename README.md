@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -40,7 +40,34 @@ unset BOOK_PASSWORD
 php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
-No default password, public registration or Basic Auth fallback. Sign in via `/login` and use `/account` to manage profile, password and sessions; `/account/users` is owner-only. Use HTTPS and `BOOK_SECURE_COOKIE=1` outside localhost. Secure cookies have the `__Host-` prefix, HttpOnly, SameSite=Strict and path `/`; do not use HTTP for real credentials. Reverse proxies should rate-limit `/login`, `/account/reset` and Studio; rate limiting inside the application uses `REMOTE_ADDR`, not client-supplied forwarded headers.
+No default password, open public registration or Basic Auth fallback. Invitation-only registration is available in 0.2.2. Sign in via `/login` and use `/account` to manage profile, password and sessions; `/account/users` is owner-only. Use HTTPS and `BOOK_SECURE_COOKIE=1` outside localhost. Secure cookies have the `__Host-` prefix, HttpOnly, SameSite=Strict and path `/`; do not use HTTP for real credentials. Reverse proxies should rate-limit `/login`, `/account/reset` and Studio; rate limiting inside the application uses `REMOTE_ADDR`, not client-supplied forwarded headers.
+
+## Upgrade to 0.2.2 — Organizations
+
+Stop writes and make a complete backup of `BOOK_DATA_DIR` before applying the changed files. Rebuild the Docker image or reuse the existing locked Composer and Mermaid dependencies. Existing users, sessions, documentation, media and URLs are preserved. The first identity transaction atomically upgrades `identity/identity.json` from schema 1 to schema 2, adding organization and invitation collections. No separate migration command is needed; `/health/ready` also checks identity integrity. Do not downgrade the code alone: restore a pre-upgrade data backup for rollback to 0.2.1, which cannot read schema 2.
+
+Open `/organizations` after signing in. Any enabled account can create an organization; each organization has exactly one enabled owner, a stable ID and a unique case-insensitive slug (3–64 ASCII letters/digits/hyphens). Choose an organization to manage its settings, members and invitations. Owners can rename, archive, restore, transfer ownership to an enabled member, remove members and revoke invitations. Members may leave, but an owner must transfer ownership before leaving. An installation operator cannot disable an account that owns an organization until ownership is transferred or the organization is deleted. Archiving revokes outstanding invitations; archived organizations remain visible to members but cannot accept invitations or be renamed. An owner can delete an archived organization only by confirming its slug. Take a private identity backup before permanent deletion; deletion removes organization metadata and memberships, not individual accounts. Organization changes are checked against a revision under the same identity lock, so stale forms are rejected and changes to membership take effect on the next request.
+
+### Invitations
+
+1. An organization owner chooses an existing username or a username for a new account, and creates an invitation. The one-time token is shown once, with a copyable link `/organizations/join#TOKEN`. Share it securely; the token is a bearer secret for joining the specified organization. It is not placed in HTTP query strings or logged by normal URL access logs. The browser copies the fragment into the form and removes it from the address; without JavaScript paste the token manually.
+2. Existing users must sign in to the invited account and open `/organizations/join` (paste the token or reopen the original invitation link). New users can enter a display name, email and password on that page; the account is created with the invited username. Email is contact data, not a verified identity or a delivery channel. A token for an existing account is also bound to its immutable ID.
+3. The server verifies the token, expiry, account and membership under the identity lock. Registration and membership commit atomically. A used, replaced, revoked or expired token cannot be redeemed. Invitations expire in seven days; creating another for the same username replaces the previous one. Rate limits are five attempts per token and 30 per IP per 15 minutes, independent of login limits. Only SHA-256 token digests are stored. The invitation form is protected by the existing pre-authentication or session CSRF token.
+
+Limits: 100 organizations per installation, 100 outstanding invitations per organization, 500 users and the existing 4 MiB identity state quota. Organization members can see the names, usernames, membership roles and status of other members of that organization; only its owner sees invitation metadata. Organization ownership does **not** grant global Studio access or access to other organizations. The installation owner continues to manage the existing global documentation and accounts; ordinary users can manage their own organizations but cannot enter Studio. Workspaces, scoped content, Admin/Editor/Viewer RBAC and private documentation arrive in subsequent releases. No email delivery, public registration, or externally verified identity is introduced.
+
+### Backup, restore and tests
+
+`php bin/identity.php backup /secure/backups/identity-0.2.2.json` now saves users, organizations and memberships in schema 2; it excludes sessions, reset tokens, invitations and rate limits. `restore` accepts both schema 1 and 2 backups into an uninitialized identity store. Reissue invitations after restore. Keep the backup private (password hashes are included). Content-only TAR/JSON exports still exclude identity and organizations. Back up both components while writes are stopped.
+
+```sh
+php tests/organizations.php
+python3 tests/organizations-http.py
+python3 tests/organizations-browser.py
+composer test
+```
+
+The PHP tests include migration, cross-organization authorization, ownership invariants, expiry, restore and concurrent redemption by two real PHP processes. HTTP tests use independent cookie jars; browser tests use the normal application and invitation fragment navigation in CI.
 
 ## Upgrade to 0.2.1 — Identity & Authentication
 
