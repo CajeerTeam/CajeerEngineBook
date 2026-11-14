@@ -95,10 +95,16 @@ def exercise(pw, base, data, work):
         card=page.locator('.media-item').filter(has=page.locator('h2',has_text='renamed.png'));card.locator('summary').click();card.locator('input[name=name]').fill('browser-renamed.png');card.locator('input[name=folder]').fill('browser-folder');card.get_by_role('button',name='Save details').click();page.locator('h2',has_text='browser-renamed.png').wait_for()
         check(json.loads((data/'books.json').read_text())['media'][id]['folder']=='browser-folder','browser rename and folder update')
         page.locator('.media-filters input[name=q]').fill('browser-renamed');page.locator('.media-filters button').click();page.locator('h2',has_text='browser-renamed.png').wait_for();check(page.locator('.media-item').count()==1,'browser search')
-        page.on('dialog',lambda dialog:dialog.accept());card=page.locator('.media-item').filter(has=page.locator('h2',has_text='browser-renamed.png'));card.locator('summary').click();card.get_by_role('button',name='Delete',exact=True).click();page.locator('h2',has_text='batch2.txt').wait_for();check(id not in json.loads((data/'books.json').read_text())['media'],'browser deletion')
+        page.on('dialog',lambda dialog:dialog.accept());card=page.locator('.media-item').filter(has=page.locator('h2',has_text='browser-renamed.png'));card.locator('summary').click()
+        if not STORAGE_ONLY:
+            check(card.get_by_role('button',name='Delete',exact=True).is_disabled(),'history retains the image and blocks deletion')
+            page.locator('.media-filters input[name=q]').fill('batch1');page.locator('.media-filters button').click();card=page.locator('.media-item').filter(has=page.locator('h2',has_text='batch1.txt'));card.locator('summary').click();card.get_by_role('button',name='Delete',exact=True).click();page.locator('h2',has_text='batch2.txt').wait_for()
+            check(not any(x['name']=='batch1.txt' for x in json.loads((data/'books.json').read_text())['media'].values()),'browser deletion of unused file')
+        else:
+            card.get_by_role('button',name='Delete',exact=True).click();page.locator('h2',has_text='batch2.txt').wait_for();check(id not in json.loads((data/'books.json').read_text())['media'],'browser deletion')
         check(not errors,'no browser JavaScript errors');browser.close()
     else:
-        check(action('delete',id,2).status==200 and not (data/'media'/(id+'.blob')).exists(),'HTTP deletion removes unused blob')
+        check(action('delete',id,2).status==(200 if STORAGE_ONLY else 409) and (data/'media'/(id+'.blob')).exists()==(not STORAGE_ONLY),'HTTP deletion respects retained history')
     public.dispose();api.dispose()
 
 

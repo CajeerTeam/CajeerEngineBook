@@ -868,12 +868,16 @@
         if (encoder.encode(source.value).length > 262144) { fail('Markdown exceeds 256 KiB.'); return; }
         clearTimeout(timer); clearError();
         const data = parameters(); data.set('action', action);
+        const note = automatic ? '' : (form.elements.note?.value || '');
+        if (encoder.encode(note.trim()).length > 500) { fail('Revision note exceeds 500 UTF-8 bytes.'); return; }
+        data.set('note', note);
         const sent = snapshot(); const oldRevision = value('revision');
         pending = true; for (const name of ['book','version','path']) form.elements[name].readOnly = true; lockButtons(); announce(action === 'publish' ? 'Publishing…' : 'Saving draft…');
         try {
             const result = await request('/studio', data);
             if (typeof result.key !== 'string' || !Number.isSafeInteger(result.revision) || result.revision !== Number(oldRevision) + 1) throw new Error('Unexpected save response. Reload before saving again.');
             form.elements.revision.value = String(result.revision); lastSaved = sent;
+            if (!automatic && form.elements.note?.value === note) form.elements.note.value = '';
             for (const name of ['book','version','path']) form.elements[name].readOnly = true;
             updatePageActions(result);
             const savedPreview = document.querySelector('[data-saved-preview]');
@@ -899,6 +903,11 @@
             if (!row) { row = document.createElement('div'); row.dataset.pageKey = result.key; const link = document.createElement('a'); link.href = scoped('/studio?edit=' + encodeURIComponent(result.key)); link.textContent = result.key; row.append(link, ' ', document.createElement('small')); list.append(row); }
             row.querySelector('small').textContent = result.published ? 'Published' : 'Draft';
         }
+        if (typeof result.id === 'string' && /^[a-f0-9]{32}$/.test(result.id)) {
+            let historyLink = document.querySelector('[data-page-history]');
+            if (!historyLink) { historyLink = document.createElement('p'); historyLink.dataset.pageHistory = ''; form.after(historyLink); }
+            const link = document.createElement('a'); link.href = scoped('/studio/history?page=' + result.id); link.textContent = 'Page history'; historyLink.replaceChildren(link);
+        }
         if (form.dataset.canPublish === '0') return;
         let actions = document.querySelector('[data-page-actions]');
         if (!actions) {
@@ -906,7 +915,7 @@
             for (const [name, field] of Object.entries({csrf: value('csrf'), key: result.key, revision: String(result.revision)})) { const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = field; actions.append(input); }
             for (const action of ['unpublish','delete']) { const button = document.createElement('button'); button.name = 'action'; button.value = action; button.textContent = action === 'delete' ? 'Delete' : 'Unpublish'; actions.append(button); }
             form.after(actions);
-            actions.addEventListener('submit', e => { if (e.submitter?.value === 'delete' && !confirm('Delete this page permanently?')) e.preventDefault(); });
+            actions.addEventListener('submit', e => { if (e.submitter?.value === 'delete' && !confirm('Delete this page? Retained history remains recoverable.')) e.preventDefault(); });
             bindPageActions(actions);
         }
         actions.elements.revision.value = String(result.revision);

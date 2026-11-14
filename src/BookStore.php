@@ -2,8 +2,11 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/RevisionHistory.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
+    private ?array $historyActor=null;
+    public function setHistoryActor(array $user):void { $this->historyActor=['id'=>$user['id'],'username'=>$user['username']]; }
     public function __construct(private readonly string $dir, private readonly bool $seed=true) {}
     public static function slug(string $s): bool { return preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$s)===1 && !in_array($s,['.','..'],true); }
     public static function key(string $book,string $version,string $path): string {
@@ -19,6 +22,7 @@ final class BookStore {
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
         if(($db['schema']??null)!==1||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         self::books($db);
+        if(isset($db['history']))RevisionHistory::validate($db);
         return $db;
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
@@ -29,16 +33,17 @@ final class BookStore {
         try { if(!flock($h,LOCK_SH)) throw new \RuntimeException('Lock failed'); return $fn($this->read()); }
         finally { fclose($h); }
     }
-    public function change(callable $fn): void {
+    public function change(callable $fn,?string $historyAction=null,string $historyNote='',?string $historySource=null): void {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $fn($db); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$historyAction===null?null:$db; $fn($db); if($before!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
     public static function writeDatabase(string $path,array $db): void {
         self::books($db);
+        if(isset($db['history']))RevisionHistory::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
@@ -104,7 +109,7 @@ final class BookStore {
             if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}
             $db['pages'][$key]=$old;$db['books']=$books;
             $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null,'id'=>$old['id'],'navigation_changed'=>$navigationChanged];
-        }); return $result;
+        },$publish?'publish':'save',RevisionHistory::note((string)($input['note']??''))); return $result;
     }
     public function remove(string $key,int $revision,bool $unpublish): void {
         $this->change(function(array &$db)use($key,$revision,$unpublish){
@@ -115,7 +120,7 @@ final class BookStore {
                 if(!$unpublish)PageTree::remember($db,$publicKey,$e['id']);
             }
             if($unpublish){$e['published']=null;$e['revision']++;}else {PageTree::retire($db,$key,$e['id']);unset($db['pages'][$key]);}
-        });
+        },$unpublish?'unpublish':'delete');
     }
     public function copyVersion(string $book,string $from,string $to): void {
         self::key($book,$from,'index');self::key($book,$to,'index'); if($from===$to)throw new \InvalidArgumentException('Choose another version');
@@ -138,7 +143,10 @@ final class BookStore {
                 if(PageTree::reserved($db,$dest,$id)||(isset($copy[$dest])&&$copy[$dest]['id']!==$id))throw new \DomainException('Target redirect is reserved');
                 if($field==='redirects')PageTree::remember($db,$dest,$id);else PageTree::retire($db,$dest,$id);
             }
-        });
+        },'copy');
+    }
+    public function restoreRevision(string $page,string $id,string $state,int $revision,string $head,string $note=''):string {
+        $key='';$this->change(function(&$db)use($page,$id,$state,$revision,$head,&$key){$key=RevisionHistory::restore($db,$page,$id,$state,$revision,$head);},'restore',$note,$id);return $key;
     }
     /** Books are real persisted records, with deterministic IDs for pre-registry content. */
     public static function books(array $db):array{

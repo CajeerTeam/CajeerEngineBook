@@ -11,6 +11,7 @@ final class StoreAudit
         $result=[];
         $audit=function(array &$db)use($repair,&$result): void {
             PageTree::validate($db);
+            RevisionHistory::validate($db,true);
             if(count($db['pages'])>1000||count($db['media']??[])>MediaStore::MAX_FILES)throw new \RuntimeException('Store exceeds supported record counts');
             $items=$db['media']??[];$total=0;$changed=0;$snapshots=0;
             foreach($items as $id=>$item){
@@ -37,7 +38,7 @@ final class StoreAudit
                 }
                 if($repair&&$pageChanged)$entry['revision']++; // invalidate Studio writers using old snapshots
             }unset($entry);
-            $result=['pages'=>count($db['pages']),'snapshots'=>$snapshots,'media'=>count($items),'media_bytes'=>$total,'reference_mismatches'=>$changed,'repaired'=>$repair];
+            $result=['pages'=>count($db['pages']),'snapshots'=>$snapshots,'history_entries'=>count($db['history']??[]),'media'=>count($items),'media_bytes'=>$total,'reference_mismatches'=>$changed,'repaired'=>$repair];
         };
         if($repair)$this->store->change($audit);
         else $this->store->snapshot(function(array $db)use($audit){$audit($db);});

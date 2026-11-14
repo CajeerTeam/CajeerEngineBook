@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.6 — Revision History
+
+- Record immutable, attributed draft/publication snapshots atomically with page saves, publication, tree changes, copies, unpublishing, deletion and restoration. Preserve stable IDs and initial legacy snapshots; skip identical autosaves, support optional revision notes.
+- Add scoped Studio history, filtered page listing, arbitrary historical snapshot comparison, escaped line diff, historical Markdown preview and restore-as-draft (including deleted pages). Restore validates current revision, history head, media references and RBAC; it never publishes.
+- Retain historical media without granting public access, include history in JSON/TAR backups, validate snapshots on restore and audit, and bound history by page, workspace and portable store limits. Add PHP and multi-user HTTP tests. No new runtime dependencies.
+
 ## 0.2.5 — Private Documentation
 
 - Add workspace Public/Private visibility and book Inherit/Public/Private controls for Owner/Admin, with private-workspace ceiling and optimistic revisions. Existing scoped spaces stay private; legacy stays public by default. Identity schema 4 preserves visibility in backups and migrates older schemas under the existing lock.

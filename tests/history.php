@@ -1,0 +1,43 @@
+<?php
+declare(strict_types=1);
+$storage=in_array('--storage-only',$argv,true);
+if($storage){foreach(['core/Update/OperationFiles.php','src/BookStore.php','src/PageTree.php','src/MediaStore.php','src/MediaBackup.php','src/Markdown.php','src/WorkspaceUrls.php','src/HistoryView.php','src/Permissions.php'] as $f)require_once dirname(__DIR__).'/'.$f;}else require dirname(__DIR__).'/bootstrap.php';
+use CajeerBook\{BookStore,PageTree,RevisionHistory,MediaStore,MediaBackup,HistoryView,Permissions,Visibility};
+function ok(bool $v,string $msg):void{if(!$v)throw new RuntimeException($msg);echo "PASS $msg\n";}
+function reject(callable $f,string $msg):void{try{$f();}catch(InvalidArgumentException|DomainException){ok(true,$msg);return;}throw new RuntimeException('Unexpected success: '.$msg);}
+function clean(string $dir):void{if(!is_dir($dir))return;foreach(new DirectoryIterator($dir) as $f){if($f->isDot())continue;if($f->isDir()&&!$f->isLink())clean($f->getPathname());else unlink($f->getPathname());}rmdir($dir);}
+$dir=sys_get_temp_dir().'/book-history-'.bin2hex(random_bytes(8));$s=new BookStore($dir);$media=new MediaStore($dir,$s);
+try{
+ $actor=['id'=>str_repeat('a',32),'username'=>'writer'];$s->setHistoryActor($actor);
+ $key='qa/1.0/start';$id=str_repeat('b',32);$file=$dir.'/input.txt';$s->change(fn(&$db)=>$db['pages']=[]);file_put_contents($file,'historical attachment');$mid=$media->upload($file,'input.txt')['item']['id'];
+ $p=['title'=>'Original','section'=>'Guide','order'=>10,'body'=>"First\n[Download](/media/$mid)",'updated'=>'2026-11-14','media'=>[$mid]];
+ $s->change(fn(&$db)=>$db['pages'][$key]=['id'=>$id,'revision'=>1,'draft'=>$p,'published'=>$p]);
+ // Legacy import is captured immediately before the first tracked mutation.
+ $s->change(function(&$db)use($key){$db['pages'][$key]['draft']['body']="Second\n<script>alert(1)</script>";$db['pages'][$key]['draft']['media']=[];$db['pages'][$key]['draft']['title']='Changed';$db['pages'][$key]['revision']++;},'save');
+ $db=$s->read();$list=RevisionHistory::entries($db,$id);$head=array_key_first($list);$baseline=array_key_last($list);$old=$list[$baseline];
+ ok(count($list)===2&&$old['action']==='baseline'&&$old['actor']===null&&$old['draft']['body']===$p['body'],'legacy baseline preserved with honest unknown author');
+ ok($list[$head]['actor']===$actor&&$list[$head]['action']==='save'&&$list[$head]['revision']===2,'authenticated actor and revision recorded');
+ ok($db['pages'][$key]['published']===$p,'draft edit preserves published snapshot');
+ $s->change(function(&$db)use($key){$db['pages'][$key]['draft']['updated']=gmdate('c');$db['pages'][$key]['revision']++;},'save');ok(count(RevisionHistory::entries($s->read(),$id))===2,'identical autosave does not add history');
+ $html=HistoryView::render($s->read(),'csrf',['page'=>$id,'id'=>$baseline]);ok(str_contains($html,'diff-remove')&&str_contains($html,'diff-add')&&str_contains($html,'&lt;script&gt;')&&!str_contains($html,'<script>'),'safe HTML comparison');
+ ok(Permissions::studio('editor','/studio/history','GET','')&&Permissions::studio('editor','/studio/history','POST','restore')&&!Permissions::studio('viewer','/studio/history','GET','')&&!Permissions::studio('viewer','/studio/history','POST','restore')&&!Permissions::studio('owner','/studio/history','POST','other'),'history RBAC deny by default');
+ reject(fn()=>$s->restoreRevision($id,$baseline,'draft',2,$head),'stale current revision rejected');reject(fn()=>$s->restoreRevision($id,$baseline,'draft',3,$baseline),'stale history head rejected');reject(fn()=>RevisionHistory::get($s->read(),str_repeat('c',32),$baseline),'revision cannot be selected by another page ID');
+ $s->change(fn(&$db)=>PageTree::move($db,$key,'','root','moved',PageTree::token($db)),'move');$moved='qa/1.0/moved';$db=$s->read();ok(RevisionHistory::current($db,$id)[0]===$moved&&array_values(RevisionHistory::entries($db,$id))[0]['action']==='move','history follows stable ID on move');
+ $s->change(fn(&$db)=>PageTree::publish($db,'qa/1.0',PageTree::token($db)),'publish-tree');$db=$s->read();ok(PageTree::redirect($db,$key)===$moved&&array_values(RevisionHistory::entries($db,$id))[0]['action']==='publish-tree','tree publication recorded');
+ $s->remove($moved,$db['pages'][$moved]['revision'],true);$db=$s->read();ok($media->open($mid,false)===null&&MediaStore::references($db,$mid,true)===[]&&str_contains(implode(',',MediaStore::references($db,$mid)),':history'),'history retains media without public permission');reject(fn()=>$media->delete($mid,1),'historical media deletion blocked');
+ $s->remove($moved,$db['pages'][$moved]['revision'],false);$db=$s->read();$list=RevisionHistory::entries($db,$id);$head=array_key_first($list);ok(!isset($db['pages'][$moved])&&$list[$head]['deleted']&&$list[$head]['action']==='delete','deleted page retains history');ok(str_contains(HistoryView::render($db,'csrf',['page'=>$id]),'Deleted page'),'deleted page history is reachable');
+ if(!$storage){$s->restoreRevision($id,$baseline,'published',0,$head);$db=$s->read();$entry=$db['pages'][$moved];ok($entry['id']===$id&&$entry['draft']['body']===$p['body']&&$entry['published']===null&&$entry['draft']['link_base']===$key,'restore deleted page as draft at latest path, original link base');
+   $list=RevisionHistory::entries($db,$id);$head=array_key_first($list);ok($list[$head]['action']==='restore'&&$list[$head]['actor']===$actor&&$list[$head]['source_revision']===$baseline,'restore adds new attributed history and source ID');
+   $input=['book'=>'qa','version'=>'1.0','path'=>'moved','title'=>'Published again','section'=>'Guide','order'=>1,'body'=>'New published content','revision'=>$entry['revision']];$s->save($input,true);$db=$s->read();$pub=$db['pages'][$moved]['published'];$list=RevisionHistory::entries($db,$id);$s->restoreRevision($id,$baseline,'draft',$db['pages'][$moved]['revision'],array_key_first($list));$db=$s->read();ok($db['pages'][$moved]['published']===$pub&&$db['pages'][$moved]['draft']['body']===$p['body'],'restore live page preserves published snapshot');
+   $tar=$dir.'/backup.tar';(new MediaBackup($dir,$s,$media))->create($tar);MediaBackup::restore($tar,$dir.'/restored');$restored=(new BookStore($dir.'/restored'))->read();ok($restored['history']===$db['history']&&is_file($dir.'/restored/media/'.$mid.'.blob'),'TAR restore preserves exact history and media');
+ }
+ $db=$s->read();$bad=$db;$bad['history'][$baseline]['draft']['media']=[str_repeat('f',32)];reject(fn()=>RevisionHistory::validate($bad),'invalid historical media rejected');
+ $diff=RevisionHistory::diff("one\ntwo\nthree","one\nnew\nthree");ok(in_array(['remove','two'],$diff,true)&&in_array(['add','new'],$diff,true),'line diff exact additions and removals');
+ $big=RevisionHistory::diff(str_repeat("a\n",1000),str_repeat("b\n",1000));ok(count($big)<=3&&$big[0][0]==='remove','bounded fallback for large comparisons');
+ $noteKey='qa/1.0/note';$noteId=str_repeat('e',32);$notePage=['title'=>'Notes','section'=>'Guide','order'=>1,'body'=>'Unchanged','updated'=>'2026-11-14','media'=>[]];$s->change(fn(&$d)=>$d['pages'][$noteKey]=['id'=>$noteId,'revision'=>1,'draft'=>$notePage,'published'=>null],'save','<release note>');$n=RevisionHistory::entries($s->read(),$noteId);ok(reset($n)['note']==='<release note>'&&str_contains(HistoryView::render($s->read(),'csrf',['page'=>$noteId]),'&lt;release note&gt;'),'revision notes persisted and escaped');
+ $before=$s->read();reject(fn()=>$s->change(function(&$d)use($noteKey){$d['pages'][$noteKey]['revision']++;},'save',str_repeat('x',501)),'oversized revision note rejected');ok($s->read()===$before,'invalid note rolls back document and history');
+ $test='qa/1.0/retention';$ret=str_repeat('d',32);$snap=['title'=>'Retention','section'=>'Guide','order'=>1,'body'=>'Initial','updated'=>'2026-11-14','media'=>[]];$s->change(fn(&$d)=>$d['pages'][$test]=['id'=>$ret,'revision'=>1,'draft'=>$snap,'published'=>null],'save');
+ for($i=0;$i<55;$i++)$s->change(function(&$d)use($test,$i){$d['pages'][$test]['draft']['body']='Edit '.$i;$d['pages'][$test]['revision']++;},'save');
+ $l=RevisionHistory::entries($s->read(),$ret);ok(count($l)===50&&reset($l)['draft']['body']==='Edit 54','bounded per-page retention keeps newest entries');
+ for($i=0;$i<40;$i++)$s->change(function(&$d)use($test,$i){$d['pages'][$test]['draft']['body']=str_repeat(chr(65+$i%26),250000).$i;$d['pages'][$test]['revision']++;},'save');$d=$s->read();ok(strlen(json_encode($d['history'],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES))<=RevisionHistory::MAX_BYTES&&array_values(RevisionHistory::entries($d,$ret))[0]['draft']['body']===str_repeat(chr(65+39%26),250000).'39','global byte quota preserves newest retained snapshot');
+}finally{clean($dir);}
