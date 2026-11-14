@@ -3,6 +3,7 @@ declare(strict_types=1);
 require dirname(__DIR__).'/core/Update/OperationFiles.php';
 require dirname(__DIR__).'/src/IdentityStore.php';
 require dirname(__DIR__).'/src/BookStore.php';
+require dirname(__DIR__).'/src/PageTree.php';
 use CajeerBook\{IdentityStore,Permissions,Workspaces,OrganizationAccessException};
 use CajeerEngine\Update\OperationFiles as Files;
 function check(bool $v,string $label):void{if(!$v)throw new RuntimeException($label);echo "PASS $label\n";}

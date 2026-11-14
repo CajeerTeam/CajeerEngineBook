@@ -65,6 +65,7 @@ jobs:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
           docker compose -p book-release-test exec -T book php tests/release.php
+          docker compose -p book-release-test exec -T book php tests/installation.php
           python3 tests/release-http.py
           docker compose -p book-release-test restart book
           python3 tests/release-http.py --check-persisted

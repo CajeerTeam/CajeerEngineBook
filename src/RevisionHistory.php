@@ -26,6 +26,7 @@ final class RevisionHistory
         $rid=bin2hex(random_bytes(16));
         $db['history'][$rid]=['id'=>$rid,'page'=>$id,'revision'=>$entry['revision'],'action'=>$action,'at'=>gmdate('c'),
             'actor'=>$actor===null?null:['id'=>$actor['id'],'username'=>$actor['username']], 'deleted'=>$deleted,'note'=>$note,'source_revision'=>$source]+self::state($key,$entry);
+        foreach(['review_authors'=>false,'review_tree_authors'=>true] as $field=>$tree)$db['history'][$rid][$field]=ReviewWorkflow::contributors($db,$key,$entry,$tree);
     }
     /** Called inside BookStore's exclusive transaction, only for actual document operations. */
     public static function capture(array $before,array &$after,string $action,?array $actor,string $note='',?string $source=null):void{
@@ -65,6 +66,7 @@ final class RevisionHistory
         foreach($history as $rid=>$r){
             if(!self::hex($rid)||!is_array($r)||($r['id']??null)!==$rid||!self::hex($r['page']??null)||!is_string($r['key']??null)||!PageTree::validKey($r['key'])||!is_string($r['public_key']??null)||!PageTree::validKey($r['public_key'])||PageTree::scope($r['key'])!==PageTree::scope($r['public_key'])||!is_int($r['revision']??null)||$r['revision']<1||!in_array($r['action']??null,self::ACTIONS,true)||!is_string($r['at']??null)||!preg_match('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00\z/D',$r['at'])||!is_bool($r['deleted']??null)||!array_key_exists('actor',$r)||!array_key_exists('published',$r))throw new \InvalidArgumentException('Invalid historical revision');
             if($r['deleted']!==($r['action']==='delete')||!is_string($r['note']??'')||self::note($r['note']??'')!==($r['note']??''))throw new \InvalidArgumentException('Invalid history event');
+            foreach(['review_authors','review_tree_authors'] as $field)if(isset($r[$field])){if(!is_array($r[$field])||!array_is_list($r[$field])||count($r[$field])>500)throw new \InvalidArgumentException('Invalid historical contributors');foreach($r[$field] as $uid)if(!self::hex($uid))throw new \InvalidArgumentException('Invalid historical contributor');}
             $source=$r['source_revision']??null;if($source!==null&&($r['action']!=='restore'||!self::hex($source)))throw new \InvalidArgumentException('Invalid history restore source');
             $id=$r['page'];$scope=PageTree::scope($r['key']);$counts[$id]=($counts[$id]??0)+1;
             if($counts[$id]>self::MAX_PER_PAGE||isset($scopes[$id])&&$scopes[$id]!==$scope||isset($live[$id])&&PageTree::scope($live[$id][0])!==$scope)throw new \InvalidArgumentException('Invalid history page scope');$scopes[$id]=$scope;
@@ -84,6 +86,18 @@ final class RevisionHistory
     public static function mediaIndex(array $db):array{
         $out=[];foreach($db['history']??[] as $r)foreach(['draft','published'] as $state){$p=$r[$state]??null;if($p===null)continue;preg_match_all('~/media/([a-f0-9]{32})~',$p['body'],$m);foreach(array_unique(array_merge($p['media'],$m[1])) as $id)$out[$id][$r['key'].':history']=true;}return array_map('array_keys',$out);
     }
+    /** Older snapshots have no explicit provenance; reconstruct conservatively from retained events. */
+    public static function historicalContributors(array $db,array $r,bool $tree):array{
+        $field=$tree?'review_tree_authors':'review_authors';if(array_key_exists($field,$r))return $r[$field];
+        $authors=[];$started=false;
+        foreach(self::entries($db,$r['page']) as $id=>$event){
+            if($id===$r['id'])$started=true;if(!$started)continue;
+            if(!$tree&&$event['action']==='publish')break;
+            if($tree&&$event['published']!==null&&$event['key']===$event['public_key']&&$event['draft']['order']===$event['published']['order'])break;
+            if($event['actor']!==null&&in_array($event['action'],['save','restore','move','duplicate','copy'],true))$authors[]=$event['actor']['id'];
+            if(isset($event[$field])){$authors=array_merge($authors,$event[$field]);break;}
+        }return array_values(array_unique($authors));
+    }
     /** Restore content only; never publish or roll back a public URL. */
     public static function restore(array &$db,string $page,string $rid,string $state,int $expected,string $head):string{
         $r=self::get($db,$page,$rid);$list=self::entries($db,$page);if(array_key_first($list)!==$head)throw new \DomainException('History changed. Reload before restoring.');
@@ -98,6 +112,7 @@ final class RevisionHistory
         $p=$r[$state];$base=$p['link_base']??($state==='published'?$r['public_key']:$r['key']);
         if($base!==$key)$p['link_base']=$base;else unset($p['link_base']);
         $p['media']=Markdown::mediaReferences($p['body'],$base);foreach($p['media'] as $id)if(!isset($db['media'][$id]))throw new \DomainException('Historical media is no longer available');
+        if($state==='draft')foreach(['review_authors'=>false,'review_tree_authors'=>true] as $field=>$tree)$entry[$field]=array_values(array_unique(array_merge($entry[$field]??[],self::historicalContributors($db,$r,$tree))));
         $p['updated']=gmdate('c');$entry['draft']=$p;$entry['id']=$page;$entry['revision']++;$db['pages'][$key]=$entry;return $key;
     }
     /** Bounded line diff: LCS for small regions, exact remove/add fallback for large ones. */

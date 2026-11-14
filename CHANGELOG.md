@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.9 — Security & Migration
+
+- Add operator-only full installation check, backup, staged restore and copy-based migration; verify registry, component hashes, permissions and all content stores before atomic directory publication. Preserve archived spaces, history, reviews and journals; revoke restored sessions and one-time credentials.
+- Fail closed on missing adopted legacy metadata and orphan media; validate persisted page/public paths and snapshots before projection. Materialize legacy seed at adoption; add explicit seed-only recovery for older installations.
+- Preserve known source contributors on draft duplication and historical restoration; validate historical provenance and reject cross-organization journal scope mismatches.
+- Add full installation PHP/HTTP integration tests, extend approval regressions and Docker release gate. No new runtime dependencies.
+
 ## 0.2.8 — Team Studio & Activity
 
 - Add global Team Studio workspace selector and scoped dashboard with personal review tasks, draft/notification counts, effective members, recent document filters, history links and author/publication state in Studio navigation.

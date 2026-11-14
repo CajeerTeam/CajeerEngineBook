@@ -76,6 +76,16 @@ try{
  for($i=0;$i<2;$i++){$proc=proc_open($cmd,[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);if(!is_resource($proc))throw new RuntimeException('Cannot start concurrent publisher');fclose($pipes[0]);$procs[]=[$proc,$pipes];}
  $codes=[];foreach($procs as [$proc,$pipes]){$output=stream_get_contents($pipes[1]).stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);$exit=proc_close($proc);if(!in_array($exit,[0,10],true))throw new RuntimeException('Concurrent publisher failed: '.$output);$codes[]=$exit;}sort($codes);
  $d=$s->read();ok($codes===[0,10]&&$d['reviews'][$newReview]['status']==='published'&&$d['pages'][$new]['revision']===2&&$d['pages'][$new]['published']['body']==='First publication','concurrent publication commits once, first published page correct');
+ // Copying or restoring a draft must not launder its known contributors.
+ $source='guide/1.0/authored';$sourceId=bin2hex(random_bytes(16));$s->setHistoryActor($admin);
+ $s->change(fn(&$d)=>$d['pages'][$source]=['id'=>$sourceId,'revision'=>1,'draft'=>['title'=>'Authored draft','section'=>'Guide','order'=>100,'body'=>'Unpublished author text','updated'=>gmdate('c'),'media'=>[]],'published'=>null],'save');
+ $d=$s->read();$historical=reset($d['history']);$events=RevisionHistory::entries($d,$sourceId);$historical=reset($events);
+ ok(in_array($adminId,$historical['review_authors'],true),'historical draft retains contributor provenance');
+ $old=$historical;unset($old['review_authors']);ok(in_array($adminId,RevisionHistory::historicalContributors($d,$old,false),true),'older retained history reconstructs known contributor');
+ $s->setHistoryActor($editor);$s->change(fn(&$d)=>PageTree::move($d,$source,'','root','authored-copy',PageTree::token($d),true),'duplicate');
+ $copy='guide/1.0/authored-copy';$d=$s->read();ok(in_array($adminId,$d['pages'][$copy]['review_authors'],true)&&in_array($editorId,$d['pages'][$copy]['review_authors'],true),'duplicate preserves source and copying author');
+ reject(fn()=>$submit($editor,$adminId,'page',$copy),'source author cannot approve duplicated draft',OrganizationAccessException::class);
+ if(!$storage){$s->setHistoryActor($owner);$s->remove($source,$s->read()['pages'][$source]['revision'],false);$head=array_key_first(RevisionHistory::entries($s->read(),$sourceId));$s->setHistoryActor($editor);$s->restoreRevision($sourceId,$historical['id'],'draft',0,$head);reject(fn()=>$submit($editor,$adminId,'page',$source),'historical author cannot approve restored draft',OrganizationAccessException::class);}
  $db=$s->read();$bad=$db;$bad['reviews'][$id3]['snapshot']['draft']['body']='tampered';reject(fn()=>ReviewWorkflow::validate($bad),'tampered snapshot fails validation',InvalidArgumentException::class);
  $bad=$db;$bad['reviews'][$id3]['approved_by']=$editor;reject(fn()=>ReviewWorkflow::validate($bad),'forged approval fails validation',InvalidArgumentException::class);
  $tar=$dir.'/backup.tar';(new MediaBackup($dir,$s,$media))->create($tar);$t=new PharData($tar);$saved=json_decode($t['books.json']->getContent(),true,512,JSON_THROW_ON_ERROR);ok($saved['reviews']===$db['reviews']&&$saved['review_policy']===$db['review_policy']&&isset($t['media/'.$mid.'.blob']),'TAR contains exact reviews and related files');unset($t);

@@ -31,7 +31,7 @@ try{
     $fake=$work.'/fake';file_put_contents($fake,'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>');reject(fn()=>$media->upload($fake,'fake.png'),'SVG masquerading as PNG');
     $large=$work.'/large';$h=fopen($large,'wb');ftruncate($h,MediaStore::MAX_FILE+1);fclose($h);reject(fn()=>$media->upload($large,'large.txt'),'size quota');
     // Simulate a committed snapshot without requiring a parser in this storage test.
-    $books->change(function(&$db)use($id){$db['pages']['test/1.0/media']=['revision'=>1,'draft'=>['body'=>'[file](/media/'.$id.')','media'=>[$id]],'published'=>null];});
+    $books->change(function(&$db)use($id){$db['pages']['test/1.0/media']=['revision'=>1,'draft'=>['title'=>'Media fixture','section'=>'Test','order'=>1,'updated'=>gmdate('c'),'body'=>'[file](/media/'.$id.')','media'=>[$id]],'published'=>null];});
     reject(fn()=>$media->delete($id,2),'draft reference prevents deletion');
     check($media->open($id,false)===null,'draft does not grant public access');
     $books->change(function(&$db){$db['pages']['test/1.0/media']['published']=$db['pages']['test/1.0/media']['draft'];});

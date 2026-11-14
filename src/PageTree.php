@@ -131,7 +131,9 @@ final class PageTree
         if($position==='before'||$position==='after'){$index=array_search($target,$siblings,true);if($index===false)throw new \DomainException('Target changed');if($position==='after')$index++;}
         array_splice($siblings,$index,0,[$dest]);$children[$parent]=$siblings;
         $moved=[];foreach($mapping as $old=>[$new,$id]){
-            $e=$db['pages'][$old];$e['id']=$id;
+            $e=$db['pages'][$old];
+            if($duplicate){$e['review_authors']=ReviewWorkflow::contributors($db,$old,$e,false);$e['review_tree_authors']=ReviewWorkflow::contributors($db,$old,$e,true);}
+            $e['id']=$id;
             if($duplicate){$e['published']=null;unset($e['published_key']);$e['revision']=1;}
             else {if($e['published']!==null)$e['published_key']=self::publicKey($old,$e);if($new!==$old)self::retire($db,$old,$id);$e['revision']++;unset($db['pages'][$old]);}
             if($new!==$old)$e['draft']['link_base']??=$old;

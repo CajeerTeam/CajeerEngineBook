@@ -28,7 +28,7 @@ final class ReviewWorkflow
             $contentChanged=!$prev||self::content($prev[1]['draft'])!==self::content($entry['draft']);
             $treeChanged=!$prev||$prev[0]!==$key||$prev[1]['draft']['order']!==$entry['draft']['order'];
             foreach(['review_authors'=>false,'review_tree_authors'=>true] as $field=>$tree){
-                $authors=$prev?self::contributors($before,$prev[0],$prev[1],$tree):[];
+                $authors=array_merge($prev?self::contributors($before,$prev[0],$prev[1],$tree):[],$entry[$field]??[]);
                 if($tree?$treeChanged:$contentChanged)$authors[]=$actor['id'];
                 // Publishing content and publishing navigation are distinct operations.
                 if($entry['published']!==null&&($tree?in_array($action,['publish','publish-tree'],true)&&PageTree::publicKey($key,$entry)===$key&&$entry['draft']['order']===$entry['published']['order']:$action==='publish'))$authors=[];
@@ -36,7 +36,7 @@ final class ReviewWorkflow
             }
         }unset($entry);
     }
-    private static function contributors(array $db,string $key,array $e,bool $tree):array{
+    public static function contributors(array $db,string $key,array $e,bool $tree):array{
         $field=$tree?'review_tree_authors':'review_authors';if(array_key_exists($field,$e))return $e[$field];
         // Before 0.2.7 use retained history. Imported/expired author data cannot be reconstructed.
         $id=PageTree::id($key,$e);$events=array_values(RevisionHistory::entries($db,$id));$authors=[];

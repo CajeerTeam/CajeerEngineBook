@@ -43,16 +43,19 @@ final class App {
                 },$publicRead);return;
             }
             if($path==='/studio'||str_starts_with($path,'/studio/')){
-                $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';$this->dispatch($path,$method);});return;
+                $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();$this->dispatch($path,$method);});return;
             }
             // Account, control-plane and health routes must remain reachable even when legacy content is private.
             if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/workspaces','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
             $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
-                $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';
+                $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             });
         }catch(\Throwable $e){error_log((string)$e);http_response_code(503);echo 'Service unavailable';}
+    }
+    private function useLegacyStore():void{
+        $this->store=new BookStore($this->installationDir,false);$this->media=new MediaStore($this->installationDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
     }
     private function unavailable(string $path,?array $ctx,bool $scoped=false):void{
         http_response_code($ctx?404:401);header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');

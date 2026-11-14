@@ -17,17 +17,36 @@ final class BookStore {
         return "$book/$version/$path";
     }
     public function read(): array {
-        $file=$this->dir.'/books.json';
+        $file=Files::path($this->dir,'books.json');
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
-        if(!is_file($file)&&!$this->seed)throw new \RuntimeException('Workspace content store missing; restore its backup.');
+        if(!is_file($file)&&(!$this->seed||glob(Files::path($this->dir,'media').'/*.blob')))throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
         if(!in_array($db['schema']??null,[1,2],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        try{self::validatePages($db);}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid persisted page tree',0,$e);}
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);
         ActivityJournal::validate($db);
         return $db;
+    }
+    /** Validate the trust boundary before any projection, including public book visibility. */
+    private static function validatePages(array $db):void {
+        if(!is_array($db['pages']??null)||count($db['pages'])>1000)throw new \RuntimeException('Invalid page collection');
+        foreach($db['pages'] as $entry){
+            if(!is_array($entry)||!is_int($entry['revision']??null)||$entry['revision']<1||!array_key_exists('published',$entry))throw new \RuntimeException('Invalid page revision');
+            foreach(['draft','published'] as $state){
+                $p=$entry[$state]??null;if($state==='published'&&$p===null)continue;
+                if(!is_array($p)||!is_string($p['title']??null)||trim($p['title'])===''||strlen($p['title'])>200||!is_string($p['section']??null)||strlen($p['section'])>100||!is_int($p['order']??null)||!is_string($p['body']??null)||strlen($p['body'])>262144||!preg_match('//u',$p['title'].$p['section'].$p['body'])||!is_string($p['updated']??null)||!is_array($p['media']??[]))throw new \RuntimeException('Invalid page snapshot');
+                foreach($p['media']??[] as $id)if(!is_string($id)||!preg_match('/\A[a-f0-9]{32}\z/D',$id))throw new \RuntimeException('Invalid page media reference');
+            }
+        }
+        PageTree::validate($db);
+    }
+    /** Freeze the initial legacy seed before binding the root to an organization. */
+    public function materialize():void {
+        Files::dir($this->dir);$lock=Files::path($this->dir,'books.lock');$h=fopen($lock,'c+');if(!$h)throw new \RuntimeException('Lock unavailable');
+        try{if(!flock($h,LOCK_EX))throw new \RuntimeException('Lock failed');$db=$this->read();if(!is_file($this->dir.'/books.json'))self::writeDatabase($this->dir.'/books.json',$db);}finally{fclose($h);}
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
     public function snapshot(callable $fn): mixed {
@@ -46,6 +65,7 @@ final class BookStore {
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
     public static function writeDatabase(string $path,array $db): void {
+        self::validatePages($db);
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);

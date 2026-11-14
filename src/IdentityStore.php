@@ -22,7 +22,7 @@ final class IdentityStore
     private readonly string $dir;
     public function __construct(string $dataDir){$this->dir=rtrim($dataDir,'/').'/identity';}
     private static function empty():array{return ['schema'=>4,'users'=>[],'sessions'=>[],'resets'=>[],'attempts'=>[],'organizations'=>[],'invitations'=>[],'workspaces'=>[]];}
-    private function transaction(callable $fn):mixed
+    private function transaction(callable $fn,bool $persist=true):mixed
     {
         Files::dir($this->dir);$lock=Files::path($this->dir,'identity.lock');$path=Files::path($this->dir,'identity.json');
         $h=fopen($lock,'c+b');if(!$h)throw new \RuntimeException('Identity lock unavailable');
@@ -34,7 +34,7 @@ final class IdentityStore
             if(($db['schema']??null)===2)$db['schema']=3;
             $db['workspaces']??=[];if(($db['schema']??null)===3){$db['schema']=4;foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);
             $result=$fn($db);
-            if($db!==$before){ActivityJournal::trim($db,self::MAX_BYTES);self::validate($db);$json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');Files::write($path,$json."\n");}
+            if($persist&&$db!==$before){ActivityJournal::trim($db,self::MAX_BYTES);self::validate($db);$json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');Files::write($path,$json."\n");}
             return $result;
         }finally{flock($h,LOCK_UN);fclose($h);}
     }
@@ -122,9 +122,10 @@ final class IdentityStore
     /** Trusted operator only: no credentials or membership records returned. */
     public function legacyWorkspaceAvailable(string $token):bool{return $this->transaction(fn($db)=>($db['users'][self::requireSession($db,$token)['user']]['owner']??false)&&Workspaces::legacy($db)===null);}
     public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
-    public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();});}
+    public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){foreach($db['workspaces'] as $w)(new BookStore(Workspaces::directory($root,$w),false))->checkReady();});}
     public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
     public function createWorkspace(string $token,string $org,string $name,string $slug,bool $legacy=false):array{return $this->transaction(function(&$db)use($token,$org,$name,$slug,$legacy){$uid=self::requireSession($db,$token)['user'];$w=Workspaces::create($db,$uid,$org,$name,$slug,$legacy);ActivityJournal::record($db,$db['users'][$uid],$legacy?'workspace.adopt':'workspace.create',$w['name'],$w['id'],$org,$w['id']);
+        if($legacy){$root=dirname($this->dir);$store=new BookStore($root);$store->materialize();}
         if(!$legacy){$dir=Workspaces::directory(dirname($this->dir),$w);if(file_exists($dir)||is_link($dir))throw new \RuntimeException('Workspace directory already exists');Files::dir($dir);BookStore::writeDatabase($dir.'/books.json',['schema'=>1,'pages'=>[],'media'=>[],'books'=>[]]);}
         return $w;});}
     public function mutateWorkspace(string $token,string $id,int $rev,string $action,string $name,string $slug):void{$this->transaction(function(&$db)use($token,$id,$rev,$action,$name,$slug){$uid=self::requireSession($db,$token)['user'];Workspaces::mutate($db,$uid,$id,$rev,$action,$name,$slug);$w=$db['workspaces'][$id];ActivityJournal::record($db,$db['users'][$uid],'workspace.'.$action,$w['name'],$id,$w['organization'],$id,[],$action==='visibility'?$w['visibility']:'');});}
@@ -201,12 +202,15 @@ final class IdentityStore
             $workspaces=Workspaces::list($db,$uid);$legacy=Workspaces::legacy($db);
             if(!$legacy&&$ctx['user']['owner'])array_unshift($workspaces,['id'=>'','name'=>'Legacy documentation','organization_name'=>'Installation','legacy'=>true,'role'=>'owner','archived'=>false,'organization_archived'=>false]);
             $ctx['workspace_count']=count($workspaces);$ctx['workspace_page']=max(1,min(100,$page));$workspaces=array_slice($workspaces,($ctx['workspace_page']-1)*10,10);
-            foreach($workspaces as &$w)if(!$w['archived']&&!$w['organization_archived']&&Permissions::allows($w['role'],'edit')){try{$store=new BookStore(Workspaces::directory(dirname($this->dir),$w),$w['legacy']);$w['summary']=TeamView::summary($store->read(),$uid,$w['role']);}catch(\Throwable $e){error_log('Team summary: '.$e->getMessage());$w['unavailable']=true;}}unset($w);
+            foreach($workspaces as &$w)if(!$w['archived']&&!$w['organization_archived']&&Permissions::allows($w['role'],'edit')){try{$store=new BookStore(Workspaces::directory(dirname($this->dir),$w),$w['legacy']&&$w['id']==='');$w['summary']=TeamView::summary($store->read(),$uid,$w['role']);}catch(\Throwable $e){error_log('Team summary: '.$e->getMessage());$w['unavailable']=true;}}unset($w);
             $ctx['workspaces']=$workspaces;$ctx['organizations']=Organizations::list($db,$uid);$ctx['inbox']=$inbox;$ctx['audit']=ActivityJournal::identityVisible($db,$uid,true);
             return $ctx;
         });
     }
     /** Backup includes organizations and memberships; never live sessions, reset or invitation credentials. */
-    public function backup():array{return $this->transaction(fn($db)=>['schema'=>4,'users'=>$db['users'],'organizations'=>$db['organizations'],'workspaces'=>$db['workspaces'],'activity'=>$db['activity']??[]]);}
+    private static function backupState(array $db):array{return ['schema'=>4,'users'=>$db['users'],'organizations'=>$db['organizations'],'workspaces'=>$db['workspaces'],'activity'=>$db['activity']??[]];}
+    public function backup():array{return $this->transaction(fn($db)=>self::backupState($db));}
+    /** Operator-only consistent installation snapshot. Lock order is identity -> content, as in HTTP. */
+    public function installationSnapshot(callable $fn):mixed{return $this->transaction(fn($db)=>$fn(self::backupState($db)),false);}
     public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2,3,4],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)!==1&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']!==1?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];$db['activity']=$backup['activity']??[];if($backup['schema']!==4){foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);});}
 }

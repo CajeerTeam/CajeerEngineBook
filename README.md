@@ -1,6 +1,36 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.2.9 — Security & Migration
+
+### Full installation backup, verification and migration
+
+Stop web writers and background/CLI writers before upgrading or moving an installation. Keep the original data directory and an independent backup. Run these commands with the same filesystem user as the application (or restore ownership and restrictive permissions before starting it). The parent directories must already exist; targets must be new, private directories outside `public` and outside the source. Allow sufficient free disk for staging and the complete restored data.
+
+```sh
+export BOOK_DATA_DIR=/var/lib/cajeerbook
+php bin/installation.php check
+php bin/installation.php backup /secure/backups/book-029
+BOOK_DATA_DIR=/var/lib/cajeerbook-restored php bin/installation.php restore /secure/backups/book-029
+BOOK_DATA_DIR=/var/lib/cajeerbook-restored php bin/installation.php check
+```
+
+For a copy-based migration in one command:
+
+```sh
+BOOK_DATA_DIR=/var/lib/cajeerbook php bin/installation.php migrate /var/lib/cajeerbook-restored /secure/backups/book-migration
+```
+
+Switch `BOOK_DATA_DIR` only after verification; keep the source for rollback. The operator-only CLI creates a directory bundle (`manifest.json`, `identity.json`, `legacy.tar`, one TAR per nonlegacy workspace including archived spaces). It holds the identity lock during capture; offline maintenance also excludes old standalone content CLI writers. Each component is checked by SHA-256 and size, the registry must match all components, and restored stores are audited before a staged directory is atomically renamed into place. The manifest checks integrity, not authenticity: restore only trusted backups. No HTTP endpoint exposes this full backup. Identity hashes are sensitive; keep backups private. Sessions, password reset and invitation tokens, throttling state, disposable thumbnails and unreferenced media blobs are not restored. Users must sign in again and invitations must be reissued. Existing separate identity and workspace TAR commands remain supported.
+
+The migration reads identity schemas 1–4 and normalizes to 4 on the destination; pre-identity content is supported without inventing accounts. Set up the first installation owner using the documented legacy login or CLI. BookStore schemas 1/2, stable page IDs, legacy URLs, history, reviews, visibility and journal data are preserved. The source data is not rewritten by migration (lock files and necessary directories may be created). `check` validates all registered spaces, including archived ones; missing or corrupt stores and orphan workspace directories fail rather than silently dropping content. Fix media reference mismatches with the existing explicit audit/repair command before taking a full backup. A pre-0.2.9 installation that adopted only the untouched built-in demo seed, but never wrote `books.json`, may require `php bin/installation.php materialize-legacy-seed --confirm-seed-only` **only after verifying that no real content was lost**. Never use it to replace missing real data. New legacy adoptions materialize the seed immediately.
+
+### Security fixes
+
+Persisted page paths, public paths and snapshots are validated before Reader/API projection. Adopted legacy stores fail closed when metadata is missing; media blobs without metadata cannot cause a new seed to appear. Workspace journal events must match the registered organization. Duplicate branches preserve known unpublished source contributors, and new revision snapshots retain contributor provenance for draft restoration. An original author cannot approve a duplicate or restored draft merely because another user copied/restored it. Earlier retained history is used as a conservative fallback; already pruned or unrecorded historical authors cannot be reconstructed.
+
+Full release checks: `composer test` includes the installation PHP and HTTP backup/restore tests. The Docker release gate also runs the installation integration test inside the image. `php tests/installation.php --storage-only` and `python3 tests/installation-http.py --storage-only` exercise filesystem and HTTP infrastructure without parser-dependent content. Production deployments require installed Composer dependencies, local Mermaid assets and HTTPS (`BOOK_SECURE_COOKIE=1`).
 
 ## 0.2.8 — Team Studio & Activity
 

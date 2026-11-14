@@ -25,6 +25,7 @@ final class ActivityJournal
             foreach(['recipients','read'] as $k){$v=$e[$k]??null;if(!is_array($v)||!array_is_list($v)||count($v)>10||count(array_unique($v,SORT_REGULAR))!==count($v))throw new \InvalidArgumentException('Invalid notification state');foreach($v as $u)if(!self::id($u))throw new \InvalidArgumentException('Invalid notification recipient');}
             $identityType=in_array($e['type'],['login','logout'],true)||str_starts_with($e['type'],'account.')||str_starts_with($e['type'],'organization.')||str_starts_with($e['type'],'workspace.');
             if((isset($db['users'])&&!$identityType)||isset($db['pages'])&&$identityType||(!$identityType&&($e['organization']!==''||$e['workspace']!==''))||str_starts_with($e['type'],'organization.')&&($e['organization']===''||$e['workspace']!=='')||str_starts_with($e['type'],'workspace.')&&($e['organization']===''||$e['workspace']===''))throw new \InvalidArgumentException('Invalid activity namespace');
+            if(isset($db['workspaces'][$e['workspace']])&&$db['workspaces'][$e['workspace']]['organization']!==$e['organization'])throw new \InvalidArgumentException('Activity workspace scope mismatch');
             if(array_diff($e['read'],$e['recipients']))throw new \InvalidArgumentException('Invalid notification receipt');
         }
         if(strlen(json_encode($events,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES))>self::MAX_BYTES)throw new \InvalidArgumentException('Activity quota exceeded');
