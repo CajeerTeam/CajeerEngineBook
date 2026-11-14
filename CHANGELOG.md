@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4 — Media Library
+
+- Add the authenticated Studio media library with multi-file upload, drag-and-drop, progress and partial failure reporting; search, folder/type filters, sorting, pagination, rename, move, download and delete.
+- Store immutable private blobs with SHA-256 deduplication, file/MIME and image validation, bounded thumbnails, quotas and stable IDs. Media metadata and page references commit under the existing BookStore lock.
+- Record canonical `/media/{id}` links and images from the CommonMark AST; Studio previews use authenticated URLs and Reader access requires a published reference. Protect referenced files from deletion and reject stale metadata revisions.
+- Add complete consistent TAR backup, offline verified restore to a new directory, and explicit orphan cleanup. Keep the legacy JSON export as metadata-only.
+- Add Docker GD/upload settings, PHP and HTTP/browser regression tests. Existing schema-1 data remains compatible; no destructive migration.
+
 ## 0.1.3 — Tables & Rich Text
 
 - Edit existing and new GFM tables visually: cell-level formatting, add/remove and move body rows and columns, column alignment, keyboard navigation and source-preserving serialization.

@@ -35,23 +35,10 @@ final class Markdown
     }
 
     /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
-    public static function render(string $md, ?string $pageKey = null, bool $editor = false): array
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false): array
     {
         self::validate($md);
-        // A fresh environment per document prevents state leaking between conversions.
-        $environment = new Environment([
-            'html_input' => 'escape',
-            'allow_unsafe_links' => false,
-            'max_nesting_level' => self::MAX_NESTING,
-            'max_delimiters_per_line' => self::MAX_DELIMITERS,
-            'table' => [
-                'wrap' => ['enabled' => true, 'attributes' => ['class' => 'markdown-table']],
-                'max_autocompleted_cells' => 10000,
-            ],
-        ]);
-        $environment->addExtension(new CommonMarkCoreExtension());
-        $environment->addExtension(new GithubFlavoredMarkdownExtension());
-        $environment->addRenderer(Heading::class, new MarkdownHeadingRenderer(), 100);
+        $environment = self::environment();
         $document = (new MarkdownParser($environment))->parse($md);
         $legacy = self::legacyAnchors($md);
         $toc = [];
@@ -84,6 +71,7 @@ final class Markdown
                 $url = self::safeUrl($originalUrl, $node instanceof Image, $pageKey);
                 if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
+                if (($studio || $editor) && $url !== null && self::mediaId($url)!==null) $url='/studio/media/file/'.self::mediaId($url);
                 $node->setUrl($url ?? '#');
                 if ($url === null) $node->data->set('book_editor_unsafe', true);
                 if ($node instanceof Image && $url === null) {
@@ -109,6 +97,49 @@ final class Markdown
         $result = ['html' => (string) $renderer->renderDocument($document), 'toc' => $toc];
         if ($editor) $result['blocks'] = StudioEditor::blocks($md, $document, $renderer, $result['html']);
         return $result;
+    }
+
+    private static function environment(): Environment
+    {
+        // A fresh environment per document prevents state leaking between conversions.
+        $environment = new Environment([
+            'html_input' => 'escape',
+            'allow_unsafe_links' => false,
+            'max_nesting_level' => self::MAX_NESTING,
+            'max_delimiters_per_line' => self::MAX_DELIMITERS,
+            'table' => [
+                'wrap' => ['enabled' => true, 'attributes' => ['class' => 'markdown-table']],
+                'max_autocompleted_cells' => 10000,
+            ],
+        ]);
+        $environment->addExtension(new CommonMarkCoreExtension());
+        $environment->addExtension(new GithubFlavoredMarkdownExtension());
+        $environment->addRenderer(Heading::class, new MarkdownHeadingRenderer(), 100);
+        return $environment;
+    }
+
+    private static function mediaId(string $url): ?string
+    {
+        return preg_match('~\A/media/([a-f0-9]{32})\z~D',$url,$m) ? $m[1] : null;
+    }
+
+    /** Only actual CommonMark links/images (including reference links), never code or prose. */
+    public static function mediaReferences(string $md,string $pageKey): array
+    {
+        // Canonical local media paths are the supported authoring contract.
+        // Parse all documents so entity-escaped/reference destinations are handled too.
+        self::validate($md);
+        $document=(new MarkdownParser(self::environment()))->parse($md);
+        $ids=[];$walker=$document->walker();
+        while($event=$walker->next()){
+            if(!$event->isEntering()) continue;
+            $node=$event->getNode();
+            if($node instanceof Link || $node instanceof Image){
+                $url=self::safeUrl($node->getUrl(),$node instanceof Image,$pageKey);
+                if($url!==null && ($id=self::mediaId($url))!==null) $ids[$id]=true;
+            }
+        }
+        return array_keys($ids);
     }
 
     /** Plain text, not rendered HTML, from the inline tree (including image alt text). */

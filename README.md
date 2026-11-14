@@ -1,23 +1,24 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
 - Multiple books and versions, hierarchical URL paths, section navigation, page order, previous/next links, headings table of contents, responsive layout and light/dark theme.
 - Studio: visual block editing, Markdown source mode, server preview, autosave, create/edit/delete pages, explicit publishing and unpublishing, version cloning to drafts, optimistic revision checks.
 - CommonMark 0.31.1 and GitHub-Flavored Markdown (GFM), powered by League CommonMark: nested lists, ATX/Setext headings, reference links, inline/fenced/indented code, blockquotes, tables, task lists, strikethrough, autolinks and images. Shared rendering in Reader and Studio with stable heading slugs and legacy anchors.
-- Published-only search and JSON read API, health probes, authenticated JSON backup download.
+- Published-only search and JSON read API, health probes, authenticated JSON metadata export and complete media backup.
+- Media library: drag-and-drop uploads, folders, search/filter, immutable files, SHA-256 deduplication, private previews, safe published access, thumbnails and full TAR backup/restore.
 - Local file persistence with locking and atomic replacement, no SaaS, database, Node, CDN or external API required at runtime. Composer installs PHP dependencies at build/install time.
 
 ## Start locally
 
-Requirements: PHP 8.4.1+ with `mbstring`, JSON, ctype, PCRE and sessions; Composer 2 for dependency installation. Linux is the supported filesystem environment.
+Requirements: PHP 8.4.1+ with `mbstring`, `fileinfo`, `phar`, JSON, ctype, PCRE and sessions (GD with JPEG/PNG/WebP support is recommended and included in Docker); Composer 2 for dependency installation. Linux is the supported filesystem environment.
 
 ```sh
 composer install --no-dev --prefer-dist --no-interaction
 # Read-only demo (Studio is disabled until configured)
-php -S 127.0.0.1:8080 -t public public/router.php
+php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 Open http://127.0.0.1:8080/ and `/studio`. To enable Studio, generate a password hash without storing the plaintext in the repository:
@@ -26,16 +27,16 @@ Open http://127.0.0.1:8080/ and `/studio`. To enable Studio, generate a password
 read -rs -p 'Admin password: ' BOOK_PASSWORD; echo
 export BOOK_ADMIN_HASH="$(printf '%s' "$BOOK_PASSWORD" | php -r 'echo password_hash(stream_get_contents(STDIN), PASSWORD_DEFAULT);')"
 unset BOOK_PASSWORD
-php -S 127.0.0.1:8080 -t public public/router.php
+php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
 
-## Upgrade to 0.1.3
+## Upgrade to 0.1.4
 
-Back up `BOOK_DATA_DIR`, including `books.json`. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
+Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
 
-## Studio visual editor (0.1.3)
+## Studio visual editor (0.1.4)
 
 Open `/studio` and authenticate. Visual mode is enabled by default when JavaScript and the browser editing APIs are available; Markdown remains usable without JavaScript or if conversion fails. All assets are served locally, and there is no npm/CDN dependency.
 
@@ -110,13 +111,47 @@ A page is identified by `book/version/path` (lowercase ASCII slugs, nested paths
 - `GET /api/v1/pages/{book}/{version}/{path}` — published Markdown and metadata.
 - `GET /api/v1/search?q=...` — up to 50 published matching pages.
 - `GET /health/live`, `GET /health/ready` — JSON health endpoints.
-- `GET /studio/export` — authenticated complete JSON backup, including drafts.
+- `GET /studio/export` — authenticated JSON metadata export, including drafts (no binary media).
+- `GET /studio/media` — authenticated media manager; POST accepts CSRF-protected uploads and changes.
+- `GET /media/{id}` — public only while referenced by a published page.
+- `GET /studio/media/backup` — authenticated full TAR backup.
 
 Use the Studio UI to author and publish. For direct links use `/docs/{book}/{version}/{path}`. Search is a local case-insensitive substring scan (not a full-text index).
 
-## Persistence and restore
+## Media library (0.1.4)
 
-`BOOK_DATA_DIR` defaults to `var/` outside the public document root. First write creates `books.json`; until then seed data is used. The JSON store is limited to 1000 pages, 256 KiB Markdown per page; it is a single-node small-team implementation. Keep the data directory private and writable by the web process. Export from Studio or back up the file while the server is stopped. To restore: stop the server, preserve the existing data, replace `books.json` with a trusted export from the same schema, set owner to the web user and mode 0600, restart and verify pages. Do not expose `var/`, source, or data via a web server.
+Open **Studio → Media library** (`/studio/media`). Select or drop files, optionally enter a folder such as `guides/images`, and upload. With JavaScript, multiple files upload sequentially (up to 50 per batch), each with its own progress and result; successful files are retained even if others fail. The HTML form works for single files without JavaScript. Search by filename, folder or SHA-256; filter by exact folder or type, sort, and use pagination. Open a file, download it, copy its permanent URL, or expand Manage file to rename/move/delete it. Folders are logical metadata, not filesystem paths. Renaming must preserve file type; it does not change the file ID or links. Identical SHA-256/MIME content reuses the original ID and metadata; rename/move the existing item if needed.
+
+Supported formats: PNG, JPEG, GIF, WebP, PDF, ZIP and UTF-8 TXT/MD/CSV. The server checks actual MIME using `fileinfo` plus an extension allowlist, dimensions for raster images, and full raster decoding when GD is installed. SVG, HTML, executables and unrecognized formats are rejected. ZIP/PDF/text are delivered as attachments, never executed or extracted. This is not a malware scanner: use trusted administrator uploads and scan untrusted documents separately. Limits are 20 MiB per file, 1000 distinct files, 512 MiB original media total, and 4096 px per image side / 12 megapixels. Cached previews (320 px maximum, PNG) are generated on demand with GD; without GD the original image is shown. Keep enough disk for the originals, derived thumbnails and temporary backups. Set PHP `upload_max_filesize=20M`, `post_max_size=24M`, `memory_limit=256M`, and reverse proxy upload limits accordingly. The Docker image configures these settings and GD.
+
+### Using uploaded files in Markdown
+
+Copy the URL from a media card and use it in Markdown (replace the example ID with the real one):
+
+```markdown
+![Screenshot](/media/0123456789abcdef0123456789abcdef)
+
+[Download the guide](/media/0123456789abcdef0123456789abcdef)
+```
+
+Canonical local URLs are exactly `/media/{32-lowercase-hex-id}`. References in actual CommonMark links/images, including reference definitions used by a link, are recorded when saving or publishing. A file is private until at least one published page references it. Studio previews rewrite local media URLs to authenticated `/studio/media/file/{id}`; public Reader retains the canonical URL. Saving a draft never changes public access. Unpublishing or deleting the last referring published page revokes access. A literal URL in code or prose does not grant public access; deletion conservatively also protects literal references in drafts and publications. Unknown canonical media IDs are rejected when saving. Removing a reference from both snapshots (or deleting the page) makes the file eligible for deletion. Previously downloaded public copies cannot be revoked. Do not publish private content inadvertently. Visual media picking, image resizing/captions and attachment insertion tools are scheduled for 0.1.5; the existing Markdown mode works now.
+
+### Persistence and full backup/restore
+
+`BOOK_DATA_DIR` defaults to `var/` outside `public/`. Keep it private and writable by the web process. The first write creates `books.json`; until then seed pages are used. Metadata is committed atomically under the existing `books.lock`. Immutable originals are `media/{id}.blob` (0600) and thumbnails are derived files; filenames never become filesystem paths. The store is a single-node implementation for up to 1000 pages, with 256 KiB per Markdown document. Do not share the volume among multiple hosts or expose it through the web server. Docker uses the existing persistent volume for both documents and files.
+
+- `/studio/export` retains the legacy authenticated JSON metadata export (not a complete file backup).
+- `/studio/media/backup` downloads a consistent uncompressed TAR of `books.json` and all originals, including private files. The backup checks every blob's size and SHA-256 while holding a shared lock. Store this archive securely; it includes drafts. Thumbnails are regenerated, not backed up. The portable archive supports up to 32 MiB JSON plus the media quota. Larger legacy databases need an offline filesystem backup or subdivision; backup refuses to emit an archive that it cannot restore.
+- CLI backup and restore (run as the service user or correct ownership after restoring):
+
+```sh
+php bin/media-backup.php backup /var/lib/cajeerbook /secure/backups/book.tar
+php bin/media-backup.php restore /secure/backups/book.tar /var/lib/cajeerbook-restored
+```
+
+The backup target must be a new `.tar` file. Restore into a **new, non-existing directory**, with an existing parent directory, after stopping the target installation. Restore validates metadata, page keys, file sizes, MIME and SHA-256, and reconstructs media references; it writes a staging directory and only publishes it after validation. It does not extract arbitrary archive paths or overwrite existing data. Point `BOOK_DATA_DIR` to the restored directory (or move it into place with the service stopped), set the web user's ownership and private permissions, then start and verify. For Docker, use a trusted maintenance container with the volume mounted and an accessible backup path, or restore offline and replace the volume contents while the app is stopped. Never replace only `books.json` on a media-enabled installation. Backups contain documentation and files, not deployment secrets such as `BOOK_ADMIN_HASH` or TLS certificates.
+
+If a crash leaves an uncommitted blob, use `php bin/media-backup.php gc /var/lib/cajeerbook` to remove only orphan blobs/thumbnails and temporary media files under the same store lock; live originals are preserved. Run backups regularly. Files are not scanned for malware or replicated to another host.
 
 ## Development
 
@@ -124,17 +159,18 @@ Use the Studio UI to author and publish. For direct links use `/docs/{book}/{ver
 composer install --prefer-dist --no-interaction
 composer validate --strict
 composer audit --locked
-find src core data public tests -name '*.php' -print0 | xargs -0 -n1 php -l
+find src core data public tests bin -name '*.php' -print0 | xargs -0 -n1 php -l
 php -l bootstrap.php
 composer test
 # Browser E2E (requires Python 3 and Chromium):
 python -m pip install playwright==1.57.0
 python -m playwright install chromium
 python tests/editor-browser.py
+python tests/media-browser.py
 ```
 
 Architecture: `src/` Book logic, `core/` reused upstream components, `templates/book/` CJR layout, `public/` sole web root, `data/` example content. Source is independent of the CMS release/update pipeline.
 
-## Roadmap (not implemented in 0.1.3)
+## Roadmap (not implemented in 0.1.4)
 
-Visual images, media library, page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, media management, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Visual images and attachment insertion, page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.

@@ -15,6 +15,14 @@ final class BookStore {
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
         return is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
     }
+    /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
+    public function snapshot(callable $fn): mixed {
+        Files::dir($this->dir); $lock=$this->dir.'/books.lock';
+        if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
+        $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
+        try { if(!flock($h,LOCK_SH)) throw new \RuntimeException('Lock failed'); return $fn($this->read()); }
+        finally { fclose($h); }
+    }
     public function change(callable $fn): void {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
@@ -31,9 +39,11 @@ final class BookStore {
         $title=trim((string)$input['title']); $body=(string)$input['body']; $section=trim((string)$input['section']);
         if($title===''||strlen($title)>200||strlen($section)>100||!preg_match('//u',$title.$section)) throw new \InvalidArgumentException('Invalid page fields');
         Markdown::validate($body);
-        $page=['title'=>$title,'section'=>$section,'order'=>max(-9999,min(9999,(int)$input['order'])),'body'=>$body,'updated'=>gmdate('c')];
+        $media=Markdown::mediaReferences($body,$key);
+        $page=['media'=>$media,'title'=>$title,'section'=>$section,'order'=>max(-9999,min(9999,(int)$input['order'])),'body'=>$body,'updated'=>gmdate('c')];
         $result=[];
         $this->change(function(array &$db)use($key,$page,$publish,$input,&$result){
+            foreach($page['media'] as $id) if(!isset($db['media'][$id])) throw new \InvalidArgumentException('Unknown media file: '.$id);
             $old=$db['pages'][$key]??['draft'=>null,'published'=>null,'revision'=>0];
             if((int)($input['revision']??0)!==$old['revision']) throw new \DomainException('Page changed. Reload before saving.');
             if(count($db['pages'])>=1000&&!isset($db['pages'][$key])) throw new \DomainException('Page limit reached');

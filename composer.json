@@ -5,7 +5,9 @@
     "license": "Apache-2.0",
     "require": {
         "php": ">=8.4.1 <9.0",
+        "ext-fileinfo": "*",
         "ext-mbstring": "*",
+        "ext-phar": "*",
         "league/commonmark": "^2.10.7"
     },
     "config": {
@@ -13,6 +15,6 @@
         "sort-packages": true
     },
     "scripts": {
-        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "@php tests/editor.php", "bash tests/http.sh"]
+        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "@php tests/editor.php", "@php tests/media.php", "bash tests/http.sh"]
     }
 }
