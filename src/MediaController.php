@@ -31,6 +31,22 @@ final class MediaController
             else echo '<!doctype html><meta charset="utf-8"><h1>Media operation failed</h1><p>'.self::e($e->getMessage()).'</p><a href="/studio/media">Return to media library</a>';
         }
     }
+    /** Authenticated picker: bounded results, stable ordering, no blob paths. */
+    public function picker(): void
+    {
+        $q = is_string($_GET['q'] ?? null) ? substr($_GET['q'], 0, 240) : '';
+        $kind = ($_GET['kind'] ?? '') === 'image' ? 'image' : 'attachment';
+        $items = array_values(array_filter($this->books->read()['media'] ?? [], static function(array $item) use ($q, $kind): bool {
+            return ($kind !== 'image' || str_starts_with($item['mime'], 'image/'))
+                && ($q === '' || (function_exists('mb_stripos') && preg_match('//u', $q)
+                    ? mb_stripos($item['name'].' '.$item['folder'], $q, 0, 'UTF-8') !== false
+                    : stripos($item['name'].' '.$item['folder'], $q) !== false));
+        }));
+        usort($items, static fn($a,$b)=>strcmp($b['created'],$a['created']) ?: strcmp($a['id'],$b['id']));
+        $page = max(1, min(100, (int)(is_string($_GET['page'] ?? null) ? $_GET['page'] : '1')));
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['items'=>array_slice($items, ($page-1)*24, 24), 'page'=>$page, 'total'=>count($items)], JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
+    }
     public function markup(string $csrf): string
     {
         $db=$this->books->read();$index=MediaStore::referenceIndex($db);$items=$db['media']??[];$total=array_sum(array_column($items,'size'));

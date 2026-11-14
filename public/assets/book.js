@@ -45,3 +45,43 @@
     }
     window.BookCode = {enhance}; enhance();
 })();
+
+/* Accessible, local fullscreen image viewer for Reader and Preview. */
+(() => {
+    'use strict';
+    let viewer = null;
+    function openImage(figure, original, opener) {
+        if (viewer) return;
+        const dialog = document.createElement('dialog'); dialog.className = 'book-image-dialog';
+        dialog.setAttribute('aria-label', original.alt || 'Image viewer');
+        const bar = document.createElement('div'); bar.className = 'book-image-dialog-bar';
+        const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close image';
+        close.addEventListener('click', () => dialog.close());
+        const href = original.getAttribute('src');
+        if (!href) return;
+        const link = document.createElement('a'); link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open original';
+        const actual = document.createElement('button'); actual.type = 'button'; actual.textContent = 'Actual size'; actual.setAttribute('aria-pressed','false');
+        actual.addEventListener('click', () => { const enabled = dialog.classList.toggle('book-image-actual'); actual.textContent = enabled ? 'Fit to screen' : 'Actual size'; actual.setAttribute('aria-pressed',String(enabled)); });
+        bar.append(close,actual,link);
+        if (/^\/(?:studio\/media\/file|media)\/[a-f0-9]{32}$/.test(href)) {
+            const download = document.createElement('a'); download.href = href+'?download=1'; download.textContent = 'Download image'; bar.append(download);
+        }
+        const img = document.createElement('img'); img.src = href; img.alt = original.alt; img.referrerPolicy = 'no-referrer';
+        dialog.append(bar,img);
+        const caption = figure.querySelector('figcaption'); if (caption) { const p = document.createElement('p'); p.textContent = caption.textContent; dialog.append(p); }
+        dialog.addEventListener('close', () => { dialog.remove(); viewer = null; if (opener.isConnected) opener.focus(); });
+        dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
+        viewer = dialog; document.body.append(dialog); dialog.showModal(); close.focus();
+    }
+    function enhance(scope = document) {
+        scope.querySelectorAll('figure[data-book-image]').forEach(figure => {
+            if (figure.closest('[data-visual-panel]') || figure.querySelector('[data-image-zoom]')) return;
+            const img = figure.querySelector('img'); if (!img || !img.getAttribute('src')) return;
+            const zoom = document.createElement('button'); zoom.type = 'button'; zoom.dataset.imageZoom = ''; zoom.className = 'book-image-zoom'; zoom.textContent = 'View full size';
+            zoom.setAttribute('aria-label', 'View full size: ' + (img.alt || 'image'));
+            zoom.addEventListener('click', () => openImage(figure,img,zoom));
+            figure.append(zoom);
+        });
+    }
+    window.BookImages = {enhance}; enhance();
+})();

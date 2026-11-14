@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -9,6 +9,7 @@ Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.
 - CommonMark 0.31.1 and GitHub-Flavored Markdown (GFM), powered by League CommonMark: nested lists, ATX/Setext headings, reference links, inline/fenced/indented code, blockquotes, tables, task lists, strikethrough, autolinks and images. Shared rendering in Reader and Studio with stable heading slugs and legacy anchors.
 - Published-only search and JSON read API, health probes, authenticated JSON metadata export and complete media backup.
 - Media library: drag-and-drop uploads, folders, search/filter, immutable files, SHA-256 deduplication, private previews, safe published access, thumbnails and full TAR backup/restore.
+- Images and attachments: insert or upload directly in Studio, edit alternative text, captions, image width/alignment, replace media, insert download blocks, and open images at full size in Reader/Preview.
 - Local file persistence with locking and atomic replacement, no SaaS, database, Node, CDN or external API required at runtime. Composer installs PHP dependencies at build/install time.
 
 ## Start locally
@@ -32,11 +33,11 @@ php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
 
-## Upgrade to 0.1.4
+## Upgrade to 0.1.5
 
 Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
 
-## Studio visual editor (0.1.4)
+## Studio visual editor (0.1.5)
 
 Open `/studio` and authenticate. Visual mode is enabled by default when JavaScript and the browser editing APIs are available; Markdown remains usable without JavaScript or if conversion fails. All assets are served locally, and there is no npm/CDN dependency.
 
@@ -45,7 +46,7 @@ Open `/studio` and authenticate. Visual mode is enabled by default when JavaScri
 - **Preview:** renders the current unsaved document on the server with the same CommonMark/GFM engine and URL policy as Reader. Existing page paths resolve relative links and images against their published URL. No publishing is required to preview.
 - **Save:** Save draft and Publish commit through the existing revision-checked store. Existing drafts autosave after approximately 1.8 seconds of idle editing; a new page needs an explicit first save or publication. Autosave never changes the published snapshot. Ctrl/Cmd+S saves the draft. A revision conflict stops writes, keeps the local text in Studio and asks the author to copy Markdown and reload/merge. Failed requests do not discard unsaved content. Refresh or leave Studio only after saving; the browser warns about unsaved changes.
 
-Visual editing is intentionally source-preserving, not a wholesale HTML-to-Markdown rewrite: unchanged blocks and gaps (including reference definitions) retain their source. Modified supported blocks are serialized to canonical Markdown and separated safely; a modified reference link may become an equivalent inline link. Browsers normalize textarea line endings to LF. GFM tables and task lists are editable. Images, raw HTML, custom directives, nested code blocks and other unsupported AST structures remain visible but protected in Visual mode; edit them in Markdown mode. Tables that contain unsupported inline content, surplus source cells, or exceed visual limits are also protected. The editor uses native contenteditable/selection and browser editing commands; Chromium is the browser tested in CI. Markdown mode is the reliable fallback for unsupported browser commands or complex formatting. No new database migration is required.
+Visual editing is intentionally source-preserving, not a wholesale HTML-to-Markdown rewrite: unchanged blocks and gaps (including reference definitions) retain their source. Modified supported blocks are serialized to canonical Markdown and separated safely; a modified reference link may become an equivalent inline link. Browsers normalize textarea line endings to LF. GFM tables and task lists are editable. Standalone images and local attachment blocks are editable. Mixed inline images, complex attachment labels, raw HTML, custom directives, nested code blocks and other unsupported AST structures remain visible but protected in Visual mode; edit them in Markdown mode. Tables that contain unsupported inline content, surplus source cells, or exceed visual limits are also protected. The editor uses native contenteditable/selection and browser editing commands; Chromium is the browser tested in CI. Markdown mode is the reliable fallback for unsupported browser commands or complex formatting. No new database migration is required.
 
 ### Tables & Rich Text
 
@@ -118,7 +119,7 @@ A page is identified by `book/version/path` (lowercase ASCII slugs, nested paths
 
 Use the Studio UI to author and publish. For direct links use `/docs/{book}/{version}/{path}`. Search is a local case-insensitive substring scan (not a full-text index).
 
-## Media library (0.1.4)
+## Media library (0.1.5)
 
 Open **Studio → Media library** (`/studio/media`). Select or drop files, optionally enter a folder such as `guides/images`, and upload. With JavaScript, multiple files upload sequentially (up to 50 per batch), each with its own progress and result; successful files are retained even if others fail. The HTML form works for single files without JavaScript. Search by filename, folder or SHA-256; filter by exact folder or type, sort, and use pagination. Open a file, download it, copy its permanent URL, or expand Manage file to rename/move/delete it. Folders are logical metadata, not filesystem paths. Renaming must preserve file type; it does not change the file ID or links. Identical SHA-256/MIME content reuses the original ID and metadata; rename/move the existing item if needed.
 
@@ -134,7 +135,27 @@ Copy the URL from a media card and use it in Markdown (replace the example ID wi
 [Download the guide](/media/0123456789abcdef0123456789abcdef)
 ```
 
-Canonical local URLs are exactly `/media/{32-lowercase-hex-id}`. References in actual CommonMark links/images, including reference definitions used by a link, are recorded when saving or publishing. A file is private until at least one published page references it. Studio previews rewrite local media URLs to authenticated `/studio/media/file/{id}`; public Reader retains the canonical URL. Saving a draft never changes public access. Unpublishing or deleting the last referring published page revokes access. A literal URL in code or prose does not grant public access; deletion conservatively also protects literal references in drafts and publications. Unknown canonical media IDs are rejected when saving. Removing a reference from both snapshots (or deleting the page) makes the file eligible for deletion. Previously downloaded public copies cannot be revoked. Do not publish private content inadvertently. Visual media picking, image resizing/captions and attachment insertion tools are scheduled for 0.1.5; the existing Markdown mode works now.
+Canonical local URLs are exactly `/media/{32-lowercase-hex-id}`. References in actual CommonMark links/images, including reference definitions used by a link, are recorded when saving or publishing. A file is private until at least one published page references it. Studio previews rewrite local media URLs to authenticated `/studio/media/file/{id}`; public Reader retains the canonical URL. Saving a draft never changes public access. Unpublishing or deleting the last referring published page revokes access. A literal URL in code or prose does not grant public access; deletion conservatively also protects literal references in drafts and publications. Unknown canonical media IDs are rejected when saving. Removing a reference from both snapshots (or deleting the page) makes the file eligible for deletion. Previously downloaded public copies cannot be revoked. Do not publish private content inadvertently. Use the visual tools below to insert media without typing these URLs.
+
+### Images & Attachments (0.1.5)
+
+In Studio, use **Insert image** or **Insert attachment** (also available in Add block). The authenticated media picker searches names/folders, shows image thumbnails, and pages through the library. Select a file or upload a new one with the existing MIME checks, size/quota limits and progress indicator. For an image, paste a clipboard raster image or drop a file on the Visual panel, then confirm Upload and insert. A dropped file opens the appropriate picker; insert one file at a time. Uploads are retained in the library even if you discard the page changes.
+
+In Visual mode the new block is inserted before the active block, or at the start if no block is selected. This also avoids appending to an unclosed code fence. In Markdown/Preview mode the tool prepends a standalone Markdown block and selects it in Markdown so you can move it elsewhere. Edit image URL, alternative text (important for accessibility), caption, width (25/50/75/100% of the content area) and alignment (left/center/right). Width controls the maximum displayed figure width, not the stored image or its original dimensions. Replace from media library keeps image properties; attachments have an editable download label. Remove block removes the reference from the draft, not the underlying file. The existing Save draft, Publish and revision handling remain authoritative.
+
+Reader and Preview render standalone images as responsive figures. A plain existing Markdown image title is displayed as its caption; editing an image normalizes its presentation metadata but untouched Markdown stays unchanged. **View full size** opens a keyboard-accessible modal with fit-to-screen/actual-size modes, an original-file link and local image download. Attachment blocks render a labeled download link; the server adds the download query only to rendered links, not the canonical source URL. PDF, ZIP and text files remain forced downloads; images can also be inserted as downloadable attachments. Mixed inline images and complex attachment labels remain editable in Markdown mode, not rewritten visually.
+
+#### Portable Markdown syntax
+
+The stored document is still standard Markdown. Rich image layout uses the optional title `book-image:v1:<percent-encoded JSON>` with exactly the supported presentation fields `width`, `align` and `caption`. Captions are plain UTF-8 text (up to 2000 bytes); only fixed width/alignment values are accepted. No author-supplied HTML or CSS is evaluated. An attachment uses the title `book-attachment:v1` on a standalone canonical local link. Other Markdown engines can still display the image/link; they do not interpret Book-specific titles as presentation metadata.
+
+```markdown
+![System architecture](</media/0123456789abcdef0123456789abcdef> "book-image:v1:%7B%22width%22%3A50%2C%22align%22%3A%22center%22%2C%22caption%22%3A%22System%20architecture%22%7D")
+
+[Download the guide](</media/fedcba9876543210fedcba9876543210> "book-attachment:v1")
+```
+
+Replace the sample IDs with actual media IDs. The normal `/media/{id}` reference parser, private preview rewrite and publication access rules apply unchanged. Do not paste `/studio/media/file/...` private URLs into published Markdown. Existing ordinary image/link syntax remains supported, with no storage migration or new runtime dependencies.
 
 ### Persistence and full backup/restore
 
@@ -167,10 +188,11 @@ python -m pip install playwright==1.57.0
 python -m playwright install chromium
 python tests/editor-browser.py
 python tests/media-browser.py
+python tests/images-browser.py
 ```
 
 Architecture: `src/` Book logic, `core/` reused upstream components, `templates/book/` CJR layout, `public/` sole web root, `data/` example content. Source is independent of the CMS release/update pipeline.
 
-## Roadmap (not implemented in 0.1.4)
+## Roadmap (not implemented in 0.1.5)
 
-Visual images and attachment insertion, page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.

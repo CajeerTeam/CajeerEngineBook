@@ -300,6 +300,7 @@
     function serializeSegment(segment) {
         if (segment.deleted) return '';
         if (!segment.changed) return segment.source;
+        if (['image','attachment'].includes(segment.kind)) return mediaMarkdown(segment.media) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
         if (segment.kind === 'table') { const text = tableMarkdown(segment); return segment.source && text === segment.initialTable ? segment.source : text + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || ''); }
         if (segment.source && (segment.kind === 'code' ? segment.code.value === segment.initialCode && segment.language.value === segment.initialLanguage : segment.content.innerHTML === segment.initialHtml)) return segment.source;
         const text = segment.kind === 'code' ? fenceCode(segment.code.value, segment.language.value.trim()) : serializeChildren(segment.content);
@@ -419,17 +420,112 @@
             captureSelection(); changeSegment(active); updateToolbar();
         } catch (e) { fail(e.message); }
     }
+    const localMedia = url => /^\/media\/[a-f0-9]{32}$/.test(url);
+    function mediaMarkdown(media) {
+        const text = value => escapeText(String(value).replace(/[\r\n]/g, ' '));
+        if (!media || !safeUrl(media.url) || !media.url || media.url.startsWith('/studio/media/') || /^(?:mailto:|#|\?)/i.test(media.url)) throw new Error('Choose a valid image or attachment URL.');
+        try { new URL(media.url, new URL('/docs/'+[value('book'),value('version'),value('path')].join('/'), document.baseURI)); } catch { throw new Error('Invalid media URL.'); }
+        const target = destination(media.url.replace(/&/g, '&amp;'));
+        if (media.kind === 'attachment') {
+            if (!localMedia(media.url) || !media.label.trim()) throw new Error('Choose a local attachment and enter a label.');
+            return '[' + text(media.label) + '](' + target + ' "book-attachment:v1")';
+        }
+        const caption = media.caption.replace(/[\r\n]/g,' ');
+        if (encoder.encode(caption).length > 2000 || /[\x00-\x1f\x7f]/.test(caption)) throw new Error('Caption must be plain text, at most 2000 UTF-8 bytes.');
+        const options = {width: Number(media.width), align: media.align, caption};
+        if (![25,50,75,100].includes(options.width) || !['left','center','right'].includes(options.align)) throw new Error('Invalid image layout.');
+        return '![' + text(media.alt) + '](' + target + ' "book-image:v1:' + encodeURIComponent(JSON.stringify(options)) + '")';
+    }
+    function mediaFromItem(item, kind) {
+        return kind === 'image' ? {kind,url:'/media/'+item.id,alt:item.name,caption:'',width:100,align:'center'} : {kind,url:'/media/'+item.id,label:item.name};
+    }
+    function mediaPreviewUrl(media) {
+        if (localMedia(media.url)) return '/studio/media/file/' + media.url.slice(7);
+        return new URL(media.url, new URL('/docs/'+[value('book'),value('version'),value('path')].join('/'), document.baseURI)).href;
+    }
+    function mountMedia(segment, wrapper) {
+        const media = segment.media;
+        const controls = document.createElement('div'); controls.className = 'editor-media-controls';
+        const preview = document.createElement('div'); preview.className = 'editor-media-preview';
+        const fields = {};
+        let figure, image, caption, attachment, previewTimer;
+        if (media.kind === 'image') {
+            figure = document.createElement('figure'); image = document.createElement('img');
+            image.referrerPolicy = 'no-referrer'; image.loading = 'lazy'; image.decoding = 'async';
+            caption = document.createElement('figcaption'); figure.append(image,caption); preview.append(figure);
+        } else { attachment = document.createElement('p'); attachment.className = 'book-attachment'; preview.append(attachment); }
+        function refresh() {
+            if (media.kind === 'image') {
+                figure.className = `book-image book-image-${media.width} book-image-${media.align}`;
+                image.alt = media.alt; caption.textContent = media.caption; caption.hidden = !media.caption;
+                let src = '';
+                if (safeUrl(media.url) && media.url && !/^(mailto:|#|\?)/i.test(media.url)) { try { src = mediaPreviewUrl(media); } catch {} }
+                // Updating a caption or width must not request the original blob again.
+                if (src && image.getAttribute('src') !== src) image.src = src;
+                else if (!src) image.removeAttribute('src');
+            } else attachment.textContent = 'Attachment: ' + media.label;
+            for (const [key, field] of Object.entries(fields)) if (field.value !== String(media[key])) field.value = String(media[key]);
+        }
+        function field(key, name, choices = null) {
+            const label = document.createElement('label'); label.textContent = name;
+            const input = document.createElement(choices ? 'select' : 'input'); input.setAttribute('aria-label',name);
+            if (choices) for (const [v, text] of choices) input.add(new Option(text,v));
+            else { input.type = 'text'; input.maxLength = key === 'caption' ? 2000 : key === 'url' ? 2048 : 500; }
+            input.value = String(media[key]); fields[key] = input; label.append(input); controls.append(label);
+            input.addEventListener('focus', () => setActive(segment));
+            input.addEventListener(choices ? 'change' : 'input', () => { media[key] = key === 'width' ? Number(input.value) : input.value; if (key === 'url') { delete media.previewUrl; clearTimeout(previewTimer); previewTimer = setTimeout(refresh, 350); } else refresh(); changeSegment(segment); });
+        }
+        if (media.kind === 'image') {
+            field('url','Image URL'); field('alt','Alternative text'); field('caption','Caption');
+            field('width','Image width',[[25,'25%'],[50,'50%'],[75,'75%'],[100,'100%']]);
+            field('align','Image alignment',[['left','Left'],['center','Center'],['right','Right']]);
+        } else field('label','Attachment label');
+        const replace = document.createElement('button'); replace.type = 'button'; replace.textContent = 'Replace from media library';
+        replace.addEventListener('click', () => window.BookMedia.pick(media.kind,value('csrf'),item => {
+            if (segment.deleted || mode !== 'visual') return;
+            const replacement = mediaFromItem(item, media.kind); media.url = replacement.url; delete media.previewUrl;
+            if (media.kind === 'image' && !media.alt) media.alt = item.name;
+            if (media.kind === 'attachment') media.label = item.name;
+            refresh(); changeSegment(segment);
+        }));
+        controls.append(replace); wrapper.append(preview,controls); refresh();
+    }
+    function insertMedia(kind, initialFile = null) {
+        if (transitioning || !syncVisual()) return;
+        window.BookMedia.pick(kind,value('csrf'),item => {
+            if (transitioning || !syncVisual()) return;
+            const media = mediaFromItem(item,kind);
+            if (mode === 'visual') {
+                const segment = {kind,media,source:'',html:'',changed:true,deleted:false};
+                // Insert before the active block (or at the start). This cannot append
+                // media inside an unclosed code fence or raw HTML block.
+                const at = active && !active.deleted ? segments.indexOf(active) : 0;
+                const next = segments.slice(Math.max(0,at)).find(s => !s.deleted && s.element);
+                segments.splice(Math.max(0,at),0,segment); renderSegment(segment);
+                if (next?.element) blocks.insertBefore(segment.element,next.element);
+                setActive(segment); changeSegment(segment); segment.element.scrollIntoView({block:'nearest'});
+            } else {
+                // Switch to Markdown so authors can position the inserted block explicitly.
+                const markdown = mediaMarkdown(media);
+                // An unclosed fence consumes following lines; prepend instead of appending.
+                const result = markdown + (source.value ? '\n\n'+source.value : '');
+                if (encoder.encode(result).length > 262144) { fail('Markdown exceeds 256 KiB.'); return; }
+                source.value = result; showMode('markdown'); source.focus(); source.setSelectionRange(0,markdown.length); updateDirty();
+            }
+        },initialFile);
+    }
     function renderSegment(segment) {
         if (segment.kind === 'gap' && !segment.source.trim()) return;
         const wrapper = document.createElement('div'); wrapper.className = 'editor-block'; segment.element = wrapper;
         const bar = document.createElement('div'); bar.className = 'editor-block-bar';
-        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : 'Text block'; bar.append(label);
-        if (['rich', 'code', 'table'].includes(segment.kind)) {
+        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : 'Text block'; bar.append(label);
+        if (['rich', 'code', 'table', 'image', 'attachment'].includes(segment.kind)) {
             const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove block';
             remove.addEventListener('click', () => { if (!window.confirm('Remove this block from the draft?')) return; segment.deleted = true; wrapper.remove(); if (active === segment) setActive(null); if (syncVisual()) updateDirty(); }); bar.append(remove);
         }
         wrapper.append(bar);
-        if (segment.kind === 'code') {
+        if (['image','attachment'].includes(segment.kind)) { mountMedia(segment, wrapper); }
+        else if (segment.kind === 'code') {
             const temp = document.createElement('template'); temp.innerHTML = segment.html;
             const code = temp.content.querySelector('pre>code');
             const lang = document.createElement('input'); lang.type = 'text'; lang.maxLength = 64; lang.placeholder = 'Language (optional)'; lang.setAttribute('aria-label', 'Code language'); lang.value = code?.dataset.language || '';
@@ -464,7 +560,7 @@
         blocks.append(wrapper);
     }
     function installBlocks(data, original) {
-        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table'].includes(s.kind) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
+        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table','image','attachment'].includes(s.kind) || (['image','attachment'].includes(s.kind) && (!s.media || s.media.kind !== s.kind)) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
         segments = data.map(s => ({...s, changed: false, deleted: false})); blocks.replaceChildren(); active = null; selection = null;
         segments.forEach(renderSegment);
         if (!original.trim()) { const initial = {source: '', html: '<p><br></p>', kind: 'rich', changed: false, deleted: false}; segments.push(initial); renderSegment(initial); }
@@ -481,7 +577,7 @@
             const result = await request('/studio/editor/render', data);
             if (ticket !== generation || source.value !== original) throw new Error('Source changed during rendering. Switch modes again.');
             if (next === 'visual') { if (typeof document.execCommand !== 'function') throw new Error('This browser does not support visual editing. Markdown mode is available.'); installBlocks(result.blocks, original); }
-            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); }
+            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); }
             showMode(next);
         } catch (e) { fail(e.message); }
         finally { transitioning = false; lockButtons(); updateDirty(); }
@@ -489,11 +585,12 @@
     async function refreshPreview() {
         if (mode !== 'preview' || transitioning) return;
         const original = source.value, ticket = ++generation;
-        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); } }
+        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); } }
         catch (e) { if (mode === 'preview' && ticket === generation) fail(e.message); }
     }
     function addBlock() {
         const kind = $('[data-add-kind]').value;
+        if (['image','attachment'].includes(kind)) { insertMedia(kind); return; }
         const segment = {source: '', html: '', kind: kind === 'code' ? 'code' : kind === 'table' ? 'table' : 'rich', changed: true, deleted: false};
         const templates = {table: '<div class="markdown-table"><table><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead><tbody><tr><td></td><td></td></tr></tbody></table></div>', task: '<ul><li><input type="checkbox">Task</li></ul>', p: '<p><br></p>', h2: '<h2><br></h2>', blockquote: '<blockquote><p><br></p></blockquote>', ul: '<ul><li><br></li></ul>', ol: '<ol><li><br></li></ol>', hr: '<hr>', code: '<pre><code></code></pre>'};
         segment.html = templates[kind]; segments.push(segment); renderSegment(segment);
@@ -549,6 +646,16 @@
     form.addEventListener('input', e => { if (fieldNames.includes(e.target.name)) { updateDirty(); if (mode === 'preview') { clearTimeout(previewTimer); previewTimer = setTimeout(refreshPreview, 300); } } });
     modes.forEach(button => button.addEventListener('click', () => switchMode(button.dataset.mode)));
     $('[data-add]').addEventListener('click', addBlock);
+    root.querySelectorAll('[data-insert-media]').forEach(button => button.addEventListener('click', () => insertMedia(button.dataset.insertMedia)));
+    panels.visual.addEventListener('paste', e => {
+        const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
+        if (file) { e.preventDefault(); e.stopImmediatePropagation(); const ext = {'image/png':'png','image/jpeg':'jpg','image/gif':'gif','image/webp':'webp'}[file.type]; insertMedia('image',ext && !/\.(png|jpe?g|gif|webp)$/i.test(file.name) ? new File([file],'clipboard.'+ext,{type:file.type}) : file); }
+    }, true);
+    panels.visual.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); }, true);
+    panels.visual.addEventListener('drop', e => {
+        const file = e.dataTransfer?.files[0]; if (!file) return;
+        e.preventDefault(); e.stopImmediatePropagation(); insertMedia(file.type.startsWith('image/') ? 'image' : 'attachment',file);
+    }, true);
     toolbar.addEventListener('pointerdown', e => { captureSelection(); if (e.target.closest('button')) e.preventDefault(); });
     toolbar.addEventListener('click', e => { const button = e.target.closest('[data-command]'); if (button && !button.disabled) command(button.dataset.command); });
     $('[data-format]').addEventListener('change', e => { command('formatBlock', e.target.value); e.target.value = 'p'; });

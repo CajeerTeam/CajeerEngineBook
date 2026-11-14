@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5 — Images & Attachments
+
+- Add an authenticated searchable, paginated media picker in Studio with existing-file selection and direct uploads, clipboard images, drag-and-drop and upload progress.
+- Edit standalone images with alternative text, captions, fixed responsive widths and alignment; replace images from the library and insert labeled downloadable attachment blocks. Preserve unsupported inline media and unchanged Markdown.
+- Store presentation metadata in standard Markdown titles, render responsive figures and attachment downloads through CommonMark, and add a local accessible fit/actual-size viewer in Reader and Preview.
+- Reuse canonical media IDs, private Studio URLs and publication reference tracking; keep existing file validation, revisions, backup and deletion protections. No new runtime dependencies or storage migration.
+- Add PHP metadata/renderer tests and full-stack browser E2E in CI.
+
 ## 0.1.4 — Media Library
 
 - Add the authenticated Studio media library with multi-file upload, drag-and-drop, progress and partial failure reporting; search, folder/type filters, sorting, pagination, rename, move, download and delete.

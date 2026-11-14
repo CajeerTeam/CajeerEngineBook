@@ -55,11 +55,23 @@ final class StudioEditor
             $kind = self::editable($node, $raw) ? 'rich' : 'protected';
             if ($kind === 'rich' && $node instanceof \League\CommonMark\Extension\Table\Table) $kind = 'table';
             if ($kind === 'rich' && ($node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode || $node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode)) $kind = 'code';
-            $out[] = ['source' => $raw, 'html' => $renderer->renderNodes([$node]), 'kind' => $kind];
+            $media = $node->data->get('book_media_block', null);
+            // A reference definition can share a paragraph's source range. Preserve it verbatim.
+            if ($media !== null && ($media['kind'] !== 'attachment' || self::plainAttachment($node)) && !str_contains($raw, ']:') && !preg_match('/^\h*:{3,}/m', $raw)) {
+                $out[] = ['source'=>$raw, 'html'=>$renderer->renderNodes([$node]), 'kind'=>$media['kind'], 'media'=>$media];
+            } else $out[] = ['source' => $raw, 'html' => $renderer->renderNodes([$node]), 'kind' => $media !== null ? 'protected' : $kind];
             $cursor = $end;
         }
         if ($cursor < count($lines)) $out[] = ['source' => implode('', array_slice($lines, $cursor)), 'html' => '', 'kind' => 'gap'];
         return $out;
+    }
+
+    private static function plainAttachment(Node $node): bool
+    {
+        $link = $node->firstChild();
+        if ($link === null) return false;
+        foreach ($link->children() as $child) if (!$child instanceof \League\CommonMark\Node\Inline\Text) return false;
+        return true;
     }
 
     private static function editable(Node $node, string $source): bool
@@ -131,11 +143,11 @@ final class StudioEditor
         foreach ($buttons as $command => $label) $toolbar .= '<button type="button" data-command="'.$command.'">'.$label.'</button>';
         return '<section class="book-editor" data-book-editor><div class="editor-mode" hidden data-enhanced>'
             .'<div role="group" aria-label="Editor mode"><button type="button" data-mode="visual" aria-pressed="false">Visual</button><button type="button" data-mode="markdown" aria-pressed="true">Markdown</button><button type="button" data-mode="preview" aria-pressed="false">Preview</button></div>'
-            .'<button type="button" data-copy-source>Copy Markdown</button><span data-save-state role="status" aria-live="polite">Draft loaded</span></div>'
+            .'<button type="button" data-insert-media="image">Insert image</button><button type="button" data-insert-media="attachment">Insert attachment</button><button type="button" data-copy-source>Copy Markdown</button><span data-save-state role="status" aria-live="polite">Draft loaded</span></div>'
             .'<div data-markdown-panel><label>Markdown<textarea name="body" rows="16" spellcheck="false">'."\n".Markdown::e($source).'</textarea></label></div>'
             .'<div data-visual-panel hidden><div class="editor-toolbar" role="toolbar" aria-label="Formatting">'.$toolbar.'</div>'
-            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Edit tables directly, or paste spreadsheet cells. Images and unsupported blocks remain intact in Markdown mode.</p>'
-            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="table">Table</option><option value="task">Task list</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
+            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Edit tables directly, or paste spreadsheet cells. Insert images and attachments from your media library. Unsupported inline media remains intact in Markdown mode.</p>'
+            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="table">Table</option><option value="task">Task list</option><option value="image">Image</option><option value="attachment">Attachment</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
             .'<div data-preview-panel hidden><article data-live-preview></article></div><p data-editor-error class="editor-error" role="alert" hidden></p></section>';
     }
 }

@@ -75,6 +75,7 @@ final class App {
             }
             if($action==='delete'||$action==='unpublish'){$this->store->remove($str('key'),(int)$str('revision'),$action==='unpublish');}elseif($action==='copy'){$this->store->copyVersion($str('book'),$str('from'),$str('to'));}else throw new \InvalidArgumentException('Unknown action');header('Location: /studio',true,303);return;
         }
+        if($path==='/studio/media/picker'){$this->mediaController->picker();return;}
         if($path==='/studio/media'){$this->page('Media library',$this->mediaController->markup($csrf));return;}
         if(str_starts_with($path,'/studio/media/file/')){$this->mediaController->serve(substr($path,19),true,$method);return;}
         if($path==='/studio/media/backup'){(new MediaBackup($this->dataDir,$this->store,$this->media))->download($method);return;}

@@ -10,6 +10,8 @@ use League\CommonMark\Extension\CommonMark\Node\Inline\Code;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Image;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Link;
 use League\CommonMark\Extension\GithubFlavoredMarkdownExtension;
+use League\CommonMark\Node\Block\Document;
+use League\CommonMark\Node\Block\Paragraph;
 use League\CommonMark\Node\Inline\Newline;
 use League\CommonMark\Node\Inline\Text;
 use League\CommonMark\Parser\MarkdownParser;
@@ -72,6 +74,29 @@ final class Markdown
                 if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
                 if (($studio || $editor) && $url !== null && self::mediaId($url)!==null) $url='/studio/media/file/'.self::mediaId($url);
+                // Standalone images remain standard Markdown images; presentation metadata
+                // is carried in their optional title. Only canonical local attachment links
+                // acquire a download query, AFTER reference recognition and preview rewriting.
+                $parent = $node->parent();
+                if ($url !== null && $parent instanceof Paragraph && $parent->parent() instanceof Document
+                    && $parent->firstChild() === $node && $parent->lastChild() === $node) {
+                    if ($node instanceof Image) {
+                        $options = MediaMarkup::imageOptions($node->getTitle());
+                        // Invalid reserved metadata must not be normalized by Visual mode.
+                        $title = $node->getTitle();
+                        if ($originalUrl !== '' && !preg_match('/^[#?]/', $originalUrl)
+                            && ($options !== null || !str_starts_with($title ?? '', MediaMarkup::IMAGE_PREFIX))) {
+                            $parent->data->set('book_media_block', ['kind'=>'image', 'url'=>$originalUrl,
+                                'previewUrl'=>$url, 'alt'=>self::headingText($node)] + ($options ?? ['width'=>100,'align'=>'center','caption'=>$title ?? '']));
+                            if ($options !== null) $node->setTitle(null);
+                        }
+                    } elseif ($node->getTitle() === MediaMarkup::ATTACHMENT_TITLE && self::mediaId($originalUrl) !== null) {
+                        $parent->data->set('book_media_block', ['kind'=>'attachment','url'=>$originalUrl,'label'=>self::headingText($node)]);
+                        $node->setTitle(null);
+                        $url .= '?download=1';
+                        $node->data->set('attributes.download', '');
+                    }
+                }
                 $node->setUrl($url ?? '#');
                 if ($url === null) $node->data->set('book_editor_unsafe', true);
                 if ($node instanceof Image && $url === null) {
@@ -115,6 +140,7 @@ final class Markdown
         $environment->addExtension(new CommonMarkCoreExtension());
         $environment->addExtension(new GithubFlavoredMarkdownExtension());
         $environment->addRenderer(Heading::class, new MarkdownHeadingRenderer(), 100);
+        $environment->addRenderer(Paragraph::class, new MediaParagraphRenderer(), 100);
         return $environment;
     }
 
