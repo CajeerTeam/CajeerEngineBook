@@ -48,12 +48,22 @@
         return data;
     }
     async function request(path, data) {
-        const response = await fetch(path, {method: 'POST', credentials: 'same-origin', cache: 'no-store',
-            headers: {'Accept': 'application/json', 'X-Book-Studio': 'editor'}, body: data});
-        let result;
-        try { result = await response.json(); } catch { throw Object.assign(new Error(`Request failed (${response.status}). Your changes are still in the editor.`), {status: response.status}); }
-        if (!response.ok) throw Object.assign(new Error(result.error || `Request failed (${response.status})`), {status: response.status});
-        return result;
+        const controller = new AbortController();
+        const deadline = setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await fetch(path, {method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                signal: controller.signal, headers: {'Accept': 'application/json', 'X-Book-Studio': 'editor'}, body: data});
+            let result;
+            try { result = await response.json(); } catch (e) {
+                if (controller.signal.aborted) throw e;
+                throw Object.assign(new Error(`Request failed (${response.status}). Your changes are still in the editor.`), {status: response.status});
+            }
+            if (!response.ok) throw Object.assign(new Error(result.error || `Request failed (${response.status})`), {status: response.status});
+            return result;
+        } catch (e) {
+            if (controller.signal.aborted) throw new Error('Request timed out. Your edits are retained. If saving, the server may already have committed; copy your Markdown before reloading.');
+            throw e;
+        } finally { clearTimeout(deadline); }
     }
     // CommonMark-safe literals. Escaping ASCII punctuation avoids accidental directives,
     // lists, entities, links, HTML and marks when typing ordinary visual text.

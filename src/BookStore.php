@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 final class BookStore {
+    public const MAX_DB_BYTES = 32 * 1024 * 1024;
     public function __construct(private readonly string $dir) {}
     public static function slug(string $s): bool { return preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$s)===1 && !in_array($s,['.','..'],true); }
     public static function key(string $book,string $version,string $path): string {
@@ -13,7 +14,10 @@ final class BookStore {
     public function read(): array {
         $file=$this->dir.'/books.json';
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
-        return is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
+        if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
+        $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
+        if(($db['schema']??null)!==1||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        return $db;
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
     public function snapshot(callable $fn): mixed {
@@ -27,8 +31,44 @@ final class BookStore {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $fn($db); Files::json($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $fn($db); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
+    }
+    /** Keep all new snapshots within the portable backup limit, before any rename. */
+    public static function writeDatabase(string $path,array $db): void {
+        $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
+        if(strlen($json)>self::MAX_DB_BYTES){
+            clearstatcache(true,$path);
+            $old=is_file($path)&&!is_link($path)?filesize($path):0;
+            // Legacy installations larger than the portable limit may shrink in stages.
+            if($old===false||$old<=self::MAX_DB_BYTES||strlen($json)>=$old)throw new \DomainException('Book data exceeds 32 MiB; remove content or split the installation.');
+        }
+        Files::write($path,$json);
+    }
+    public function checkReady(): void {
+        $this->snapshot(function(array $db): void {
+            if(count($db['pages'])>1000||count($db['media']??[])>MediaStore::MAX_FILES)throw new \RuntimeException('Store record quota exceeded');
+            foreach($db['pages'] as $entry){
+                if(!is_int($entry['revision']??null)||$entry['revision']<1||!array_key_exists('published',$entry))throw new \RuntimeException('Invalid page record');
+                foreach(['draft','published'] as $state){
+                    $p=$entry[$state]??null;if($p===null&&$state==='published')continue;
+                    if(!is_array($p)||!is_string($p['body']??null)||!is_string($p['title']??null)||!is_string($p['section']??null)||!is_int($p['order']??null)||!is_string($p['updated']??null))throw new \RuntimeException('Invalid page snapshot');
+                }
+            }
+            PageTree::validate($db);
+            if(is_file($this->dir.'/books.json')&&filesize($this->dir.'/books.json')>self::MAX_DB_BYTES)throw new \RuntimeException('Legacy store exceeds the portable data limit');
+            $probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));
+            try { Files::write($probe,'ready'); } finally { if(is_file($probe))Files::remove($probe); }
+            $media=Files::path($this->dir,'media');
+            if(file_exists($media)&&(!is_dir($media)||!is_writable($media)))throw new \RuntimeException('Media directory unavailable');
+            $total=0;$store=new MediaStore($this->dir,$this);
+            foreach($db['media']??[] as $id=>$item){
+                if(!is_string($id)||!MediaStore::validId($id)||!is_array($item)||($item['id']??null)!==$id||!is_int($item['size']??null)||$item['size']<1||$item['size']>MediaStore::MAX_FILE)throw new \RuntimeException('Invalid media metadata');
+                $blob=$store->blob($id);if(!is_file($blob)||!is_readable($blob)||filesize($blob)!==$item['size'])throw new \RuntimeException('Missing or damaged media blob');
+                $total+=$item['size'];
+            }
+            if($total>MediaStore::MAX_TOTAL)throw new \RuntimeException('Media quota exceeded');
+        });
     }
     public function save(array $input, bool $publish): string {
         return $this->saveResult($input,$publish)['key'];

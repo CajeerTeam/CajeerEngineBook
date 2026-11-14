@@ -7,7 +7,7 @@ use CajeerEngine\Update\OperationFiles as Files;
 /** Portable uncompressed TAR; never extracts archive paths directly. */
 final class MediaBackup
 {
-    private const MAX_DB = 32 * 1024 * 1024;
+    private const MAX_DB = BookStore::MAX_DB_BYTES;
     public function __construct(private readonly string $dir,private readonly BookStore $books,private readonly MediaStore $media) {}
     public function create(string $target): void
     {
@@ -83,7 +83,7 @@ final class MediaBackup
                 }
             }unset($entry);
             PageTree::validate($db);
-            Files::json($stage.'/books.json',$db);unset($tar);
+            BookStore::writeDatabase($stage.'/books.json',$db);unset($tar);
             if(file_exists($target)||is_link($target)||!rename($stage,$target))throw new \RuntimeException('Cannot publish restored directory');
             Files::syncDir($parent);
         }finally{

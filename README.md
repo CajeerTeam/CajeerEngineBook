@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -38,9 +38,54 @@ php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
 
-## Upgrade to 0.1.6
+## Upgrade to 0.2.0
 
 Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, and install the local Mermaid asset with `sh bin/install-mermaid.sh`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Version 0.1.6 lazily adds stable page IDs, a published path, historical path reservations and optional relative-link context. Existing paths are not changed until a tree operation is committed. Do not roll back code to 0.1.5 after moving pages without restoring a pre-upgrade backup: older readers ignore the new published-path metadata. Recheck the public reader, Studio and health endpoint after the update.
+
+### 0.2.0 release checks and upgrade from 0.1.9
+
+This release preserves the schema-1 format and all existing Markdown sources. There is no destructive migration, but perform the following before exposing the upgraded service:
+
+1. Stop authoring writes and back up the complete data directory, including the media blobs. Keep this copy outside `public/`. If the legacy JSON is larger than 32 MiB, use an offline filesystem copy rather than the TAR exporter.
+2. Overlay the changed files; install the Composer lock and the pinned local Mermaid bundle (or rebuild the image). Keep the existing data volume and admin hash.
+3. Run the data audit as the same operating-system user as the application (or with permissions to read the private data). For a Docker installation use `docker compose exec -u www-data book php bin/verify-data.php /var/lib/cajeerbook`.
+
+```sh
+php bin/verify-data.php /var/lib/cajeerbook
+# If exit status is 2, review the reference mismatch count and, after backup:
+php bin/verify-data.php /var/lib/cajeerbook --repair-media-references
+php bin/verify-data.php /var/lib/cajeerbook
+```
+
+The audit validates page identities/paths, stored snapshots, actual media MIME/size/SHA-256 and AST-derived media references. Exit 0 means consistent, 2 means the stored reference index differs from the renderer, 1 means invalid data or a missing/corrupt file. The explicit repair recomputes only reference lists, in one locked atomic write, and invalidates affected page revisions. It does not publish a draft or rewrite Markdown. Previously, canonical media URLs with a query or fragment could fail to grant public access even when explicitly linked in published content. The repaired index makes those published links available and keeps draft-only references private. If an old link points to a nonexistent file, correct the link or restore the missing file; repair fails rather than silently dropping it.
+
+New metadata snapshots are capped at **32 MiB** (matching the portable backup format). The 256 KiB per-page and 512 MiB binary-media quotas remain. Legacy oversized stores can still read and commit strictly size-reducing changes until below the cap; other writes are rejected before replacement. Readiness reports 503 for an oversized legacy store. Subdivide or remove content after an offline backup. Existing valid stores below the limit need no format conversion.
+
+`/health/live` checks that the PHP application starts; `/health/ready` also checks the schema, page/path consistency, private storage writeability, media blob existence/size and required PHP/Mermaid assets. Docker uses the readiness endpoint for its health check. A failed readiness response is deliberately generic; see server logs for the cause. Dynamic responses use `Cache-Control: no-store` to avoid serving stale private/public state after unpublishing. The data directory and backup/restore destinations may not be inside or routed through `public/`. `BOOK_DATA_DIR` must not contain `..` segments. Apache disables symlink traversal in the document root. Continue to use HTTPS with `BOOK_SECURE_COOKIE=1`, rate limiting and a private data directory on production deployments.
+
+Studio requests now have a 30-second deadline. On timeout the editor retains local Markdown and re-enables the controls; an uncertain save may have reached the server, so retry uses the existing revision check and a conflict must be resolved by copying/merging the local text. This is not a guarantee of automatic rollback after a network interruption.
+
+### Release gate
+
+Run on a disposable installation with PHP 8.4.1+, installed Composer dependencies, the pinned Mermaid assets, and Python 3.12:
+
+```sh
+composer validate --strict
+composer audit --locked
+composer test
+python3 -m pip install playwright==1.57.0
+python3 -m playwright install chromium
+python3 tests/editor-network-browser.py
+python3 tests/editor-browser.py
+python3 tests/media-browser.py
+python3 tests/images-browser.py
+python3 tests/page-tree-browser.py
+python3 tests/rich-blocks-browser.py
+python3 tests/interactive-browser.py
+python3 tests/mermaid-browser.py
+```
+
+`tests/release.php` builds one mixed document containing GFM, media, callouts, cards, nested tabs/accordion/steps, code tabs and Mermaid; verifies lossless editor segmentation, draft/public isolation, reference reindexing, tree publication and full backup/restore. `tests/release-http.py` verifies the actual HTTP application with an upload, rendering, publication, conflicts, redirects and TAR export. It creates a temporary store by default; `BOOK_TEST_URL` selects a disposable external instance (never use production data). CI runs the complete suite, then builds the Docker Compose deployment, executes the integration tests over Apache and verifies persistence after restarting the container. The narrow network-recovery browser test uses injected responses to test timeout handling without waiting 30 seconds; the full browser suites use real PHP and CommonMark. A passing CI and Docker release gate are required before declaring the build production-verified.
 
 ## Studio visual editor (0.1.6)
 

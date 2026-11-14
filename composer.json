@@ -28,7 +28,9 @@
             "bash tests/page-tree-http.sh",
             "@php tests/rich-blocks.php",
             "@php tests/interactive-blocks.php",
-            "@php tests/mermaid.php"
+            "@php tests/mermaid.php",
+            "@php tests/release.php",
+            "python3 tests/release-http.py"
         ]
     }
 }

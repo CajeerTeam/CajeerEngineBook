@@ -75,7 +75,7 @@ final class Markdown
                 if ($url !== null && $node instanceof Link && $linkMap) $url = PageTree::rewriteLink($url,$linkMap);
                 if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
-                if (($studio || $editor) && $url !== null && self::mediaId($url)!==null) $url='/studio/media/file/'.self::mediaId($url);
+                if (($studio || $editor) && $url !== null) $url=self::previewMediaUrl($url);
                 // Standalone images remain standard Markdown images; presentation metadata
                 // is carried in their optional title. Only canonical local attachment links
                 // acquire a download query, AFTER reference recognition and preview rewriting.
@@ -92,7 +92,7 @@ final class Markdown
                                 'previewUrl'=>$url, 'alt'=>self::headingText($node)] + ($options ?? ['width'=>100,'align'=>'center','caption'=>$title ?? '']));
                             if ($options !== null) $node->setTitle(null);
                         }
-                    } elseif ($node->getTitle() === MediaMarkup::ATTACHMENT_TITLE && self::mediaId($originalUrl) !== null) {
+                    } elseif ($node->getTitle() === MediaMarkup::ATTACHMENT_TITLE && preg_match('~\A/media/[a-f0-9]{32}\z~D',$originalUrl) === 1) {
                         $parent->data->set('book_media_block', ['kind'=>'attachment','url'=>$originalUrl,'label'=>self::headingText($node)]);
                         $node->setTitle(null);
                         $url .= '?download=1';
@@ -123,7 +123,7 @@ final class Markdown
                     $resolve=static function(string $url,bool $image) use ($pageKey,$linkBase,$linkMap,$studio,$editor): ?string {
                         $url=self::safeUrl($url,$image,$pageKey,$linkBase);
                         if ($url!==null && !$image && $linkMap) $url=PageTree::rewriteLink($url,$linkMap);
-                        if ($url!==null && ($studio || $editor) && ($id=self::mediaId($url))!==null) $url='/studio/media/file/'.$id;
+                        if ($url!==null && ($studio || $editor)) $url=self::previewMediaUrl($url);
                         return $url;
                     };
                     $node->data->set('book_rich_html',RichBlocks::html($component,$bodyHtml,$resolve));
@@ -178,7 +178,12 @@ final class Markdown
 
     private static function mediaId(string $url): ?string
     {
-        return preg_match('~\A/media/([a-f0-9]{32})\z~D',$url,$m) ? $m[1] : null;
+        return preg_match('~\A/media/([a-f0-9]{32})(?:[?#].*)?\z~D',$url,$m) ? $m[1] : null;
+    }
+
+    private static function previewMediaUrl(string $url): string
+    {
+        return self::mediaId($url)!==null ? '/studio/media/file/'.substr($url,7) : $url;
     }
 
     /** Only actual CommonMark links/images (including reference links), never code or prose. */

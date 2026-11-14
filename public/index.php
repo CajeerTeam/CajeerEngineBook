@@ -7,5 +7,7 @@ try {
     error_log((string)$e);
     http_response_code(503);
     header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
     echo 'Service unavailable';
 }

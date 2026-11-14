@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
-require dirname(__DIR__).'/bootstrap.php';
+// This suite uses real storage and an empty page set for restore; it can run without the parser.
+if(in_array('--storage-only',$argv,true)){foreach(['core/Update/OperationFiles.php','src/BookStore.php','src/PageTree.php','src/MediaStore.php','src/MediaBackup.php'] as $file)require dirname(__DIR__).'/'.$file;}
+else require dirname(__DIR__).'/bootstrap.php';
 use CajeerBook\{BookStore,MediaStore,MediaBackup};
 function check(bool $ok,string $msg):void{if(!$ok)throw new RuntimeException($msg);echo "PASS $msg\n";}
 function reject(callable $fn,string $message):void{try{$fn();}catch(InvalidArgumentException|DomainException $e){check(true,$message);return;}throw new RuntimeException($message.' was accepted');}

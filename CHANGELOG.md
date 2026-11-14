@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — Advanced Editor Stable
+
+- Harden private data directory resolution (including missing descendants, symlink aliases and parent traversal), CLI backup/restore destinations and Apache document-root symlink policy.
+- Make readiness validate the store, write a durable probe and require the installed PHP and pinned Mermaid runtime; add Docker health checks. Reject unsupported schemas and enforce the portable 32 MiB metadata limit before atomic replacement, allowing size-reducing legacy writes.
+- Correct media references with query/fragment suffixes in Reader and Studio, with a read-only consistency audit and explicit transactional reference reindex for old stores. Preserve draft/public isolation and revision checks.
+- Add Studio request deadlines and recovery without losing source, strict destructive-action revisions, no-store dynamic responses and correct conflict status codes.
+- Add mixed-document AST/storage/backup integration, real HTTP release gate, timeout browser tests and a Docker Compose CI gate including persistence after restart. Preserve all existing editor, media, tree, rich-block and Mermaid features.
+- Keep schema 1, the existing Composer lock and Mermaid 11.17.2; no new runtime dependencies.
+
 ## 0.1.9 — Mermaid & Editor Polish
 
 - Render standard Mermaid fences in sandboxed opaque-origin frames using a pinned, locally installed Mermaid 11.17.2 browser distribution. Lazy rendering, strict configuration, source fallback, theme redraw, zoom, expansion/full screen and bounded PNG export.

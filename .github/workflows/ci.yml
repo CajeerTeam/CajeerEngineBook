@@ -21,12 +21,13 @@ jobs:
       - run: composer audit --locked
       - run: find src core data public tests bin -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php -l bootstrap.php
-      - run: composer test
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: composer test
       - run: python -m pip install playwright==1.57.0
       - run: python -m playwright install --with-deps chromium
+      - run: python tests/editor-network-browser.py
       - run: python tests/editor-browser.py
       - run: python tests/media-browser.py
       - run: python tests/images-browser.py
@@ -35,3 +36,35 @@ jobs:
       - run: python tests/interactive-browser.py --reader-only
       - run: python tests/interactive-browser.py
       - run: python tests/mermaid-browser.py
+
+  docker-release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: none
+      - name: Build and run disposable Compose deployment
+        run: |
+          export BOOK_ADMIN_HASH="$(php -r 'echo password_hash("release-test-only-password", PASSWORD_DEFAULT);')"
+          export BOOK_SECURE_COOKIE=0
+          docker compose -p book-release-test up -d --build --wait --wait-timeout 120
+      - name: Run integration gate inside the image and over Apache HTTP
+        env:
+          BOOK_TEST_URL: http://127.0.0.1:8080
+        run: |
+          docker compose -p book-release-test exec -T book php tests/release.php
+          python3 tests/release-http.py
+          docker compose -p book-release-test restart book
+          python3 tests/release-http.py --check-persisted
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose -p book-release-test logs --no-color
+      - name: Remove disposable deployment
+        if: always()
+        run: docker compose -p book-release-test down -v
