@@ -147,8 +147,9 @@ final class PageTree
         return $dest;
     }
     /** Publish only navigation of already published pages; never publish draft content. */
-    public static function publish(array &$db,string $scope,string $token): void
+    public static function publish(array &$db,string $scope,string $token,?string $review=null): void
     {
+        ReviewWorkflow::guard($db,'tree',$scope,$review);
         self::verify($db,$token);$parts=explode('/',$scope);if(count($parts)!==2)throw new \InvalidArgumentException('Invalid version');BookStore::key($parts[0],$parts[1],'index');
         if(!array_filter(array_keys($db['pages']),fn($key)=>self::scope($key)===$scope))throw new \InvalidArgumentException('Unknown book version');
         foreach($db['pages'] as $key=>&$e){

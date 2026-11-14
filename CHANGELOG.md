@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7 — Review & Approval
+
+- Add scoped review queue, immutable saved-page and navigation snapshots, independent assigned reviewers, escaped discussion, request changes/reject/cancel, approval and atomic publication of exactly the approved state. Track known unpublished contributors and link publication history to review IDs.
+- Add Owner-only workspace review policy; required mode blocks direct page and tree publication under the content lock. Recheck reviewer permissions under the identity lock, reject stale request revisions and automatically invalidate requests when their saved state or policy changes.
+- Retain review media without granting public access, validate review state and snapshots on restore/audit, include reviews in existing scoped backups, enforce limits and allow Owner to prune closed requests. Schema 1 remains readable; first review or policy change upgrades that content store to schema 2.
+- Add PHP, real multi-user HTTP and Chromium review tests; fix shared HTTP test helper collision with page path form fields. No new runtime dependencies.
+
 ## 0.2.6 — Revision History
 
 - Record immutable, attributed draft/publication snapshots atomically with page saves, publication, tree changes, copies, unpublishing, deletion and restoration. Preserve stable IDs and initial legacy snapshots; skip identical autosaves, support optional revision notes.

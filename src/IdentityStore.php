@@ -141,11 +141,20 @@ final class IdentityStore
         if($s['seen']<=time()-300){$s['seen']=time();$db['sessions'][hash('sha256',$token)]=$s;}
         return ['session'=>$s,'user'=>self::safe($db['users'][$s['user']])];
     }
+    /** Review assignment uses live enabled users and effective permissions under the identity lock. */
+    private static function reviewUsers(array $db,?array $w):array{
+        $out=[];$o=$w?$db['organizations'][$w['organization']]:null;
+        if($w&&($w['archived']||$o['archived']))return [];
+        foreach($db['users'] as $id=>$u){if(!$u['enabled'])continue;$role=$w?Permissions::workspace($o,$w,$id):($u['owner']?'owner':'none');
+            if(Permissions::allows($role,'edit'))$out[$id]=['id'=>$id,'username'=>$u['username'],'role'=>$role];}
+        return $out;
+    }
     public function withWorkspace(string $token,string $org,string $id,callable $fn,bool $publishedRead=false):mixed{
         return $this->transaction(function(&$db)use($token,$org,$id,$fn,$publishedRead){
             $ctx=self::context($db,$token);$uid=$ctx['user']['id']??'';
             $w=Workspaces::access($db,$uid,$org,$id);
             if(!$w&&$publishedRead)$w=Workspaces::publicAccess($db,$uid,$org,$id);
+            if($ctx&&$w&&Permissions::allows($w['role'],'edit'))$ctx['review_users']=self::reviewUsers($db,$db['workspaces'][$id]);
             return $fn($ctx,$w);
         });
     }
@@ -153,8 +162,9 @@ final class IdentityStore
     public function withLegacy(string $token,callable $fn):mixed{
         return $this->transaction(function(&$db)use($token,$fn){
             $ctx=self::context($db,$token);$u=$ctx['user']??null;$w=Workspaces::legacy($db);$o=$w?$db['organizations'][$w['organization']]:null;
-            $role=$o?($o['archived']?'none':Permissions::workspace($o,$w,$u['id']??'')):(($u['owner']??false)?'owner':'none');
+            $role=$o?(($o['archived']||$w['archived'])?'none':Permissions::workspace($o,$w,$u['id']??'')):(($u['owner']??false)?'owner':'none');
             $visible=!$o||(!$o['archived']&&!$w['archived']&&($role!=='none'||(!isset($o['members'][$u['id']??''])&&Visibility::workspace($w)==='public')));
+            if($ctx&&Permissions::allows($role,'edit'))$ctx['review_users']=self::reviewUsers($db,$w);
             return $fn($ctx,$role,$w,$visible);
         });
     }

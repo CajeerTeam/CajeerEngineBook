@@ -10,8 +10,8 @@ spec=spec_from_file_location('identity_http',ROOT/'tests/identity-http.py');m=mo
 Client, check, PASSWORD=m.Client,m.check,m.PASSWORD
 FULL='--storage-only' not in sys.argv
 
-def post(c,path,action,status=303,**fields):
-    return c.request(path,status,{'csrf':c.csrf('/account'),'action':action}|fields)
+def post(c,route,action,status=303,**fields):
+    return c.request(route,status,{'csrf':c.csrf('/account'),'action':action}|fields)
 
 def upload(c,path,content=b'workspace isolated attachment'):
     boundary='BookWorkspaceBoundary987654321'

@@ -105,7 +105,7 @@ final class MediaStore
                 if(in_array($id,$p['media']??[],true) || (!$publishedOnly && str_contains($p['body'],'/media/'.$id))) $refs[]=$key.':'.$state;
             }
         }
-        if(!$publishedOnly)$refs=array_merge($refs,RevisionHistory::mediaReferences($db,$id));
+        if(!$publishedOnly)$refs=array_merge($refs,RevisionHistory::mediaReferences($db,$id),ReviewWorkflow::mediaIndex($db)[$id]??[]);
         return $refs;
     }
     /** One pass for the paginated library, rather than scanning the entire database for each card. */
@@ -121,7 +121,7 @@ final class MediaStore
                 foreach(array_unique(array_merge($ids,$matches[1])) as $id)$all[$id][]=$label;
             }
         }
-        foreach(RevisionHistory::mediaIndex($db) as $id=>$labels)$all[$id]=array_merge($all[$id]??[],$labels);
+        foreach(array_merge_recursive(RevisionHistory::mediaIndex($db),ReviewWorkflow::mediaIndex($db)) as $id=>$labels)$all[$id]=array_merge($all[$id]??[],$labels);
         return ['all'=>$all,'published'=>$published];
     }
     public function update(string $id,int $revision,string $name,string $folder): void
@@ -142,7 +142,7 @@ final class MediaStore
     {
         $this->books->change(function(array &$db)use($id,$revision){
             self::requireItem($db,$id,$revision);
-            if(self::references($db,$id)) throw new \DomainException('File is used by a draft, published page or retained history');
+            if(self::references($db,$id)) throw new \DomainException('File is used by a draft, published page, retained history or review');
             unset($db['media'][$id]);
         });
         // ID is never reused. Delete only after commit; already-open readers can finish.

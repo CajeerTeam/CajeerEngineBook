@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 require_once __DIR__.'/RevisionHistory.php';
+require_once __DIR__.'/ReviewWorkflow.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
@@ -20,9 +21,10 @@ final class BookStore {
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
         if(!is_file($file)&&!$this->seed)throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
-        if(($db['schema']??null)!==1||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        if(!in_array($db['schema']??null,[1,2],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
+        ReviewWorkflow::validate($db);
         return $db;
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
@@ -37,13 +39,14 @@ final class BookStore {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$historyAction===null?null:$db; $fn($db); if($before!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$historyAction===null?null:$db; $fn($db); if($before!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($before!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
     public static function writeDatabase(string $path,array $db): void {
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
+        ReviewWorkflow::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
@@ -90,6 +93,7 @@ final class BookStore {
         $page=['media'=>[],'title'=>$title,'section'=>$section,'order'=>max(-9999,min(9999,(int)$input['order'])),'body'=>$body,'updated'=>gmdate('c')];
         $result=[];
         $this->change(function(array &$db)use($key,$page,$publish,$input,&$result){
+            if($publish)ReviewWorkflow::guard($db,'page',$key);
             $old=$db['pages'][$key]??['draft'=>null,'published'=>null,'revision'=>0];
             if((int)($input['revision']??0)!==$old['revision']) throw new \DomainException('Page changed. Reload before saving.');
             if(count($db['pages'])>=1000&&!isset($db['pages'][$key])) throw new \DomainException('Page limit reached');
@@ -100,16 +104,36 @@ final class BookStore {
             $draft['media']=Markdown::mediaReferences($draft['body'],$draft['link_base']??$key);
             foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
             $old['draft']=$draft;
-            if($publish){$publicKey=$old['published']!==null?PageTree::publicKey($key,$old):$key;$snapshot=$draft;
-                if($old['published']===null&&isset($old['published_key'])&&$old['published_key']!==$key)PageTree::remember($db,$old['published_key'],$old['id']);
-                if($old['published']!==null){$snapshot['order']=$old['published']['order'];if($publicKey!==$key)$snapshot['link_base']??=$key;}
-                $old['published']=$snapshot;$old['published_key']=$publicKey;
-            } $old['revision']++;
+            if($publish)self::publishSnapshot($db,$key,$old); $old['revision']++;
             [$book]=explode('/',$key,2);$books=self::books($db);
             if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}
             $db['pages'][$key]=$old;$db['books']=$books;
             $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null,'id'=>$old['id'],'navigation_changed'=>$navigationChanged];
         },$publish?'publish':'save',RevisionHistory::note((string)($input['note']??''))); return $result;
+    }
+    /** Shared publication mutation. Callers authorize the direct or reviewed publication under books.lock. */
+    public static function publishSnapshot(array &$db,string $key,array &$entry,?string $review=null):void {
+        ReviewWorkflow::guard($db,'page',$key,$review);
+        $publicKey=$entry['published']!==null?PageTree::publicKey($key,$entry):$key;$snapshot=$review===null?$entry['draft']:ReviewWorkflow::get($db,$review)['snapshot']['draft'];$snapshot['media']??=[];
+        if($entry['published']===null&&isset($entry['published_key'])&&$entry['published_key']!==$key)PageTree::remember($db,$entry['published_key'],$entry['id']);
+        if($entry['published']!==null){$snapshot['order']=$entry['published']['order'];if($publicKey!==$key)$snapshot['link_base']??=$key;}
+        $entry['published']=$snapshot;$entry['published_key']=$publicKey;
+    }
+    /** All review state transitions share the page/history transaction. */
+    public function review(array $actor,array $users,string $action,array $fields):string {
+        $id=$fields['id']??'';$result=$id;$note=$fields['note']??'';
+        // The immutable kind decides which history event is written. A concurrent request cannot alter it.
+        $history=null;if($action==='publish'){$r=ReviewWorkflow::get($this->read(),$id);$history=$r['kind']==='tree'?'publish-tree':'publish';}
+        $this->setHistoryActor($actor);
+        $this->change(function(array &$db)use($actor,$users,$action,$fields,$id,$note,&$result){
+            $rev=filter_var($fields['revision']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+            if($action==='submit'){$result=ReviewWorkflow::submit($db,$actor,$users,$fields['kind']??'',$fields['target']??'',$fields['expected']??'',$fields['reviewer']??'',$note);return;}
+            if($rev===false)throw new \InvalidArgumentException('Invalid review revision');
+            if($action==='policy'){if(!in_array($fields['required']??null,['0','1'],true))throw new \InvalidArgumentException('Invalid review policy');ReviewWorkflow::setPolicy($db,$actor,$users,$rev,$fields['required']==='1');$result='';return;}
+            if($action==='publish'){ReviewWorkflow::publish($db,$actor,$users,$id,$rev,$note);return;}
+            if($action==='prune'){ReviewWorkflow::prune($db,$actor,$users,$id,$rev);$result='';return;}
+            ReviewWorkflow::decide($db,$actor,$users,$id,$rev,$action,$note);
+        },$history,$history?'Review '.$id:'');return $result;
     }
     public function remove(string $key,int $revision,bool $unpublish): void {
         $this->change(function(array &$db)use($key,$revision,$unpublish){

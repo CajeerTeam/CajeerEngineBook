@@ -24,6 +24,8 @@
             "python3 tests/workspaces-http.py",
             "@php tests/permissions.php",
             "python3 tests/permissions-http.py",
+            "@php tests/reviews.php",
+            "python3 tests/reviews-http.py",
             "@php tests/history.php",
             "python3 tests/history-http.py",
             "@php tests/privacy.php",
