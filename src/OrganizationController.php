@@ -35,7 +35,7 @@ final class OrganizationController
                     $o=$this->store->createOrganization($session,self::post('name'),self::post('slug'));self::redirect('/organizations/'.$o['id']);return;
                 }
                 $rev=filter_var(self::post('revision'),FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);if($rev===false)throw new \InvalidArgumentException('Invalid organization revision.');
-                $fields=[];foreach(['name','slug','username','user','invitation','confirm'] as $k)$fields[$k]=self::post($k);
+                $fields=[];foreach(['name','slug','username','user','invitation','confirm','role'] as $k)$fields[$k]=self::post($k);
                 $r=$this->store->mutateOrganization($session,$id,$rev,$action,$fields);
                 if(isset($r['token']))$issued=$r;else{self::redirect(in_array($action,['leave','delete'],true)?'/organizations':$path);return;}
             }catch(OrganizationAccessException $e){http_response_code(403);$error=$e->getMessage();}
@@ -48,17 +48,18 @@ final class OrganizationController
             $page('Organizations',$html);return;
         }
         $o=$this->store->organization($session,$id);if(!$o){http_response_code(404);$page('Not found','<h1>Organization not found</h1>');return;}
-        $rev=$o['revision'];$owner=$o['role']==='owner';
+        $rev=$o['revision'];$owner=$o['role']==='owner';$manager=Permissions::allows($o['role'],'manage');
         $html='<div class="auth-panel org-panel"><p><a href="/organizations">All organizations</a> · <a href="/workspaces">Workspaces</a></p><h1>'.self::e($o['name']).'</h1><p>'.self::e($o['slug']).' · '.self::e($o['role']).' · '.($o['archived']?'Archived':'Active').'</p>'.self::notice($error);
         if($issued){$link='/organizations/join#'.$issued['token'];$html.='<section class="org-card"><h2>Invitation created</h2><p>Share this one-time invitation with '.self::e($issued['username']).'. It expires in seven days. The token is shown only now.</p><label>Invitation link<input readonly data-org-invite-link value="'.self::e($link).'"></label><button type="button" data-org-copy>Copy full link</button><p>Or copy the token: <code>'.self::e($issued['token']).'</code></p><p><a href="'.self::e($link).'">Open invitation form</a></p><p role="status" data-org-copy-status></p></section>';}
-        if($owner&&!$o['archived'])$html.='<h2>Settings</h2>'.self::form($path,$csrf,'rename',self::field('name','Organization name',$o['name']).self::field('slug','Slug',$o['slug'],'text',64),'Save settings',$rev).'<h2>Invite participant</h2><p>Use the existing username, or choose a username for a new account. Existing accounts must sign in to accept.</p>'.self::form($path,$csrf,'invite',self::field('username','Invited username','','text',40),'Create / replace invitation',$rev);
+        if($owner&&!$o['archived'])$html.='<h2>Settings</h2>'.self::form($path,$csrf,'rename',self::field('name','Organization name',$o['name']).self::field('slug','Slug',$o['slug'],'text',64),'Save settings',$rev);
+        if($manager&&!$o['archived'])$html.='<h2>Invite participant</h2><p>Use the existing username, or choose a username for a new account. Existing accounts must sign in to accept.</p>'.self::form($path,$csrf,'invite',self::field('username','Invited username','','text',40),'Create / replace invitation',$rev);
         $html.='<h2>Members</h2>';
         foreach($o['members'] as $m){$html.='<div class="org-card"><strong>'.self::e($m['name']).'</strong><p>'.self::e($m['username'].' · '.$m['role']).($m['enabled']?'':' · Disabled').' · Joined '.self::date($m['joined']).'</p>';
-            if($owner&&$m['role']!=='owner'){
-                if(!$o['archived'])$html.=self::form($path,$csrf,'remove',self::hidden('user',$m['id']),'Remove member',$rev);
-                if($m['enabled'])$html.=self::form($path,$csrf,'transfer',self::hidden('user',$m['id']).'<p>Transfer ownership to this member? You will become a regular member.</p>','Transfer ownership',$rev);
+            if(Permissions::canManageMember($o['role'],$m['role'])){
+                if(!$o['archived']){$html.=self::form($path,$csrf,'remove',self::hidden('user',$m['id']),'Remove member',$rev);$choices='';foreach($owner?Permissions::MEMBER_ROLES:['editor','viewer'] as $r)$choices.='<option value="'.$r.'"'.($r===$m['role']?' selected':'').'>'.ucfirst($r).'</option>';$html.=self::form($path,$csrf,'role',self::hidden('user',$m['id']).'<label>Role<select name="role">'.$choices.'</select></label>','Change role',$rev);}
+                if($owner&&$m['enabled'])$html.=self::form($path,$csrf,'transfer',self::hidden('user',$m['id']).'<p>Transfer ownership to this member? You will become a Viewer.</p>','Transfer ownership',$rev);
             }$html.='</div>';}
-        if($owner&&!$o['archived']){$html.='<h2>Invitations</h2>';foreach($o['invitations'] as $i)$html.='<div class="org-card"><strong>'.self::e($i['username']).'</strong><p>'.($i['expires']<=time()?'Expired':'Pending').' · Expires '.self::date($i['expires']).'</p>'.self::form($path,$csrf,'revoke',self::hidden('invitation',$i['id']),'Revoke invitation',$rev).'</div>';}
+        if($manager&&!$o['archived']){$html.='<h2>Invitations</h2>';foreach($o['invitations'] as $i)$html.='<div class="org-card"><strong>'.self::e($i['username']).'</strong><p>'.($i['expires']<=time()?'Expired':'Pending').' · Expires '.self::date($i['expires']).'</p>'.self::form($path,$csrf,'revoke',self::hidden('invitation',$i['id']),'Revoke invitation',$rev).'</div>';}
         if($owner){$html.='<h2>Organization lifecycle</h2>';if($o['archived'])$html.=self::form($path,$csrf,'restore','','Restore organization',$rev).'<p>Deletion is permanent. Back up identity data with the operator CLI before deleting.</p>'.self::form($path,$csrf,'delete',self::field('confirm','Type the organization slug to confirm'),'Delete archived organization',$rev);else $html.=self::form($path,$csrf,'archive','<p>Archive this organization and invalidate all pending invitations.</p>','Archive organization',$rev);}
         else $html.='<h2>Membership</h2>'.self::form($path,$csrf,'leave','','Leave organization',$rev);
         $page($o['name'],$html.'</div>');

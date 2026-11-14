@@ -31,6 +31,8 @@ final class Organizations
             $slugs[$o['slug']]=true;
             if (!($db['users'][$o['owner']]['enabled']??false)||!isset($o['members'][$o['owner']])) throw new \RuntimeException('Organization requires an enabled owner');
             foreach ($o['members'] as $uid=>$joined) if (!isset($db['users'][$uid])||!is_int($joined)) throw new \RuntimeException('Invalid organization membership');
+            if(!is_array($o['roles']??[]))throw new \RuntimeException('Invalid organization roles');
+            foreach($o['roles']??[] as $uid=>$role)if(!isset($o['members'][$uid])||$uid===$o['owner']||!in_array($role,Permissions::MEMBER_ROLES,true))throw new \RuntimeException('Invalid organization role');
         }
         foreach ($db['invitations'] as $hash=>$i) {
             if (!self::hex($hash,64)||!is_array($i)||!self::hex($i['id']??null,32)||isset($ids[$i['id']])||!self::hex($i['organization']??null,32)||!isset($db['organizations'][$i['organization']])||!is_string($i['username']??null)||IdentityStore::username($i['username'])!==$i['username']||!array_key_exists('user',$i)||($i['user']!==null&&(!self::hex($i['user'],32)||($db['users'][$i['user']]['username']??null)!==$i['username']))||!is_int($i['created']??null)||!is_int($i['expires']??null)||$i['expires']!==$i['created']+self::TTL) throw new \RuntimeException('Invalid organization invitation');
@@ -44,13 +46,13 @@ final class Organizations
         $out=[];foreach($db['organizations'] as $o)if(isset($o['members'][$uid]))$out[]=self::summary($o,$uid);
         usort($out,fn($a,$b)=>strcmp($a['slug'],$b['slug']));return $out;
     }
-    private static function summary(array $o,string $uid):array {return array_diff_key($o,['members'=>true])+['role'=>$o['owner']===$uid?'owner':'member','member_count'=>count($o['members'])];}
+    private static function summary(array $o,string $uid):array {return array_diff_key($o,['members'=>true,'roles'=>true])+['role'=>Permissions::organization($o,$uid),'member_count'=>count($o['members'])];}
     public static function detail(array $db,string $uid,string $id):?array
     {
         $o=$db['organizations'][$id]??null;if(!$o||!isset($o['members'][$uid]))return null;
-        $members=[];foreach($o['members'] as $member=>$joined){$u=$db['users'][$member];$members[]=['id'=>$member,'username'=>$u['username'],'name'=>$u['name'],'enabled'=>$u['enabled'],'joined'=>$joined,'role'=>$member===$o['owner']?'owner':'member'];}
+        $members=[];foreach($o['members'] as $member=>$joined){$u=$db['users'][$member];$members[]=['id'=>$member,'username'=>$u['username'],'name'=>$u['name'],'enabled'=>$u['enabled'],'joined'=>$joined,'role'=>Permissions::organization($o,$member)];}
         usort($members,fn($a,$b)=>strcmp($a['username'],$b['username']));$invites=[];
-        if($o['owner']===$uid)foreach($db['invitations'] as $i)if($i['organization']===$id)$invites[]=array_diff_key($i,['user'=>true]);
+        if(Permissions::allows(Permissions::organization($o,$uid),'manage'))foreach($db['invitations'] as $i)if($i['organization']===$id)$invites[]=array_diff_key($i,['user'=>true]);
         return self::summary($o,$uid)+['members'=>$members,'invitations'=>$invites];
     }
     private static function uniqueSlug(array $db,string $slug,string $except=''):void{foreach($db['organizations'] as $id=>$o)if($id!==$except&&$o['slug']===$slug)throw new \DomainException('Organization slug already exists.');}
@@ -66,7 +68,8 @@ final class Organizations
     {
         $o=$db['organizations'][$id]??null;
         if(!$o||!isset($o['members'][$uid]))throw new OrganizationAccessException('Organization not found.');
-        if($action!=='leave'&&$o['owner']!==$uid)throw new OrganizationAccessException('Organization owner permission required.');
+        $actor=Permissions::organization($o,$uid);
+        if($action!=='leave'&&$actor!=='owner'&& !($actor==='admin'&&in_array($action,['invite','revoke','remove','role'],true)))throw new OrganizationAccessException('Organization permission required.');
         if($o['revision']!==$revision)throw new \DomainException('Organization changed. Reload and retry.');
         if($o['archived']&&!in_array($action,['restore','delete','leave','transfer'],true))throw new \DomainException('Organization is archived.');
         $target=$p['user']??'';$result=[];
@@ -75,9 +78,10 @@ final class Organizations
             case 'archive':$o['archived']=true;self::clearInvites($db,$id);break;
             case 'restore':if(!$o['archived'])throw new \DomainException('Organization is not archived.');$o['archived']=false;break;
             case 'delete':foreach($db['workspaces']??[] as $w)if($w['organization']===$id)throw new \DomainException('Organization has workspaces; deletion is blocked.');if(!$o['archived']||($p['confirm']??'')!==$o['slug'])throw new \DomainException('Archive first and confirm the organization slug.');self::clearInvites($db,$id);unset($db['organizations'][$id]);return ['deleted'=>true];
-            case 'leave':if($o['owner']===$uid)throw new \DomainException('Transfer ownership before leaving.');unset($o['members'][$uid]);break;
-            case 'remove':if($target===$o['owner']||!isset($o['members'][$target]))throw new \DomainException('Cannot remove this member.');unset($o['members'][$target]);break;
-            case 'transfer':if($target===$uid||!isset($o['members'][$target])||!($db['users'][$target]['enabled']??false))throw new \DomainException('Select another enabled member.');$o['owner']=$target;break;
+            case 'leave':if($o['owner']===$uid)throw new \DomainException('Transfer ownership before leaving.');unset($o['members'][$uid],$o['roles'][$uid]);self::clearWorkspaceRoles($db,$id,$uid);break;
+            case 'remove':if(!isset($o['members'][$target])||!Permissions::canManageMember($actor,Permissions::organization($o,$target))||$target===$uid)throw new OrganizationAccessException('Cannot remove this member.');unset($o['members'][$target],$o['roles'][$target]);self::clearWorkspaceRoles($db,$id,$target);break;
+            case 'transfer':if($target===$uid||!isset($o['members'][$target])||!($db['users'][$target]['enabled']??false))throw new \DomainException('Select another enabled member.');unset($o['roles'][$target]);$o['roles'][$uid]='viewer';self::clearWorkspaceRoles($db,$id,$target);self::clearWorkspaceRoles($db,$id,$uid);$o['owner']=$target;break;
+            case 'role':Permissions::assignOrganization($o,$uid,$target,$p['role']??'');foreach($db['workspaces']??[] as $wid=>$w)if($w['organization']===$id&&isset($w['roles'][$target])){if($p['role']==='viewer'&&in_array($w['roles'][$target],['editor','admin'],true))$w['roles'][$target]='viewer';elseif($p['role']==='editor'&&$w['roles'][$target]==='admin')$w['roles'][$target]='editor';$w['revision']++;$db['workspaces'][$wid]=$w;}break;
             case 'invite':
                 $username=IdentityStore::username($p['username']??'');$targetId=null;
                 foreach($db['users'] as $u)if($u['username']===$username){if(!$u['enabled']||isset($o['members'][$u['id']]))throw new \DomainException('Account is disabled or already a member.');$targetId=$u['id'];break;}
@@ -88,6 +92,9 @@ final class Organizations
             default:throw new \InvalidArgumentException('Unknown organization action.');
         }
         self::bump($o);$db['organizations'][$id]=$o;return $result+['organization'=>$id];
+    }
+    private static function clearWorkspaceRoles(array &$db,string $org,string $uid):void{
+        foreach($db['workspaces']??[] as $id=>$w)if($w['organization']===$org&&isset($w['roles'][$uid])){unset($w['roles'][$uid]);$w['revision']++;$db['workspaces'][$id]=$w;}
     }
     private static function clearInvites(array &$db,string $id):void{foreach($db['invitations'] as $hash=>$i)if($i['organization']===$id)unset($db['invitations'][$hash]);}
     public static function invitation(array $db,string $token):?array

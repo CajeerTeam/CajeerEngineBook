@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 — Roles & Permissions
+
+- Implement Owner/Admin/Editor/Viewer with an organization role ceiling and explicit workspace restrictions, including deny and inherited access. Existing Member accounts become Viewer; new invitations default to Viewer.
+- Add server-rendered role and scope management, transactional authorization, revision checks, and no self-promotion or administrator escalation. Preserve restrictions through role changes; remove grants on membership removal and ownership transfer.
+- Enforce a deny-by-default Studio operation policy for page edits, publication, tree, media, exports and adopted legacy content; update controls and AJAX page actions to reflect permissions.
+- Migrate identity schema to 3, preserve role assignments in backups, support older backup schemas, and add PHP concurrency, HTTP and Chromium multi-user tests. No new runtime dependencies.
+
 ## 0.2.3 — Workspaces
 
 - Add real organization workspace management, stable IDs, scoped book registry, empty independent stores, archive/restore and explicit legacy adoption preserving existing URLs.

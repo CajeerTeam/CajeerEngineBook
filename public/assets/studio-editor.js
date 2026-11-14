@@ -899,6 +899,7 @@
             if (!row) { row = document.createElement('div'); row.dataset.pageKey = result.key; const link = document.createElement('a'); link.href = scoped('/studio?edit=' + encodeURIComponent(result.key)); link.textContent = result.key; row.append(link, ' ', document.createElement('small')); list.append(row); }
             row.querySelector('small').textContent = result.published ? 'Published' : 'Draft';
         }
+        if (form.dataset.canPublish === '0') return;
         let actions = document.querySelector('[data-page-actions]');
         if (!actions) {
             actions = document.createElement('form'); actions.method = 'post'; actions.action = scoped('/studio'); actions.className = 'actions'; actions.dataset.pageActions = '';

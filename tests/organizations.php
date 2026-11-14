@@ -12,7 +12,7 @@ try{
  $b=$s->createUser($at,'writer','Writer','writer@example.com','password-writer-123');$bt=$s->login('writer','password-writer-123','192.0.2.2')['token'];
  $c=$s->createUser($at,'outsider','Outsider','outsider@example.com','password-outsider-123');$ct=$s->login('outsider','password-outsider-123','192.0.2.3')['token'];
  $path=$dir.'/identity/identity.json';$old=Files::read($path);$old['schema']=1;unset($old['organizations'],$old['invitations']);Files::json($path,$old);
- check($s->current($at)['user']['id']===$a['id']&&Files::read($path)['schema']===2,'v1 migration preserves user ID and session');
+ check($s->current($at)['user']['id']===$a['id']&&Files::read($path)['schema']===3,'v1 migration preserves user ID and session');
  $o=$s->createOrganization($at,'Engineering','Engineering');$id=$o['id'];$rev=fn()=>$s->organization($at,$id)['revision'];
  check($o['slug']==='engineering'&&$o['role']==='owner'&&$o['member_count']===1,'creation and canonical slug');
  deny(fn()=>$s->createOrganization($bt,'Duplicate','ENGINEERING'),'case insensitive unique slug');
@@ -25,7 +25,7 @@ try{
  $r2=$s->mutateOrganization($at,$id,$rev(),'invite',['username'=>'writer']);check($s->acceptInvitation($token,$bt,'192.0.2.2')['status']==='invalid','replacement invalidates old token');
  check($s->acceptInvitation($r2['token'],$bt,'192.0.2.2')['status']==='ok','existing account accepts');
  check($s->acceptInvitation($r2['token'],$bt,'192.0.2.2')['status']==='invalid','invitation one time');
- check($s->organization($bt,$id)['role']==='member'&&$s->organization($bt,$id)['member_count']===2,'membership persisted');
+ check($s->organization($bt,$id)['role']==='viewer'&&$s->organization($bt,$id)['member_count']===2,'membership persisted');
  deny(fn()=>$s->mutateOrganization($bt,$id,$rev(),'invite',['username'=>'newbie']),'member cannot invite');
  deny(fn()=>$s->mutateOrganization($at,$id,1,'rename',['name'=>'Stale','slug'=>'stale']),'stale revision rejected');
  deny(fn()=>$s->mutateOrganization($at,$id,$rev(),'leave',[]),'owner cannot leave');
@@ -47,7 +47,7 @@ try{
  $results=[];foreach($procs as [$proc,$pipes]){$results[]=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);if(proc_close($proc)!==0)throw new RuntimeException($err);}sort($results);
  check($results===['invalid','ok'],'concurrent redemption commits exactly once');
  $raceId=null;foreach($s->organization($at,$id)['members'] as $m)if($m['username']==='raceuser')$raceId=$m['id'];check($raceId!==null,'concurrent registration persists exactly one member');$s->mutateOrganization($at,$id,$rev(),'remove',['user'=>$raceId]);
- $s->mutateOrganization($at,$id,$rev(),'transfer',['user'=>$b['id']]);check($s->organization($at,$id)['role']==='member'&&$s->organization($bt,$id)['role']==='owner','atomic transfer');
+ $s->mutateOrganization($at,$id,$rev(),'transfer',['user'=>$b['id']]);check($s->organization($at,$id)['role']==='viewer'&&$s->organization($bt,$id)['role']==='owner','atomic transfer');
  deny(fn()=>$s->setEnabled($at,$b['id'],false),'cannot disable sole organization owner');
  deny(fn()=>$s->mutateOrganization($at,$id,$rev(),'archive',[]),'former owner cannot manage');
  $br=fn()=>$s->organization($bt,$id)['revision'];$s->mutateOrganization($bt,$id,$br(),'remove',['user'=>$a['id']]);check($s->organization($at,$id)===null,'removal immediately revokes org access even installation owner');

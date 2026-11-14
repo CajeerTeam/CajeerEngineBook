@@ -1,6 +1,38 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.2.4 — Roles & Permissions
+
+Organization roles are `owner`, `admin`, `editor`, `viewer`. Every organization still has exactly one Owner. Existing Member accounts migrate to Viewer without losing their previous Reader access. New invitations grant Viewer; an authorized manager can change the role after acceptance. Installation Owner is not an organizational superuser.
+
+Use **Organizations → Members → Change role** to assign roles. Owner can appoint Admins; Admin can manage Editor/Viewer and issue/revoke invitations, but cannot change another Admin, appoint an Owner/Admin, transfer ownership, or change organization settings/lifecycle. Owner transfer demotes the old Owner to Viewer. Use **Workspaces → Workspace access → Save access** to set per-user `inherit`, `none`, or an explicit role not exceeding the organization role. Owner always has access; only Owner can restrict an Admin. An organization Admin retains organization-level member management and workspace creation even when their content access is narrowed in a particular space. Explicit workspace restrictions survive organization promotion/demotion (a role above the new ceiling is reduced); removal/leave deletes grants so reinvitations cannot resurrect them.
+
+| Operation | Owner | Admin | Editor | Viewer |
+|---|---|---|---|---|
+| Published Reader, API/search, referenced media | yes | yes | yes | yes |
+| Studio, drafts/preview, private media | yes | yes | yes | no |
+| Save drafts, create books/pages, copy versions, move/duplicate tree, upload/update media | yes | yes | yes | no |
+| Publish/unpublish page or tree, permanently delete page/media, JSON/TAR export | yes | yes | no | no |
+| Manage workspace settings/access | yes | yes | no | no |
+| Manage Editor/Viewer organization membership, invitations | yes | yes | no | no |
+| Appoint Admin, transfer Owner, organization settings/lifecycle | yes | no | no | no |
+
+The table describes effective content roles for a workspace and organization roles for organization operations. Server-side deny-by-default Studio action policy runs under the identity lock, before any content lock; changes to membership or roles cannot interleave with authorized content writes. CSRF and optimistic revisions are retained. Viewer/Editor cannot bypass publication/export restrictions by direct POST, AJAX, or alternate legacy Studio routes. A `none` assignment excludes the workspace from the listing and denies scoped Reader/API/media as well as Studio. Already public legacy Reader URLs remain public; configurable visibility is planned for 0.2.5. Before legacy adoption only Installation Owner can use root Studio; after adoption it follows the effective role of the legacy workspace.
+
+### Upgrade from 0.2.3
+
+Back up the entire `BOOK_DATA_DIR` with the application stopped. Replace changed source files and rebuild/restart. Identity automatically migrates schema 1/2 to schema 3 under its existing lock, retaining users, sessions, organizations and workspaces. The content BookStore stays schema 1. No new runtime dependencies. Identity CLI backup now writes schema 3 including roles and workspace restrictions; restore supports schemas 1/2/3, excluding live sessions and invitation/reset tokens. Back up each content store as before. **Do not downgrade code only:** 0.2.3 does not enforce these roles; restore the pre-upgrade data snapshot for rollback.
+
+### RBAC tests
+
+```sh
+php tests/permissions.php
+python3 tests/permissions-http.py
+python3 tests/permissions-browser.py
+```
+
+The default HTTP test includes real CommonMark draft saving, publication and Reader. `--storage-only` exercises the remaining HTTP operations with a real stored page fixture when Composer dependencies are unavailable; it is not a substitute for the default release test. The browser test uses normal navigation in CI. In loopback-restricted test environments, `BOOK_TEST_BROWSER_TRANSPORT=1` submits actual browser-generated form data through Playwright's HTTP client. CI runs the complete tests with installed dependencies.
 
 ## 0.2.3 — Workspaces
 
@@ -59,7 +91,7 @@ php bin/identity.php restore /secure/identity.json
 php bin/workspaces.php restore WORKSPACE_ID /secure/workspace.tar
 ```
 
-Check `/health/ready` after startup; all registered stores must be present. Identity backup does not restore sessions or invitation tokens. Full access controls (Admin/Editor/Viewer, workspace assignments and configurable visibility) are planned for 0.2.4–0.2.5. Cross-workspace book moves and permanent workspace deletion are intentionally not exposed in 0.2.3; archive preserves data.
+Check `/health/ready` after startup; all registered stores must be present. Identity backup does not restore sessions or invitation tokens. RBAC and workspace assignments are implemented in 0.2.4; configurable visibility is planned for 0.2.5. Cross-workspace book moves and permanent workspace deletion are intentionally not exposed in 0.2.3; archive preserves data.
 
 ### Workspace tests
 

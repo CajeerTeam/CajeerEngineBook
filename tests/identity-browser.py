@@ -63,7 +63,7 @@ def main():
                 load(ownerpage,'/account/users');submit(ownerpage,ownerpage.locator('form[action="/account/users"]').first,{'username':'writer','name':'Writer','email':'writer@example.org','password':'writer-browser-password'},'Create account','/account/users?updated=1')
                 expect(ownerpage.get_by_text('Writer',exact=True)).to_be_visible();check('owner creates another account through UI')
                 load(memberpage,'/login');submit(memberpage,memberpage.locator('form[action="/login"]'),{'username':'writer','password':'writer-browser-password'},'Sign in','/account')
-                expect(memberpage.get_by_role('heading',name='Your account')).to_be_visible();load(memberpage,'/studio',403);expect(memberpage.get_by_role('heading',name='Installation owner permission required')).to_be_visible();check('independent member session is denied Studio')
+                expect(memberpage.get_by_role('heading',name='Your account')).to_be_visible();load(memberpage,'/studio',403);expect(memberpage.get_by_role('heading',name='Permission denied for this Studio operation')).to_be_visible();check('independent member session is denied Studio')
                 load(ownerpage,'/account/users');card=ownerpage.locator('.account-row').filter(has_text='Writer');submit(ownerpage,card.locator('form'),{},'Disable account','/account/users?updated=1')
                 load(memberpage,'/account',401);expect(memberpage.get_by_role('heading',name='Sign in required')).to_be_visible();check('owner disable invalidates existing browser session')
                 load(ownerpage,'/account');submit(ownerpage,ownerpage.locator('form[action="/logout"]'),{},'Sign out','/login')
