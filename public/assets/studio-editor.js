@@ -15,7 +15,7 @@
     const fieldNames = ['book', 'version', 'path', 'title', 'section', 'order', 'body'];
     const submitButtons = [...form.querySelectorAll('button[name="action"]')];
     const encoder = new TextEncoder();
-    let mode = 'markdown', segments = [], active = null, selection = null;
+    let mode = 'markdown', segments = [], active = null, selection = null, draggedBlock = null;
     let pending = false, transitioning = false, conflicted = false, timer = null, previewTimer = null;
     let lastSaved = snapshot(), dirty = false, visualInvalid = false;
     let generation = 0;
@@ -39,7 +39,7 @@
     }
     function showMode(next) {
         mode = next;
-        for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== mode;
+        for (const [name, panel] of Object.entries(panels)) { panel.hidden = name !== mode; if (panel.hidden) window.BookDiagrams?.suspend(panel); }
         modes.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
     }
     function parameters(body = source.value) {
@@ -314,7 +314,7 @@
             let result = '', previousChanged = false, richCost = 0;
             for (const segment of segments) {
                 if (!segment.deleted && componentKinds.includes(segment.kind)) { richCost += segment.kind==='callout'?1:(segment.component.cards || segment.component.items).length; if (richCost>96) throw new Error('A page supports at most 96 component bodies. Remove a component.'); }
-                const text = serializeSegment(segment), changed = text !== segment.source;
+                const text = serializeSegment(segment), changed = text !== segment.source || !!segment.moved;
                 if (!text.trim()) { result += text; previousChanged ||= changed; continue; }
                 if (result.trim() && (changed || previousChanged) && !/\n[ \t]*\n[ \t]*$/.test(result)) result += /\n[ \t]*$/.test(result) ? '\n' : '\n\n';
                 result += text; previousChanged = changed;
@@ -640,7 +640,7 @@
         });
         function showPreview(html) {
             preview.innerHTML=html;preview.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
-            preview.hidden=false;window.BookCode?.enhance(preview);window.BookImages?.enhance(preview);window.BookInteractive?.enhance(preview);
+            preview.hidden=false;window.BookCode?.enhance(preview);window.BookImages?.enhance(preview);window.BookInteractive?.enhance(preview);window.BookDiagrams?.enhance(preview);
         }
         preview.addEventListener('click',e=>{if(e.target.closest('a'))e.preventDefault();});
         if(segment.html) showPreview(segment.html);
@@ -701,14 +701,47 @@
         }
         d.items.forEach((item,i)=>mount(item,segment.bodyEditors?.[i]));controls.append(add);refresh();
     }
+    function closedCodeFence(segment){
+        if(segment.kind!=='code')return true;
+        const lines=serializeSegment(segment).split(/\r\n|\r|\n/),opening=/^ {0,3}(`{3,}|~{3,})/.exec(lines[0]);
+        if(!opening)return true; // indented code
+        const fence=opening[1];return lines.slice(1).some(line=>new RegExp('^ {0,3}'+fence[0]+'{'+fence.length+',}[ \t]*$').test(line));
+    }
+    function reorderBlock(moving,target,before){
+        if(mode!=='visual'||moving===target||moving.deleted||target.deleted||!syncVisual())return false;
+        const a=segments.indexOf(moving),b=segments.indexOf(target);
+        if(a<0||b<0)return false;
+        const crossed=segments.slice(Math.min(a,b),Math.max(a,b)+1).filter(s=>!s.deleted);
+        if(crossed.some(s=>s.kind==='protected'||(s.kind==='gap'&&s.source.trim())||!closedCodeFence(s))){fail('Move blocks within editable regions only. Close fences or edit protected Markdown in source mode.');return false;}
+        const old=[...segments];segments.splice(a,1);const dest=segments.indexOf(target)+(before?0:1);segments.splice(dest,0,moving);
+        if(old.every((s,i)=>s===segments[i]))return false;
+        // Force safe block boundaries without normalizing their original Markdown.
+        for(const s of crossed)s.moved=true;
+        for(const i of [dest-1,dest+1,Math.min(a,segments.length-1)-1,Math.min(a,segments.length-1)])if(segments[i])segments[i].moved=true;
+        window.BookDiagrams?.suspend(moving.element);
+        blocks.insertBefore(moving.element,before?target.element:target.element.nextSibling);
+        if(syncVisual())updateDirty();setActive(moving);return true;
+    }
+    function moveAdjacent(segment,delta){
+        const visible=segments.filter(s=>!s.deleted&&s.element),i=visible.indexOf(segment),other=visible[i+delta];
+        if(other)reorderBlock(segment,other,delta<0);
+    }
     function renderSegment(segment) {
         if (segment.kind === 'gap' && !segment.source.trim()) return;
         const wrapper = document.createElement('div'); wrapper.className = 'editor-block'; segment.element = wrapper;
         const bar = document.createElement('div'); bar.className = 'editor-block-bar';
         const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : segment.kind === 'callout' ? 'Callout' : segment.kind === 'cards' ? 'Cards' : interactiveKinds.includes(segment.kind) ? ({tabs:'Tabs','code-tabs':'Code tabs',accordion:'Accordion',steps:'Steps'}[segment.kind]) : 'Text block'; bar.append(label);
         if ((['rich', 'code', 'table', 'image', 'attachment'].includes(segment.kind) || componentKinds.includes(segment.kind))) {
+            const controls=document.createElement('div');controls.className='editor-block-actions';
+            const handle=document.createElement('button');handle.type='button';handle.draggable=true;handle.className='editor-block-grip';handle.textContent='↕';handle.setAttribute('aria-label','Drag block to reorder');handle.title='Drag block to reorder';
+            handle.addEventListener('dragstart',e=>{draggedBlock=segment;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('application/x-cajeer-block','1');});
+            handle.addEventListener('dragend',()=>{draggedBlock=null;blocks.querySelectorAll('.block-drop-before,.block-drop-after').forEach(el=>el.classList.remove('block-drop-before','block-drop-after'));});controls.append(handle);
+            wrapper.addEventListener('dragover',e=>{if(!draggedBlock||draggedBlock===segment)return;e.preventDefault();e.dataTransfer.dropEffect='move';const before=e.clientY<wrapper.getBoundingClientRect().top+wrapper.offsetHeight/2;wrapper.classList.toggle('block-drop-before',before);wrapper.classList.toggle('block-drop-after',!before);});
+            wrapper.addEventListener('dragleave',e=>{if(!wrapper.contains(e.relatedTarget))wrapper.classList.remove('block-drop-before','block-drop-after');});
+            wrapper.addEventListener('drop',e=>{if(!draggedBlock)return;e.preventDefault();const moving=draggedBlock;draggedBlock=null;const before=e.clientY<wrapper.getBoundingClientRect().top+wrapper.offsetHeight/2;wrapper.classList.remove('block-drop-before','block-drop-after');reorderBlock(moving,segment,before);});
+            for(const [delta,text] of [[-1,'Move block up'],[1,'Move block down']]){const b=document.createElement('button');b.type='button';b.dataset.blockMove=String(delta);b.textContent=text;b.addEventListener('click',()=>{moveAdjacent(segment,delta);b.focus();});controls.append(b);}
             const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove block';
-            remove.addEventListener('click', () => { if (!window.confirm('Remove this block from the draft?')) return; segment.deleted = true; wrapper.remove(); if (active === segment) setActive(null); if (syncVisual()) updateDirty(); }); bar.append(remove);
+            remove.addEventListener('click', () => { if (!window.confirm('Remove this block from the draft?')) return; segment.deleted = true; wrapper.remove(); if (active === segment) setActive(null); if (syncVisual()) updateDirty(); }); controls.append(remove);bar.append(controls);
         }
         wrapper.append(bar);
         if (componentKinds.includes(segment.kind)) { mountRichComponent(segment, wrapper); }
@@ -719,6 +752,18 @@
             const lang = document.createElement('input'); lang.type = 'text'; lang.maxLength = 64; lang.placeholder = 'Language (optional)'; lang.setAttribute('aria-label', 'Code language'); lang.value = code?.dataset.language || '';
             const area = document.createElement('textarea'); area.rows = 5; area.spellcheck = false; area.setAttribute('aria-label', 'Code content'); area.value = (code?.textContent || '').replace(/\n$/, '');
             segment.code = area; segment.language = lang; segment.initialCode = area.value; segment.initialLanguage = lang.value; wrapper.append(lang, area);
+            const diagramPanel=document.createElement('div');diagramPanel.className='editor-diagram-panel';wrapper.append(diagramPanel);
+            let diagram=null, diagramTimer=null;
+            function updateDiagram(){
+                clearTimeout(diagramTimer);
+                const enabled=lang.value.trim().toLowerCase()==='mermaid';diagramPanel.hidden=!enabled;
+                if(!enabled){diagram?.destroy();diagram=null;return;}
+                if(!diagram)diagram=window.BookDiagrams?.editor(diagramPanel,()=>area.value);
+                diagram?.refresh();
+                if(diagram)diagramTimer=setTimeout(()=>{if(wrapper.isConnected&&mode==='visual')diagram?.start();},600);
+            }
+            lang.addEventListener('input',updateDiagram);area.addEventListener('input',updateDiagram);updateDiagram();
+            area.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();area.setRangeText('    ',area.selectionStart,area.selectionEnd,'end');area.dispatchEvent(new Event('input',{bubbles:true}));}});
             for (const el of [lang, area]) { el.addEventListener('focus', () => setActive(segment)); el.addEventListener('input', () => changeSegment(segment)); }
         } else {
             const content = document.createElement('article'); content.className = 'editor-block-content';
@@ -765,7 +810,7 @@
             const result = await request('/studio/editor/render', data);
             if (ticket !== generation || source.value !== original) throw new Error('Source changed during rendering. Switch modes again.');
             if (next === 'visual') { if (typeof document.execCommand !== 'function') throw new Error('This browser does not support visual editing. Markdown mode is available.'); installBlocks(result.blocks, original); }
-            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]')); }
+            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]'));window.BookDiagrams?.enhance($('[data-live-preview]')); }
             showMode(next);
         } catch (e) { fail(e.message); }
         finally { transitioning = false; lockButtons(); updateDirty(); }
@@ -773,7 +818,7 @@
     async function refreshPreview() {
         if (mode !== 'preview' || transitioning) return;
         const original = source.value, ticket = ++generation;
-        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]')); } }
+        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]'));window.BookDiagrams?.enhance($('[data-live-preview]')); } }
         catch (e) { if (mode === 'preview' && ticket === generation) fail(e.message); }
     }
     function addBlock() {
@@ -787,9 +832,10 @@
             const next=segments.slice(at).find(s=>!s.deleted && s.element);segments.splice(at,0,segment);renderSegment(segment);
             if(next?.element)blocks.insertBefore(segment.element,next.element);setActive(segment);changeSegment(segment);segment.element.scrollIntoView({block:'nearest'});return;
         }
-        const segment = {source: '', html: '', kind: kind === 'code' ? 'code' : kind === 'table' ? 'table' : 'rich', changed: true, deleted: false};
-        const templates = {table: '<div class="markdown-table"><table><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead><tbody><tr><td></td><td></td></tr></tbody></table></div>', task: '<ul><li><input type="checkbox">Task</li></ul>', p: '<p><br></p>', h2: '<h2><br></h2>', blockquote: '<blockquote><p><br></p></blockquote>', ul: '<ul><li><br></li></ul>', ol: '<ol><li><br></li></ol>', hr: '<hr>', code: '<pre><code></code></pre>'};
-        segment.html = templates[kind]; segments.push(segment); renderSegment(segment);
+        const segment = {source: '', html: '', kind: ['code','mermaid'].includes(kind) ? 'code' : kind === 'table' ? 'table' : 'rich', changed: true, deleted: false};
+        const templates = {table: '<div class="markdown-table"><table><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead><tbody><tr><td></td><td></td></tr></tbody></table></div>', task: '<ul><li><input type="checkbox">Task</li></ul>', p: '<p><br></p>', h2: '<h2><br></h2>', blockquote: '<blockquote><p><br></p></blockquote>', ul: '<ul><li><br></li></ul>', ol: '<ol><li><br></li></ol>', hr: '<hr>', code: '<pre><code></code></pre>', mermaid: '<pre><code data-language="mermaid">flowchart LR\n    A[Start] --&gt; B[Finish]</code></pre>'};
+        segment.html = templates[kind];
+        if(kind==='mermaid'){const at=active&&!active.deleted?Math.max(0,segments.indexOf(active)):0;const next=segments.slice(at).find(s=>!s.deleted&&s.element);segments.splice(at,0,segment);renderSegment(segment);if(next?.element)blocks.insertBefore(segment.element,next.element);}else{segments.push(segment);renderSegment(segment);}
         (segment.cell || segment.content || segment.code)?.focus(); changeSegment(segment);
     }
     async function save(action, automatic = false) {
@@ -861,7 +907,7 @@
     toolbar.addEventListener('click', e => { const button = e.target.closest('[data-command]'); if (button && !button.disabled) command(button.dataset.command); });
     $('[data-format]').addEventListener('change', e => { command('formatBlock', e.target.value); e.target.value = 'p'; });
     document.addEventListener('selectionchange', () => { captureSelection(); updateToolbar(); });
-    document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save('save'); } });
+    document.addEventListener('keydown', e => { if(mode==='visual'&&active&&!active.deleted&&active.element?.contains(document.activeElement)&&e.altKey&&e.shiftKey&&['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();moveAdjacent(active,e.key==='ArrowUp'?-1:1);return;} if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save('save'); } });
     window.addEventListener('beforeunload', e => { if (dirty || pending) { e.preventDefault(); e.returnValue = ''; } });
     bindPageActions(document.querySelector('[data-page-actions]'));
     $('[data-copy-source]').addEventListener('click', async () => {

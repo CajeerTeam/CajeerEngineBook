@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -11,6 +11,7 @@ Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.
 - Published-only search and JSON read API, health probes, authenticated JSON metadata export and complete media backup.
 - Media library: drag-and-drop uploads, folders, search/filter, immutable files, SHA-256 deduplication, private previews, safe published access, thumbnails and full TAR backup/restore.
 - Images and attachments: insert or upload directly in Studio, edit alternative text, captions, image width/alignment, replace media, insert download blocks, and open images at full size in Reader/Preview.
+- Mermaid diagrams: standard fenced Markdown, live Studio preview, sandboxed Reader SVG, zoom/full screen, PNG export, source fallback and theme redraw. Block drag handles and keyboard reorder controls.
 - Local file persistence with locking and atomic replacement, no SaaS, database, Node, CDN or external API required at runtime. Composer installs PHP dependencies at build/install time.
 
 - Rich documentation components: six callout types, responsive card grids with links, icons and media; structured Visual editing, nested Markdown and shared preview.
@@ -21,6 +22,7 @@ Requirements: PHP 8.4.1+ with `mbstring`, `fileinfo`, `phar`, JSON, ctype, PCRE 
 
 ```sh
 composer install --no-dev --prefer-dist --no-interaction
+sh bin/install-mermaid.sh # Node 22/npm; install the local diagram library
 # Read-only demo (Studio is disabled until configured)
 php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
@@ -38,7 +40,7 @@ Username: `admin`. The hash is a secret deployment setting. No preset password. 
 
 ## Upgrade to 0.1.6
 
-Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Version 0.1.6 lazily adds stable page IDs, a published path, historical path reservations and optional relative-link context. Existing paths are not changed until a tree operation is committed. Do not roll back code to 0.1.5 after moving pages without restoring a pre-upgrade backup: older readers ignore the new published-path metadata. Recheck the public reader, Studio and health endpoint after the update.
+Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, and install the local Mermaid asset with `sh bin/install-mermaid.sh`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Version 0.1.6 lazily adds stable page IDs, a published path, historical path reservations and optional relative-link context. Existing paths are not changed until a tree operation is committed. Do not roll back code to 0.1.5 after moving pages without restoring a pre-upgrade backup: older readers ignore the new published-path metadata. Recheck the public reader, Studio and health endpoint after the update.
 
 ## Studio visual editor (0.1.6)
 
@@ -274,3 +276,25 @@ The existing versioned fenced JSON format keeps documents portable. Use ordinary
 The `kind` must match the fence name (without `book-`). Each block has 1–12 items, titles up to 512 UTF-8 bytes, and each Markdown body or code field up to 64 KiB. Tab keys must be unique within a group; sync/key length is at most 64 characters. Page Markdown remains limited to 256 KiB. Nested rich components inside tabs, accordions and steps render to a maximum of three component levels with a shared 96-body page budget; malformed or excess components fall back to inert code. Existing callouts/cards retain the previous non-recursive body policy. Simple nested body text supports Visual text; complex content (including nested components) is edited in the body Markdown mode. The editor preserves untouched source; use Refresh component preview to see changes. Internal heading anchors are isolated per body, and links to hidden headings reveal the containing tab or accordion. Nested media references participate in the existing draft/public access and deletion protection. No database migration or new runtime package is needed. Back up `BOOK_DATA_DIR` before upgrading; older releases do not render or track references in the new blocks.
 
 Tests: `composer test`, `python tests/interactive-browser.py --reader-only`, `python tests/interactive-browser.py` (requires Playwright Chromium and installed PHP dependencies for the full Studio test).
+
+## Mermaid diagrams (0.1.9)
+
+Docker builds install the official standalone Mermaid **11.17.2** bundle in a separate Node build stage; no Node or CDN is needed at runtime. For a non-Docker installation run `sh bin/install-mermaid.sh` (Node 22/npm and registry access required at installation time) from the project root, then run the usual Composer/PHP setup. The installer uses `npm pack` for the exact version, extracts the standalone distribution and its MIT license into `public/assets/mermaid/`, and does not execute npm lifecycle scripts or install transitive dependencies. Keep these generated assets in the deployed application; do not publish a partial installation.
+
+In Studio choose **Add block → Mermaid diagram**, edit its source and view the automatically updated preview. Alternatively enter a standard fenced block in Markdown:
+
+````markdown
+```mermaid
+flowchart LR
+  Studio --> BookStore
+  BookStore --> Reader
+```
+````
+
+Supported declarations include flowchart/graph, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, and the additional types listed in `public/assets/diagram-frame.js`. Reader loads the local library only when a diagram is visible or explicitly rendered. Source is preserved, including on errors or when JS is disabled. Zoom, Fit, Expand/Full screen and PNG export are available. PNG export is bounded to 4096 pixels per side and 8 megapixels; diagrams that require HTML foreignObject labels may not export as PNG. No raw SVG is downloaded or inserted into the application DOM.
+
+**Security:** each diagram renders in a separate opaque-origin iframe (`sandbox allow-scripts` without `allow-same-origin`). The frame has its own CSP blocking connections, remote images/fonts, forms and nested frames. Mermaid uses strict security, no HTML labels or bound callbacks; configuration directives and front matter are rejected. Only the actual frame window and a per-render random ticket are accepted in messages. Limit: 32 KiB source, 500 edges (Mermaid config), 6 active frames per page, 20 second response timeout. This is not a CPU-level isolation guarantee: exceptionally complex diagrams can still consume browser resources. The source remains available and additional diagrams can be opened after closing one.
+
+Use the block grip to drag blocks before/after other blocks or the Move block up/down buttons; Alt+Shift+Up/Down moves the focused block. Moves keep original source bytes and add separators where needed; crossing protected Markdown or moving an unclosed fence is refused.
+
+Upgrade from 0.1.8: back up `BOOK_DATA_DIR`, overlay the changed files and rebuild Docker (or install the local Mermaid asset with the shell command above). No schema migration. Test with `composer test` and `python tests/mermaid-browser.py` after installing Playwright Chromium and the pinned asset.

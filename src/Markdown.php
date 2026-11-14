@@ -131,6 +131,7 @@ final class Markdown
                     if ($editor) $node->data->set('book_rich_editors',$bodyEditors);
                 }
                 $language = $node->getInfoWords()[0] ?? '';
+                if (strtolower(trim($node->getInfo() ?? '')) === 'mermaid') $node->data->set('attributes.data-book-mermaid', 'true');
                 if (preg_match('/\A[a-zA-Z0-9_+.-]{1,64}\z/D', $language)) {
                     $node->data->set('attributes.data-language', $language);
                 }

@@ -12,6 +12,10 @@ jobs:
           php-version: '8.4'
           extensions: mbstring, fileinfo, phar, gd
           tools: composer:v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sh bin/install-mermaid.sh
       - run: composer validate --strict
       - run: composer install --no-interaction --prefer-dist --no-progress
       - run: composer audit --locked
@@ -30,3 +34,4 @@ jobs:
       - run: python tests/rich-blocks-browser.py
       - run: python tests/interactive-browser.py --reader-only
       - run: python tests/interactive-browser.py
+      - run: python tests/mermaid-browser.py

@@ -2,3 +2,5 @@
 .env
 var
 vendor
+
+public/assets/mermaid

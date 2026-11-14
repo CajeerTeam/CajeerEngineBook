@@ -2,3 +2,5 @@
 /.env
 /vendor/
 __pycache__/
+
+/public/assets/mermaid/

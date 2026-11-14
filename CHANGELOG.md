@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9 — Mermaid & Editor Polish
+
+- Render standard Mermaid fences in sandboxed opaque-origin frames using a pinned, locally installed Mermaid 11.17.2 browser distribution. Lazy rendering, strict configuration, source fallback, theme redraw, zoom, expansion/full screen and bounded PNG export.
+- Add a Mermaid block in Studio with debounced live preview and lossless Markdown storage. Add block drag handles, move controls and keyboard shortcuts; preserve protected source and code fence boundaries.
+- Add local asset installation, Docker build stage, PHP checks and full Chromium E2E in CI. No storage migration.
+
 ## 0.1.8 — Tabs & Interactive Blocks
 
 - Add Tabs, Code Tabs, native Accordion and ordered Steps with structured Studio editing, item creation, reordering, removal and shared Markdown preview.

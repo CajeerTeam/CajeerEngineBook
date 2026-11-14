@@ -1,3 +1,7 @@
+FROM node:22-bookworm-slim AS mermaid-assets
+WORKDIR /build
+COPY bin/install-mermaid.sh bin/install-mermaid.sh
+RUN sh bin/install-mermaid.sh
 FROM composer:2 AS composer-bin
 FROM php:8.4-apache
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
@@ -10,6 +14,7 @@ COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock ./
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
 COPY . .
+COPY --from=mermaid-assets /build/public/assets/mermaid/ public/assets/mermaid/
 RUN printf "upload_max_filesize=20M\npost_max_size=24M\nmemory_limit=256M\nmax_execution_time=120\n" > /usr/local/etc/php/conf.d/book-media.ini
 RUN mkdir -p /var/lib/cajeerbook && chown www-data:www-data /var/lib/cajeerbook \
  && a2enmod rewrite \
