@@ -37,13 +37,13 @@ final class Markdown
     }
 
     /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
-    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = [], ?string $richPrefix = null): array
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = [], ?string $richPrefix = null, ?int &$sharedBudget = null, int $richDepth = 0, bool $allowNested = false): array
     {
         self::validate($md);
         $environment = self::environment();
         $document = (new MarkdownParser($environment))->parse($md);
         $legacy = $richPrefix === null ? self::legacyAnchors($md) : [];
-        $richBudget = RichBlocks::MAX_BUDGET; $richIndex = 0; $fragmentLinks = [];
+        $sharedBudget ??= RichBlocks::MAX_BUDGET; $richBudget =& $sharedBudget; $richIndex = 0; $fragmentLinks = [];
         $toc = [];
         $used = ['main' => true, 'theme' => true];
         $nextSuffix = [];
@@ -111,12 +111,12 @@ final class Markdown
                 }
             } elseif ($node instanceof FencedCode) {
                 $info = trim($node->getInfo() ?? '');
-                $component = $richPrefix === null && $node->parent() instanceof Document ? RichBlocks::parse($info,$node->getLiteral()) : null;
+                $component = ($richPrefix === null || $allowNested) && $richDepth < RichBlocks::MAX_DEPTH && $node->parent() instanceof Document ? RichBlocks::parse($info,$node->getLiteral()) : null;
                 if ($component !== null && RichBlocks::cost($component) <= $richBudget) {
                     $richBudget -= RichBlocks::cost($component); ++$richIndex;
                     $bodyHtml=[]; $bodyEditors=[];
                     foreach (RichBlocks::bodies($component) as $i=>$body) {
-                        $inner=self::render($body,$pageKey,$editor,$studio,$linkBase,$linkMap,'book:rich:'.$richIndex.':'.$i.':');
+                        $inner=self::render($body,$pageKey,$editor,$studio,$linkBase,$linkMap,($richPrefix ?? 'book:rich:').$richIndex.':'.$i.':',$richBudget,$richDepth+1,RichBlocks::interactive($component) && RichBlocks::kind($component)!=='code-tabs');
                         $bodyHtml[]=$inner['html'];
                         if ($editor) $bodyEditors[]=$inner['blocks'];
                     }
@@ -181,21 +181,21 @@ final class Markdown
     }
 
     /** Only actual CommonMark links/images (including reference links), never code or prose. */
-    public static function mediaReferences(string $md,string $pageKey,bool $allowRich=true): array
+    public static function mediaReferences(string $md,string $pageKey,bool $allowRich=true, ?int &$sharedBudget=null, int $depth=0): array
     {
         // Canonical local media paths are the supported authoring contract.
         // Parse all documents so entity-escaped/reference destinations are handled too.
         self::validate($md);
         $document=(new MarkdownParser(self::environment()))->parse($md);
-        $ids=[];$walker=$document->walker();$budget=RichBlocks::MAX_BUDGET;
+        $ids=[];$walker=$document->walker();$sharedBudget ??= RichBlocks::MAX_BUDGET;$budget =& $sharedBudget;
         while($event=$walker->next()){
             if(!$event->isEntering()) continue;
             $node=$event->getNode();
-            if ($allowRich && $node instanceof FencedCode && $node->parent() instanceof Document) {
+            if ($allowRich && $depth < RichBlocks::MAX_DEPTH && $node instanceof FencedCode && $node->parent() instanceof Document) {
                 $component=RichBlocks::parse(trim($node->getInfo()??''),$node->getLiteral());
                 if ($component!==null && RichBlocks::cost($component)<=$budget) {
                     $budget-=RichBlocks::cost($component);
-                    foreach (RichBlocks::bodies($component) as $body) foreach (self::mediaReferences($body,$pageKey,false) as $id) $ids[$id]=true;
+                    foreach (RichBlocks::bodies($component) as $body) foreach (self::mediaReferences($body,$pageKey,RichBlocks::interactive($component) && RichBlocks::kind($component)!=='code-tabs',$budget,$depth+1) as $id) $ids[$id]=true;
                     foreach ($component['cards']??[] as $card) foreach (['href','image'] as $field) {
                         $url=self::safeUrl($card[$field],$field==='image',$pageKey);
                         if ($url!==null && ($id=self::mediaId($url))!==null) $ids[$id]=true;

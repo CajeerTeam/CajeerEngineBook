@@ -300,7 +300,7 @@
     function serializeSegment(segment) {
         if (segment.deleted) return '';
         if (!segment.changed) return segment.source;
-        if (['callout','cards'].includes(segment.kind)) return richMarkdown(segment) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
+        if (componentKinds.includes(segment.kind)) return richMarkdown(segment) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
         if (['image','attachment'].includes(segment.kind)) return mediaMarkdown(segment.media) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
         if (segment.kind === 'table') { const text = tableMarkdown(segment); return segment.source && text === segment.initialTable ? segment.source : text + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || ''); }
         if (segment.source && (segment.kind === 'code' ? segment.code.value === segment.initialCode && segment.language.value === segment.initialLanguage : segment.content.innerHTML === segment.initialHtml)) return segment.source;
@@ -313,7 +313,7 @@
         try {
             let result = '', previousChanged = false, richCost = 0;
             for (const segment of segments) {
-                if (!segment.deleted && ['callout','cards'].includes(segment.kind)) { richCost += segment.kind==='callout'?1:segment.component.cards.length; if (richCost>96) throw new Error('A page supports at most 96 callout/card bodies. Remove a component.'); }
+                if (!segment.deleted && componentKinds.includes(segment.kind)) { richCost += segment.kind==='callout'?1:(segment.component.cards || segment.component.items).length; if (richCost>96) throw new Error('A page supports at most 96 component bodies. Remove a component.'); }
                 const text = serializeSegment(segment), changed = text !== segment.source;
                 if (!text.trim()) { result += text; previousChanged ||= changed; continue; }
                 if (result.trim() && (changed || previousChanged) && !/\n[ \t]*\n[ \t]*$/.test(result)) result += /\n[ \t]*$/.test(result) ? '\n' : '\n\n';
@@ -519,6 +519,17 @@
     }
     // Components keep their structured fields and nested Markdown separate from the
     // document's contenteditable DOM. Only the changed component is serialized.
+    const componentKinds = ['callout','cards','tabs','code-tabs','accordion','steps'];
+    const interactiveKinds = ['tabs','code-tabs','accordion','steps'];
+    const isTabs = kind => ['tabs','code-tabs'].includes(kind);
+    function newInteractiveItem(kind, items) {
+        let n=1; while(items.some(x=>x.key==='tab-'+n)) ++n;
+        const item={title:(isTabs(kind)?'Tab ':kind==='steps'?'Step ':'Section ')+(items.length+1)};
+        if(isTabs(kind)) item.key='tab-'+n;
+        if(kind==='code-tabs') Object.assign(item,{language:'bash',code:''}); else item.body='';
+        if(kind==='accordion') item.open=false;
+        return item;
+    }
     const richTypes = ['note','info','tip','warning','danger','success'];
     const richIcons = ['','book','code','link','download','rocket','check','info'];
     const newCard = () => ({title:'New card',body:'',href:'',icon:'',image:'',alt:''});
@@ -529,13 +540,22 @@
         const url=(s,image)=>!s || (text(s,2048) && safeUrl(s) && !s.startsWith('/studio/') && !/^mailto:$/i.test(s) && (!image || !/^(mailto:|#|\?)/i.test(s)));
         if (segment.kind==='callout') {
             if (!richTypes.includes(d.type) || !text(d.title,512) || !text(d.body,65536,true)) throw new Error('Invalid callout type, title or body (64 KiB maximum).');
+        } else if (interactiveKinds.includes(segment.kind)) {
+            const kind=segment.kind, tabs=isTabs(kind), keys=new Set();
+            if(d.items.length<1 || d.items.length>12 || (tabs && !/^[a-z0-9-]{0,64}$/.test(d.sync))) throw new Error('Choose 1–12 items and a valid synchronization key.');
+            for(const item of d.items) {
+                if(!text(item.title,512) || !item.title.trim()) throw new Error('Each item needs a title (512 bytes maximum).');
+                if(tabs) {if(!/^[a-z0-9-]{1,64}$/.test(item.key) || keys.has(item.key)) throw new Error('Tab keys must be unique lowercase letters, numbers or hyphens (1–64).'); keys.add(item.key);}
+                if(kind==='code-tabs') {if(!/^[a-zA-Z0-9_+.-]{0,64}$/.test(item.language) || !text(item.code,65536,true)) throw new Error('Invalid code language or code exceeds 64 KiB.');}
+                else if(!text(item.body,65536,true)) throw new Error('Item body exceeds 64 KiB or contains invalid characters.');
+            }
         } else {
             if (![1,2,3,4].includes(d.columns) || d.cards.length<1 || d.cards.length>12) throw new Error('Choose 1–12 cards and 1–4 columns.');
             for (const c of d.cards) if (!text(c.title,512) || !c.title.trim() || !text(c.body,65536,true) || !url(c.href,false) || !url(c.image,true) || !text(c.alt,512) || !richIcons.includes(c.icon)) throw new Error('Invalid card: enter a title, safe link/image URLs and valid text.');
         }
         // JSON escapes line breaks in Markdown bodies. A longer fence still guards
         // literal backtick runs in values and is accepted by CommonMark.
-        return fenceCode(JSON.stringify(d,null,2),segment.kind==='callout'?'book-callout':'book-cards');
+        return fenceCode(JSON.stringify(d,null,2),'book-'+segment.kind);
     }
     function richButton(label,fn) { const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',fn);return b; }
     function richField(parent,name,object,key,segment,choices=null,onChange=null) {
@@ -620,7 +640,7 @@
         });
         function showPreview(html) {
             preview.innerHTML=html;preview.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
-            preview.hidden=false;window.BookCode?.enhance(preview);window.BookImages?.enhance(preview);
+            preview.hidden=false;window.BookCode?.enhance(preview);window.BookImages?.enhance(preview);window.BookInteractive?.enhance(preview);
         }
         preview.addEventListener('click',e=>{if(e.target.closest('a'))e.preventDefault();});
         if(segment.html) showPreview(segment.html);
@@ -629,6 +649,8 @@
             richField(controls,'Callout type',d,'type',segment,richTypes);
             richField(controls,'Callout title',d,'title',segment);
             mountRichBody(segment,d,controls,segment.bodyEditors?.[0],'Callout body');
+        } else if (interactiveKinds.includes(segment.kind)) {
+            mountInteractive(segment,controls);
         } else {
             richField(controls,'Card columns',d,'columns',segment,[1,2,3,4]);
             const list=document.createElement('div');list.className='editor-card-list';controls.append(list);
@@ -651,17 +673,45 @@
         }
         controls.append(previewButton);wrapper.append(preview);
     }
+    function mountInteractive(segment,controls) {
+        const d=segment.component,kind=segment.kind,tabs=isTabs(kind);
+        if(tabs) richField(controls,'Synchronization group (optional)',d,'sync',segment).maxLength=64;
+        const list=document.createElement('div');list.className='editor-card-list';controls.append(list);
+        const nodes=new Map(),noun=tabs?'tab':kind==='steps'?'step':'section';
+        const add=richButton('Add '+noun,()=>{if(d.items.length>=12)return;const item=newInteractiveItem(kind,d.items);d.items.push(item);mount(item,null);refresh();changeSegment(segment);});
+        function refresh(){
+            d.items.forEach((item,i)=>{const n=nodes.get(item);list.append(n.node);n.title.textContent=noun+' '+(i+1);n.up.disabled=i===0;n.down.disabled=i===d.items.length-1;n.remove.disabled=d.items.length===1;});add.disabled=d.items.length>=12;
+        }
+        function mount(item,initial){
+            const node=document.createElement('section');node.className='editor-card-fields editor-interactive-item';
+            const header=document.createElement('div');header.className='editor-rich-actions';const title=document.createElement('strong');
+            function move(delta){const i=d.items.indexOf(item),j=i+delta;if(j<0||j>=d.items.length)return;[d.items[i],d.items[j]]=[d.items[j],d.items[i]];refresh();changeSegment(segment);}
+            const up=richButton('Move up',()=>move(-1)),down=richButton('Move down',()=>move(1));
+            const remove=richButton('Remove '+noun,()=>{if(d.items.length===1||!confirm('Remove this '+noun+'?'))return;d.items.splice(d.items.indexOf(item),1);segment.bodySync.delete(item);nodes.delete(item);node.remove();refresh();changeSegment(segment);});
+            header.append(title,up,down,remove);node.append(header);
+            richField(node,'Item title',item,'title',segment);
+            if(tabs) richField(node,'Tab key',item,'key',segment).maxLength=64;
+            if(kind==='accordion') {const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=item.open;label.append(check,' Initially expanded');node.append(label);check.addEventListener('change',()=>{item.open=check.checked;changeSegment(segment);});}
+            if(kind==='code-tabs') {
+                richField(node,'Code language',item,'language',segment).maxLength=64;
+                const label=document.createElement('label'),area=document.createElement('textarea');label.textContent='Code content';area.rows=6;area.spellcheck=false;area.value=item.code;label.append(area);node.append(label);
+                area.addEventListener('focus',()=>setActive(segment));area.addEventListener('input',()=>{item.code=area.value;changeSegment(segment);});
+            } else mountRichBody(segment,item,node,initial,'Item body');
+            nodes.set(item,{node,title,up,down,remove});list.append(node);
+        }
+        d.items.forEach((item,i)=>mount(item,segment.bodyEditors?.[i]));controls.append(add);refresh();
+    }
     function renderSegment(segment) {
         if (segment.kind === 'gap' && !segment.source.trim()) return;
         const wrapper = document.createElement('div'); wrapper.className = 'editor-block'; segment.element = wrapper;
         const bar = document.createElement('div'); bar.className = 'editor-block-bar';
-        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : segment.kind === 'callout' ? 'Callout' : segment.kind === 'cards' ? 'Cards' : 'Text block'; bar.append(label);
-        if (['rich', 'code', 'table', 'image', 'attachment', 'callout', 'cards'].includes(segment.kind)) {
+        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : segment.kind === 'callout' ? 'Callout' : segment.kind === 'cards' ? 'Cards' : interactiveKinds.includes(segment.kind) ? ({tabs:'Tabs','code-tabs':'Code tabs',accordion:'Accordion',steps:'Steps'}[segment.kind]) : 'Text block'; bar.append(label);
+        if ((['rich', 'code', 'table', 'image', 'attachment'].includes(segment.kind) || componentKinds.includes(segment.kind))) {
             const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove block';
             remove.addEventListener('click', () => { if (!window.confirm('Remove this block from the draft?')) return; segment.deleted = true; wrapper.remove(); if (active === segment) setActive(null); if (syncVisual()) updateDirty(); }); bar.append(remove);
         }
         wrapper.append(bar);
-        if (['callout','cards'].includes(segment.kind)) { mountRichComponent(segment, wrapper); }
+        if (componentKinds.includes(segment.kind)) { mountRichComponent(segment, wrapper); }
         else if (['image','attachment'].includes(segment.kind)) { mountMedia(segment, wrapper); }
         else if (segment.kind === 'code') {
             const temp = document.createElement('template'); temp.innerHTML = segment.html;
@@ -698,7 +748,7 @@
         blocks.append(wrapper);
     }
     function installBlocks(data, original) {
-        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table','image','attachment','callout','cards'].includes(s.kind) || (['image','attachment'].includes(s.kind) && (!s.media || s.media.kind !== s.kind)) || (['callout','cards'].includes(s.kind) && (!s.component || !Array.isArray(s.bodyEditors))) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
+        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table','image','attachment',...componentKinds].includes(s.kind) || (['image','attachment'].includes(s.kind) && (!s.media || s.media.kind !== s.kind)) || (componentKinds.includes(s.kind) && (!s.component || !Array.isArray(s.bodyEditors))) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
         segments = data.map(s => ({...s, changed: false, deleted: false})); blocks.replaceChildren(); active = null; selection = null;
         segments.forEach(renderSegment);
         if (!original.trim()) { const initial = {source: '', html: '<p><br></p>', kind: 'rich', changed: false, deleted: false}; segments.push(initial); renderSegment(initial); }
@@ -715,7 +765,7 @@
             const result = await request('/studio/editor/render', data);
             if (ticket !== generation || source.value !== original) throw new Error('Source changed during rendering. Switch modes again.');
             if (next === 'visual') { if (typeof document.execCommand !== 'function') throw new Error('This browser does not support visual editing. Markdown mode is available.'); installBlocks(result.blocks, original); }
-            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); }
+            else { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]')); }
             showMode(next);
         } catch (e) { fail(e.message); }
         finally { transitioning = false; lockButtons(); updateDirty(); }
@@ -723,14 +773,14 @@
     async function refreshPreview() {
         if (mode !== 'preview' || transitioning) return;
         const original = source.value, ticket = ++generation;
-        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); } }
+        try { const data = parameters(); data.set('mode', 'preview'); const result = await request('/studio/editor/render', data); if (mode === 'preview' && ticket === generation && source.value === original) { $('[data-live-preview]').innerHTML = result.html; window.BookCode?.enhance($('[data-live-preview]')); window.BookImages?.enhance($('[data-live-preview]')); window.BookInteractive?.enhance($('[data-live-preview]')); } }
         catch (e) { if (mode === 'preview' && ticket === generation) fail(e.message); }
     }
     function addBlock() {
         const kind = $('[data-add-kind]').value;
         if (['image','attachment'].includes(kind)) { insertMedia(kind); return; }
-        if (['callout','cards'].includes(kind)) {
-            const component=kind==='callout'?{v:1,type:'note',title:'',body:''}:{v:1,columns:2,cards:[newCard()]};
+        if (componentKinds.includes(kind)) {
+            const component=kind==='callout'?{v:1,type:'note',title:'',body:''}:kind==='cards'?{v:1,columns:2,cards:[newCard()]}:{v:1,kind,...(isTabs(kind)?{sync:''}:{}),items:[newInteractiveItem(kind,[])]};
             const segment={kind,component,source:'',html:'',changed:true,deleted:false};
             // Insert before active block, or at the beginning, so an unclosed fence cannot consume the component.
             const at=active && !active.deleted?Math.max(0,segments.indexOf(active)):0;

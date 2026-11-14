@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8 — Tabs & Interactive Blocks
+
+- Add Tabs, Code Tabs, native Accordion and ordered Steps with structured Studio editing, item creation, reordering, removal and shared Markdown preview.
+- Enhance Reader and Preview with accessible tabs, keyboard navigation, synchronized tab keys, readable no-JavaScript fallback and automatic disclosure of hidden anchor targets. Code tabs render inert escaped code with local syntax highlighting and copy controls.
+- Support bounded nested components inside tabs, accordions and steps; share the expansion budget and track nested media references through publication. Preserve existing callout/card nesting policy and source for unsupported blocks.
+- Add PHP validation, CommonMark/storage integration and Chromium Reader/Studio tests. No new runtime dependencies or schema migration.
+
 ## 0.1.7 — Callouts & Cards
 
 - Add six callout variants and responsive card groups, with local images, links, icons and nested CommonMark/GFM bodies.

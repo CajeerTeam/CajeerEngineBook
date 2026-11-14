@@ -28,3 +28,5 @@ jobs:
       - run: python tests/images-browser.py
       - run: python tests/page-tree-browser.py
       - run: python tests/rich-blocks-browser.py
+      - run: python tests/interactive-browser.py --reader-only
+      - run: python tests/interactive-browser.py

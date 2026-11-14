@@ -57,7 +57,7 @@ final class StudioEditor
             if ($kind === 'rich' && ($node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode || $node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode)) $kind = 'code';
             $component = $node->data->get('book_rich_data', null);
             if ($component !== null) {
-                $out[] = ['source'=>$raw,'html'=>$renderer->renderNodes([$node]),'kind'=>isset($component['cards'])?'cards':'callout',
+                $out[] = ['source'=>$raw,'html'=>$renderer->renderNodes([$node]),'kind'=>RichBlocks::kind($component),
                     'component'=>$component,'bodyEditors'=>$node->data->get('book_rich_editors',[])];
                 $cursor=$end; continue;
             }
@@ -153,8 +153,8 @@ final class StudioEditor
             .'<button type="button" data-insert-media="image">Insert image</button><button type="button" data-insert-media="attachment">Insert attachment</button><button type="button" data-copy-source>Copy Markdown</button><span data-save-state role="status" aria-live="polite">Draft loaded</span></div>'
             .'<div data-markdown-panel><label>Markdown<textarea name="body" rows="16" spellcheck="false">'."\n".Markdown::e($source).'</textarea></label></div>'
             .'<div data-visual-panel hidden><div class="editor-toolbar" role="toolbar" aria-label="Formatting">'.$toolbar.'</div>'
-            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Edit tables directly, or paste spreadsheet cells. Insert images and attachments from your media library. Add callouts and cards with structured properties and Markdown or visual text. Unsupported inline media remains intact in Markdown mode.</p>'
-            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="table">Table</option><option value="task">Task list</option><option value="image">Image</option><option value="attachment">Attachment</option><option value="callout">Callout</option><option value="cards">Cards</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
+            .'<p class="editor-hint">Edit a block directly. Use the toolbar to format text, or add a block below. Edit tables directly, or paste spreadsheet cells. Insert images and attachments from your media library. Add callouts, cards, tabs, accordions and steps with structured properties and Markdown or visual text. Unsupported inline media remains intact in Markdown mode.</p>'
+            .'<div data-blocks class="editor-blocks"></div><div class="editor-add"><label>Add block<select data-add-kind aria-label="New block type"><option value="p">Paragraph</option><option value="h2">Heading</option><option value="blockquote">Quote</option><option value="ul">Bullet list</option><option value="ol">Numbered list</option><option value="code">Code block</option><option value="table">Table</option><option value="task">Task list</option><option value="image">Image</option><option value="attachment">Attachment</option><option value="callout">Callout</option><option value="cards">Cards</option><option value="tabs">Tabs</option><option value="code-tabs">Code tabs</option><option value="accordion">Accordion</option><option value="steps">Steps</option><option value="hr">Divider</option></select></label><button type="button" data-add>Add block</button></div></div>'
             .'<div data-preview-panel hidden><article data-live-preview></article></div><p data-editor-error class="editor-error" role="alert" hidden></p></section>';
     }
 }

@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -245,3 +245,32 @@ Card links use the same relative URL and moved-page link map as the rest of the 
 Upgrade from 0.1.6 by overlaying the changed files and restarting/rebuilding. No migration or new dependencies. Back up `BOOK_DATA_DIR` first. Old versions render these blocks as code; if rolling back after authoring components, keep a pre-upgrade backup because older media-reference logic does not recognize component references.
 
 Tests: `composer test` includes `tests/rich-blocks.php`; `python tests/rich-blocks-browser.py` runs full Studio/Reader E2E with Composer dependencies and Playwright Chromium. `php tests/rich-blocks.php --policy-only` exercises the standalone validation and HTML generation without Composer.
+
+
+## Tabs and interactive blocks (0.1.8)
+
+In Studio, select Visual → Add block → **Tabs**, **Code tabs**, **Accordion** or **Steps**. Add, rename, reorder and remove individual items. Tabs have stable keys (lowercase ASCII letters, digits and hyphens) and an optional synchronization group. Groups with the same nonempty name select the matching key, even when tab ordering differs; groups without that key keep their current selection. State is local to the current Reader or page Preview, not persisted between visits. Component previews are isolated from each other. Arrow Left/Right, Home and End navigate tabs, and Tab enters the selected panel. Without JavaScript, all tab headings and content remain visible. Accordion works natively with or without JavaScript and supports an initially expanded flag per item. Steps are ordered automatically.
+
+The existing versioned fenced JSON format keeps documents portable. Use ordinary Markdown in each body (including GFM tables, links, images and code). Code tabs store code as literal text and render it with escaped HTML, optional syntax highlighting and copy controls. Language labels accept ASCII letters, digits, `_`, `+`, `.`, `-`; unsupported languages are displayed without highlighting. Example:
+
+````markdown
+```book-tabs
+{"v":1,"kind":"tabs","sync":"platform","items":[{"key":"linux","title":"Linux","body":"**Install** with your package manager."},{"key":"windows","title":"Windows","body":"Download the installer."}]}
+```
+
+```book-code-tabs
+{"v":1,"kind":"code-tabs","sync":"platform","items":[{"key":"linux","title":"Bash","language":"bash","code":"docker compose up -d"},{"key":"windows","title":"PowerShell","language":"powershell","code":"Get-ChildItem"}]}
+```
+
+```book-accordion
+{"v":1,"kind":"accordion","items":[{"title":"Troubleshooting","body":"Check the logs.","open":false}]}
+```
+
+```book-steps
+{"v":1,"kind":"steps","items":[{"title":"Install","body":"Run Composer."},{"title":"Start","body":"Start the server."}]}
+```
+````
+
+The `kind` must match the fence name (without `book-`). Each block has 1–12 items, titles up to 512 UTF-8 bytes, and each Markdown body or code field up to 64 KiB. Tab keys must be unique within a group; sync/key length is at most 64 characters. Page Markdown remains limited to 256 KiB. Nested rich components inside tabs, accordions and steps render to a maximum of three component levels with a shared 96-body page budget; malformed or excess components fall back to inert code. Existing callouts/cards retain the previous non-recursive body policy. Simple nested body text supports Visual text; complex content (including nested components) is edited in the body Markdown mode. The editor preserves untouched source; use Refresh component preview to see changes. Internal heading anchors are isolated per body, and links to hidden headings reveal the containing tab or accordion. Nested media references participate in the existing draft/public access and deletion protection. No database migration or new runtime package is needed. Back up `BOOK_DATA_DIR` before upgrading; older releases do not render or track references in the new blocks.
+
+Tests: `composer test`, `python tests/interactive-browser.py --reader-only`, `python tests/interactive-browser.py` (requires Playwright Chromium and installed PHP dependencies for the full Studio test).

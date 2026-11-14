@@ -26,7 +26,8 @@
             "@php tests/page-tree.php",
             "@php tests/page-tree-integration.php",
             "bash tests/page-tree-http.sh",
-            "@php tests/rich-blocks.php"
+            "@php tests/rich-blocks.php",
+            "@php tests/interactive-blocks.php"
         ]
     }
 }

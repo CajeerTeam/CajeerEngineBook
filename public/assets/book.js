@@ -36,7 +36,7 @@
     }
     function enhance(scope = document) {
         scope.querySelectorAll('pre > code').forEach(code => {
-            if (code.dataset.bookEnhanced || code.closest('[data-visual-panel]')) return;
+            if (code.dataset.bookEnhanced || (code.closest('[data-visual-panel]') && !code.closest('.editor-rich-preview'))) return;
             code.dataset.bookEnhanced = 'true'; highlight(code);
             const b = document.createElement('button'); b.type = 'button'; b.className = 'copy'; b.textContent = 'Copy'; b.setAttribute('aria-label', 'Copy code');
             b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(code.textContent); b.textContent = 'Copied'; } catch { const range = document.createRange(); range.selectNodeContents(code); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); b.textContent = 'Selected'; } });
@@ -75,7 +75,7 @@
     }
     function enhance(scope = document) {
         scope.querySelectorAll('figure[data-book-image]').forEach(figure => {
-            if (figure.closest('[data-visual-panel]') || figure.querySelector('[data-image-zoom]')) return;
+            if ((figure.closest('[data-visual-panel]') && !figure.closest('.editor-rich-preview')) || figure.querySelector('[data-image-zoom]')) return;
             const img = figure.querySelector('img'); if (!img || !img.getAttribute('src')) return;
             const zoom = document.createElement('button'); zoom.type = 'button'; zoom.dataset.imageZoom = ''; zoom.className = 'book-image-zoom'; zoom.textContent = 'View full size';
             zoom.setAttribute('aria-label', 'View full size: ' + (img.alt || 'image'));
@@ -84,4 +84,75 @@
         });
     }
     window.BookImages = {enhance}; enhance();
+})();
+
+/* Progressive enhancement: readable panels without JS; accessible tabs with JS. */
+(() => {
+    'use strict';
+    const instances = new WeakMap();
+    let nextId = 0;
+    const direct = (el, selector) => [...el.children].filter(child => child.matches(selector));
+    function enhance(scope = document) {
+        for (const group of scope.querySelectorAll('[data-book-tabs]')) {
+            if (instances.has(group)) continue;
+            const panels = direct(group, '[data-tab-panel]');
+            if (!panels.length) continue;
+            const titles = panels.map(p => direct(p, '[data-tab-title]')[0]);
+            if (titles.some(t => !t)) continue;
+            const bar = document.createElement('div'); bar.className = 'book-tab-list'; bar.setAttribute('role','tablist'); bar.setAttribute('aria-label','Documentation tabs');
+            const buttons = panels.map((panel,i) => {
+                const button = document.createElement('button'); button.type='button'; button.textContent=titles[i].textContent;
+                const id='book:tab:'+ ++nextId; button.id=id; panel.id=id+':panel';
+                button.setAttribute('role','tab');button.setAttribute('aria-controls',panel.id);
+                panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',button.id);panel.tabIndex=0;
+                titles[i].hidden=true;bar.append(button);return button;
+            });
+            const state={panels,buttons,activate}; instances.set(group,state);group.prepend(bar);
+            function activate(index, focus=false, propagate=false) {
+                buttons.forEach((b,i)=>{b.setAttribute('aria-selected',String(i===index));b.tabIndex=i===index?0:-1;panels[i].hidden=i!==index;});
+                if(focus) buttons[index].focus();
+                if(propagate && group.dataset.sync) {
+                    // Match keys, never positional indexes. Preview state stays local to its own scope.
+                    const boundary=group.closest('.editor-rich-preview,[data-live-preview]') || document;
+                    for(const peer of boundary.querySelectorAll('[data-book-tabs]')) {
+                        if(peer===group || peer.dataset.sync!==group.dataset.sync || (peer.closest('.editor-rich-preview,[data-live-preview]') || document)!==boundary) continue;
+                        const other=instances.get(peer),j=other?.panels.findIndex(p=>p.dataset.tabKey===panels[index].dataset.tabKey);
+                        if(j>=0) other.activate(j);
+                    }
+                }
+            }
+            buttons.forEach((b,i)=>{
+                b.addEventListener('click',()=>activate(i,false,true));
+                b.addEventListener('keydown',event=>{
+                    const to=({ArrowLeft:(i+buttons.length-1)%buttons.length,ArrowRight:(i+1)%buttons.length,Home:0,End:buttons.length-1})[event.key];
+                    if(typeof to==='number'){event.preventDefault();activate(to,true,true);}
+                });
+            });
+            let initial=0;
+            if(group.dataset.sync) {
+                const boundary=group.closest('.editor-rich-preview,[data-live-preview]') || document;
+                for(const peer of boundary.querySelectorAll('[data-book-tabs]')) {
+                    if(peer===group || peer.dataset.sync!==group.dataset.sync || (peer.closest('.editor-rich-preview,[data-live-preview]') || document)!==boundary) continue;
+                    const state=instances.get(peer);if(!state)continue;
+                    const selected=state.buttons.findIndex(b=>b.getAttribute('aria-selected')==='true');
+                    const j=panels.findIndex(p=>p.dataset.tabKey===state.panels[selected]?.dataset.tabKey);
+                    if(j>=0){initial=j;break;}
+                }
+            }
+            activate(initial);
+        }
+        revealHash();
+    }
+    function revealHash() {
+        if(!location.hash) return;
+        let id;try{id=decodeURIComponent(location.hash.slice(1));}catch{return;}
+        const target=document.getElementById(id);if(!target)return;
+        let opened=false;
+        for(let p=target;p;p=p.parentElement){
+            if(p.matches('details')&&!p.open){p.open=true;opened=true;}
+            if(p.matches('[data-tab-panel]')){const state=instances.get(p.parentElement);if(state&&p.hidden){state.activate(state.panels.indexOf(p));opened=true;}}
+        }
+        if(opened)target.scrollIntoView({block:'start'});
+    }
+    window.BookInteractive={enhance};window.addEventListener('hashchange',revealHash);enhance();
 })();
