@@ -37,7 +37,7 @@ final class Markdown
     }
 
     /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
-    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false): array
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = []): array
     {
         self::validate($md);
         $environment = self::environment();
@@ -70,7 +70,8 @@ final class Markdown
                 $toc[] = ['id' => $id, 'title' => $title !== '' ? $title : 'Untitled section', 'level' => $node->getLevel()];
             } elseif ($node instanceof Link || $node instanceof Image) {
                 $originalUrl = $node->getUrl();
-                $url = self::safeUrl($originalUrl, $node instanceof Image, $pageKey);
+                $url = self::safeUrl($originalUrl, $node instanceof Image, $pageKey, $linkBase);
+                if ($url !== null && $node instanceof Link && $linkMap) $url = PageTree::rewriteLink($url,$linkMap);
                 if ($editor && $node instanceof Link && $url !== null) $node->data->set('attributes.data-book-source-href', $originalUrl);
                 // Invalid URLs remain inert. The renderer never sees an unsafe destination.
                 if (($studio || $editor) && $url !== null && self::mediaId($url)!==null) $url='/studio/media/file/'.self::mediaId($url);
@@ -203,7 +204,7 @@ final class Markdown
     }
 
     /** Browser-safe URL policy. Relative paths use the canonical Reader URL in both views. */
-    private static function safeUrl(string $url, bool $image, ?string $pageKey): ?string
+    private static function safeUrl(string $url, bool $image, ?string $pageKey, ?string $linkBase = null): ?string
     {
         if (preg_match('/[\x00-\x1f\x7f\\\\]/', $url) || $url !== trim($url, ' ') || str_starts_with($url, '//')) return null;
         if (preg_match('/\A([a-z][a-z0-9+.-]*):/i', $url, $match)) {
@@ -218,6 +219,7 @@ final class Markdown
         if (!$image && str_starts_with($url, '#')) return $url;
         $page = '/docs/'.$pageKey;
         if ($url === '' || str_starts_with($url, '?') || str_starts_with($url, '#')) return $page.$url;
+        if ($linkBase !== null) $page = '/docs/'.$linkBase;
         return substr($page, 0, strrpos($page, '/') + 1).$url;
     }
 }

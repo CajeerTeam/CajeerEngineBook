@@ -85,3 +85,20 @@ html[data-theme=dark] .syntax-keyword{color:#d7a6ff}html[data-theme=dark] .synta
 @media(max-width:600px){.book-image{min-width:min(100%,200px)}.book-media-dialog,.book-image-dialog{padding:.75rem}.media-picker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .book-image-dialog.book-image-actual>img{max-width:none;max-height:none;object-fit:initial}
+/* Page tree 0.1.6: nested Reader navigation and accessible Studio controls. */
+.reader-tree,.reader-tree ul,.editor-tree,.editor-tree ul,.manage-tree,.manage-tree ul{list-style:none;margin:0;padding-inline-start:0}
+.reader-tree ul,.editor-tree ul,.manage-tree ul{padding-inline-start:14px;border-inline-start:1px solid var(--line);margin-inline-start:6px}
+.reader-tree summary{font-size:14px;color:var(--muted);cursor:pointer;padding:5px 9px;overflow-wrap:anywhere}
+.reader-tree a{overflow-wrap:anywhere}.reader-tree details>a{padding-inline-start:22px}
+.editor-tree li{margin:3px 0}.editor-tree [aria-current=page]{font-weight:700}.tree-folder{color:var(--muted);font-weight:600}
+.tree-controls{border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--panel)}
+.tree-controls h2{margin:0}.tree-controls select{font:inherit;max-width:100%;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+.tree-controls .actions{margin:4px 0}.tree-controls p{margin:0;color:var(--muted);font-size:14px}
+.tree-node{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);margin:5px 0}
+.tree-name{flex:1;min-width:130px;overflow-wrap:anywhere}.tree-name small{display:block;color:var(--muted);font-size:12px}.tree-handle{font-size:24px;cursor:grab;padding:2px 6px;touch-action:none;color:var(--muted)}
+.tree-child,.tree-node button,.tree-drop-controls button{font-size:12px;padding:4px 7px}.tree-drop-controls{display:flex;gap:4px;flex-wrap:wrap}
+.tree-root-drop{border:1px dashed var(--line);padding:10px;border-radius:8px;color:var(--muted);font-size:14px;margin:8px 0}
+.tree-drop-active{outline:2px solid var(--accent);background:var(--panel)!important;color:var(--accent)}
+.manage-tree details>summary{cursor:pointer;font-size:13px;color:var(--muted);padding:4px 8px}
+.tree-notice{padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow-wrap:anywhere}
+@media(max-width:720px){.manage-tree ul{padding-inline-start:8px;margin-inline-start:3px}.tree-drop-controls{width:100%}.tree-name{min-width:90px}}

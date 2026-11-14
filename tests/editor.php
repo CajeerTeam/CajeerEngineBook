@@ -27,7 +27,7 @@ foreach (["", "\n\n", "\r\n# CRLF\r\n\r\ntext\r\n", "[x]: /foo\n", "A\n\nB", "# 
 $dir=sys_get_temp_dir().'/book-editor-'.bin2hex(random_bytes(8));$store=new BookStore($dir);
 try{
  $input=['book'=>'qa','version'=>'1.0','path'=>'visual','title'=>'Visual','section'=>'Guide','order'=>1,'body'=>'# Test','revision'=>0];
- $a=$store->saveResult($input,false);check($a===['key'=>'qa/1.0/visual','revision'=>1,'published'=>false],'save returns committed draft revision');
+ $a=$store->saveResult($input,false);check($a['key']==='qa/1.0/visual'&&$a['revision']===1&&$a['published']===false&&preg_match('/\A[a-f0-9]{32}\z/D',$a['id'])===1&&$a['navigation_changed']===true,'save returns committed draft revision and stable identity');
  $input['revision']=1;$b=$store->saveResult($input,true);check($b['revision']===2&&$b['published'],'publish returns committed revision');
  $input['revision']=2;$input['body']='Draft only';$c=$store->saveResult($input,false);check($c['revision']===3&&$c['published'],'draft save preserves existing publication state');
  check(BookStore::published($store->read())['qa/1.0/visual']['body']==='# Test','draft isolated');

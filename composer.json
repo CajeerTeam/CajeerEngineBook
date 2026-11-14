@@ -15,6 +15,17 @@
         "sort-packages": true
     },
     "scripts": {
-        "test": ["@php tests/smoke.php", "@php tests/markdown-policy.php", "@php tests/markdown.php", "@php tests/editor.php", "@php tests/media.php", "@php tests/images.php", "bash tests/http.sh"]
+        "test": [
+            "@php tests/smoke.php",
+            "@php tests/markdown-policy.php",
+            "@php tests/markdown.php",
+            "@php tests/editor.php",
+            "@php tests/media.php",
+            "@php tests/images.php",
+            "bash tests/http.sh",
+            "@php tests/page-tree.php",
+            "@php tests/page-tree-integration.php",
+            "bash tests/page-tree-http.sh"
+        ]
     }
 }

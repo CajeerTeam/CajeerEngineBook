@@ -623,7 +623,12 @@
         } finally { pending = false; if (Number(value('revision')) === 0 && !conflicted) for (const name of ['book','version','path']) form.elements[name].readOnly = false; lockButtons(); }
     }
     function updatePageActions(result) {
-        const list = document.querySelector('.editor-list');
+        let list = document.querySelector('.editor-list');
+        // The server returns a fully escaped nested tree only when title/order/new page changes.
+        if (list && typeof result.navigation === 'string') {
+            const updated = new DOMParser().parseFromString(result.navigation, 'text/html').querySelector('.editor-list');
+            if (updated) { list.replaceWith(updated); list = updated; }
+        }
         if (list) {
             let row = [...list.querySelectorAll('[data-page-key]')].find(el => el.dataset.pageKey === result.key);
             if (!row) { row = document.createElement('div'); row.dataset.pageKey = result.key; const link = document.createElement('a'); link.href = '/studio?edit=' + encodeURIComponent(result.key); link.textContent = result.key; row.append(link, ' ', document.createElement('small')); list.append(row); }

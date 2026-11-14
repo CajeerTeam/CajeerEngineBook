@@ -75,11 +75,14 @@ final class MediaBackup
                     $p=$entry[$state];if($p===null && $state==='published')continue;
                     if(!is_array($p)||!is_string($p['body']??null)||!is_string($p['title']??null)||!is_string($p['section']??null)||!is_int($p['order']??null)||!is_string($p['updated']??null)||$p['title']===''||strlen($p['title'])>200||strlen($p['section'])>100||!preg_match('//u',$p['title'].$p['section']))throw new \InvalidArgumentException('Invalid page snapshot');
                     Markdown::validate($p['body']);
-                    $refs=Markdown::mediaReferences($p['body'],$key);
+                    if(isset($p['link_base'])&&(!is_string($p['link_base'])||!PageTree::validKey($p['link_base'])))throw new \InvalidArgumentException('Invalid link base');
+                    if(isset($entry['published_key'])&&(!is_string($entry['published_key'])||!PageTree::validKey($entry['published_key'])))throw new \InvalidArgumentException('Invalid public path');
+                    $refs=Markdown::mediaReferences($p['body'],$p['link_base']??($state==='published'?PageTree::publicKey($key,$entry):$key));
                     foreach($refs as $id)if(!isset($items[$id]))throw new \InvalidArgumentException('Page references missing media');
                     $entry[$state]['media']=$refs;
                 }
             }unset($entry);
+            PageTree::validate($db);
             Files::json($stage.'/books.json',$db);unset($tar);
             if(file_exists($target)||is_link($target)||!rename($stage,$target))throw new \RuntimeException('Cannot publish restored directory');
             Files::syncDir($parent);

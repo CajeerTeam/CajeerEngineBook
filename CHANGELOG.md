@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6 — Page Tree & Drag-and-Drop
+
+- Add a nested Studio page tree with branch drag-and-drop, keyboard/touch form alternative, before/after/inside/root operations, slug renaming, child creation and draft-only branch duplication.
+- Persist stable page identities, transactional draft paths and independent published paths/order. Validate cycles, collisions, scope, limits and a revision token under the existing BookStore lock.
+- Publish navigation independently from page content, preserve old public URLs with identity-based 308 redirects, reserve retired paths, and retain relative Markdown link context after moves. Reader navigation, pagination, search, API and version copying use the published hierarchy.
+- Extend backup/restore validation for stable IDs, paths and redirect history. No new runtime dependencies or destructive migration.
+- Add storage, HTTP, CommonMark/backup integration and Chromium drag/drop tests.
+
 ## 0.1.5 — Images & Attachments
 
 - Add an authenticated searchable, paginated media picker in Studio with existing-file selection and direct uploads, clipboard images, drag-and-drop and upload progress.

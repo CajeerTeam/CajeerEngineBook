@@ -1,10 +1,11 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
 - Multiple books and versions, hierarchical URL paths, section navigation, page order, previous/next links, headings table of contents, responsive layout and light/dark theme.
+- Studio page tree: nested page/folder navigation, native drag-and-drop, keyboard/touch move form, slug rename, branch duplication, stable IDs and published redirects. Draft structure and public navigation are separate.
 - Studio: visual block editing, Markdown source mode, server preview, autosave, create/edit/delete pages, explicit publishing and unpublishing, version cloning to drafts, optimistic revision checks.
 - CommonMark 0.31.1 and GitHub-Flavored Markdown (GFM), powered by League CommonMark: nested lists, ATX/Setext headings, reference links, inline/fenced/indented code, blockquotes, tables, task lists, strikethrough, autolinks and images. Shared rendering in Reader and Studio with stable heading slugs and legacy anchors.
 - Published-only search and JSON read API, health probes, authenticated JSON metadata export and complete media backup.
@@ -33,20 +34,33 @@ php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.
 
 Username: `admin`. The hash is a secret deployment setting. No preset password. Use HTTPS outside localhost; Basic authentication must not be sent over unencrypted public HTTP. Set `BOOK_SECURE_COOKIE=1` under HTTPS. Add reverse proxy rate limiting for `/studio`, and restrict it to a trusted network if possible. Sessions and CSRF protect write requests; there is one administrator, no multi-user roles yet.
 
-## Upgrade to 0.1.5
+## Upgrade to 0.1.6
 
-Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Recheck the public reader, Studio and health endpoint after the update.
+Back up the entire `BOOK_DATA_DIR`, including `books.json` and any media files. Overlay the release files in the existing project directory (do not replace or delete `var/` or the persistent Docker volume). Install the locked dependencies using `composer install --no-dev --prefer-dist --no-interaction`, or rebuild the Docker image with `docker compose up -d --build`. The JSON schema remains version 1; media metadata and page references are optional additive fields. Existing draft/published Markdown is not rewritten, and no database migration is required. Version 0.1.6 lazily adds stable page IDs, a published path, historical path reservations and optional relative-link context. Existing paths are not changed until a tree operation is committed. Do not roll back code to 0.1.5 after moving pages without restoring a pre-upgrade backup: older readers ignore the new published-path metadata. Recheck the public reader, Studio and health endpoint after the update.
 
-## Studio visual editor (0.1.5)
+## Studio visual editor (0.1.6)
 
 Open `/studio` and authenticate. Visual mode is enabled by default when JavaScript and the browser editing APIs are available; Markdown remains usable without JavaScript or if conversion fails. All assets are served locally, and there is no npm/CDN dependency.
 
 - **Visual:** click a text block and type directly. Select text to apply bold, italic, strike, inline code, links or remove links. Use Block style for paragraphs, H1–H6 and quotations. Bullets/numbered lists, list indent/outdent, undo/redo and native editing shortcuts are supported. Add a paragraph, heading, quotation, list, divider or language-labelled code block using Add block. Remove a supported block with confirmation. Pasting inserts plain text rather than untrusted HTML.
 - **Markdown:** edit the canonical source. Switch from Visual to Markdown to inspect the generated source, or use Copy Markdown. The server still stores Markdown, not HTML or an editor-specific JSON format.
-- **Preview:** renders the current unsaved document on the server with the same CommonMark/GFM engine and URL policy as Reader. Existing page paths resolve relative links and images against their published URL. No publishing is required to preview.
+- **Preview:** renders the current unsaved document on the server with the same CommonMark/GFM engine and URL policy as Reader. Existing page paths resolve relative links and images against their saved link context (the original path for moved/duplicated pages). No publishing is required to preview.
 - **Save:** Save draft and Publish commit through the existing revision-checked store. Existing drafts autosave after approximately 1.8 seconds of idle editing; a new page needs an explicit first save or publication. Autosave never changes the published snapshot. Ctrl/Cmd+S saves the draft. A revision conflict stops writes, keeps the local text in Studio and asks the author to copy Markdown and reload/merge. Failed requests do not discard unsaved content. Refresh or leave Studio only after saving; the browser warns about unsaved changes.
 
 Visual editing is intentionally source-preserving, not a wholesale HTML-to-Markdown rewrite: unchanged blocks and gaps (including reference definitions) retain their source. Modified supported blocks are serialized to canonical Markdown and separated safely; a modified reference link may become an equivalent inline link. Browsers normalize textarea line endings to LF. GFM tables and task lists are editable. Standalone images and local attachment blocks are editable. Mixed inline images, complex attachment labels, raw HTML, custom directives, nested code blocks and other unsupported AST structures remain visible but protected in Visual mode; edit them in Markdown mode. Tables that contain unsupported inline content, surplus source cells, or exceed visual limits are also protected. The editor uses native contenteditable/selection and browser editing commands; Chromium is the browser tested in CI. Markdown mode is the reliable fallback for unsupported browser commands or complex formatting. No new database migration is required.
+
+### Page tree (0.1.6)
+
+Open **Studio → Page tree** (`/studio/tree`). Choose a book/version. Existing slash-separated paths become a nested tree automatically, including implicit folder nodes for paths with no parent page. Expand or collapse child branches. The Reader sidebar and previous/next navigation use the published hierarchy in depth-first order; Studio uses drafts.
+
+- Drag a branch's handle onto **Before**, **After**, **Inside**, or the version-root drop area. The entire branch (including private descendants) moves as one transaction. Alternatively use the Source branch, Destination and Position selects and click **Move branch**; these controls also work by keyboard, touch, or without JavaScript.
+- Set **New slug** to rename a branch while moving it. To rename in place, choose before/after a sibling or inside its parent; a root can use the root position. The `+ Child` link opens the existing page editor with a child path prefilled. Page titles are edited in Studio, not used as route slugs.
+- **Duplicate branch as drafts** copies all pages below the source, including draft content, with fresh stable IDs and no public snapshots. Choose a non-conflicting slug/destination. Existing media references are retained; immutable files are not duplicated.
+- **Publish tree** applies draft paths and navigation order to pages that already have public snapshots. It never publishes draft-only pages or modified body/title/section content. An ordinary page Publish updates content at its current public path; new or previously unpublished pages publish at their draft path. Use Publish tree to apply reordered or moved published pages. Manual Order is also draft navigation order.
+- Old published Reader and API URLs return HTTP 308 to the current public path, preserving query strings; redirects follow the stable identity directly after repeated moves. Unpublished or deleted pages do not redirect publicly. Old draft-only paths are reserved privately (and old Studio edit links redirect to their current draft). To avoid stale editor writes and hijacked links, retired paths cannot be reassigned to another page; the same identity may return to its own former path.
+- Moves preserve Markdown and its relative-link context instead of rewriting the source. Reader and Preview resolve old internal page references to current published targets, including relative dot segments and fragment/query suffixes. For newly authored links in moved pages, use absolute `/docs/...` URLs if the intended destination differs from the original relative context. Raw source returned by the API is not rewritten. Version copies retain relevant published aliases and rebase relative-link context to the copied version; absolute cross-version links remain as authored.
+
+A tree transaction checks the entire page revision token and runs under the same exclusive BookStore lock as page writes. Stale tabs receive HTTP 409 and must reload; invalid moves return HTTP 422, occupied paths return HTTP 409. Cycles, cross-book/version moves, collisions and unsafe paths are rejected. New paths/moves support up to 32 nested slug segments, 250 path bytes and the existing 1000-page quota. Historical redirects and retired draft paths are capped at 10,000 entries each. Existing legacy paths remain readable; folders are implicit and disappear when their last descendant is removed. No separate empty folder objects, cross-version drag/drop, collaborative editing, or external dependencies are introduced. Backups preserve tree identities, paths and aliases; restore validates the additional metadata.
 
 ### Tables & Rich Text
 
@@ -58,7 +72,7 @@ Choose **Task list** in Add block or use Task list in the formatting toolbar to 
 
 ## Markdown authoring and rendering
 
-The application uses [League CommonMark](https://commonmark.thephpleague.com/) with the CommonMark core and GFM extensions. Markdown source stays unchanged in the store and API. Reader and Studio share the parser, and the preview resolves relative links and images against the document's public URL, not the Studio route. The following works in Markdown mode and in Reader:
+The application uses [League CommonMark](https://commonmark.thephpleague.com/) with the CommonMark core and GFM extensions. Markdown source stays unchanged in the store and API. Reader and Studio share the parser, and the preview resolves relative links and images against the document's saved link context, not the Studio route. The following works in Markdown mode and in Reader:
 
 ````markdown
 ## Installation
@@ -189,10 +203,11 @@ python -m playwright install chromium
 python tests/editor-browser.py
 python tests/media-browser.py
 python tests/images-browser.py
+python tests/page-tree-browser.py
 ```
 
 Architecture: `src/` Book logic, `core/` reused upstream components, `templates/book/` CJR layout, `public/` sole web root, `data/` example content. Source is independent of the CMS release/update pipeline.
 
-## Roadmap (not implemented in 0.1.5)
+## Roadmap (not implemented in 0.1.6)
 
-Page tree drag-and-drop, callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.

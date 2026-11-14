@@ -26,3 +26,4 @@ jobs:
       - run: python tests/editor-browser.py
       - run: python tests/media-browser.py
       - run: python tests/images-browser.py
+      - run: python tests/page-tree-browser.py
