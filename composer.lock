@@ -3,7 +3,7 @@
         "This file locks the dependencies of your project to a known state",
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies"
     ],
-    "content-hash": "414bf9f3ea9e705d830efe8833486dc9",
+    "content-hash": "9361f6635d4178a60395a34ba2ffccb2",
     "packages": [
         {
             "name": "dflydev/dot-access-data",
@@ -277,7 +277,8 @@
         "php": ">=8.4.1 <9.0",
         "ext-fileinfo": "*",
         "ext-mbstring": "*",
-        "ext-phar": "*"
+        "ext-phar": "*",
+        "ext-zip": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.6.0"

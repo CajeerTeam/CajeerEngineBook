@@ -157,6 +157,23 @@ final class Markdown
         return $result;
     }
 
+    /** Source line ranges which an importer must not rewrite as prose. */
+    public static function importSyntax(string $md): array
+    {
+        self::validate($md);
+        $document=(new MarkdownParser(self::environment()))->parse($md);$regions=[];$links=[];$walker=$document->walker();
+        while($event=$walker->next()){
+            if(!$event->isEntering())continue;$node=$event->getNode();
+            if($node instanceof Link||$node instanceof Image)$links[]=['url'=>$node->getUrl(),'image'=>$node instanceof Image];
+            if($node instanceof FencedCode || $node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode || $node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\HtmlBlock){
+                $start=$node->getStartLine();$end=$node->getEndLine();
+                if(!is_int($start)||!is_int($end)||$start<1||$end<$start)throw new \InvalidArgumentException('Cannot identify protected Markdown source');
+                $regions[$start]=['end'=>$end,'info'=>$node instanceof FencedCode&&$node->parent() instanceof Document?trim($node->getInfo()??''):'','literal'=>$node instanceof FencedCode?$node->getLiteral():''];
+            }
+        }
+        return ['regions'=>$regions,'links'=>$links];
+    }
+
     private static function environment(): Environment
     {
         // A fresh environment per document prevents state leaking between conversions.

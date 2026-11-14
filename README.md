@@ -1,6 +1,31 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.1 — Markdown Import
+
+Open **Studio → Import Markdown** in the intended workspace. Owner, Admin and Editor can import; Viewer cannot. Choose a book slug (an existing or new book), version, conflict strategy and source: Markdown/attachments, a browser directory, or one ZIP. Click **Preview import**, inspect the source-to-target mapping, missing local links and asset counts, then **Apply as drafts**. Confirmed imports never publish, even when direct publication is allowed. Existing published snapshots remain intact; imported changes participate in normal history, contributor tracking, review and activity. The selected files remain in the browser and are uploaded again on Apply. A signed preview is valid for 15 minutes and bound to the current session, workspace, input file hashes, options and complete BookStore state; changes require a new preview. A private server-generated signing key (`identity/import-preview.key`) binds the plan to the session; it is regenerated after backup restoration, invalidating outstanding previews. No permanent upload staging is added to backups.
+
+### Source format and mapping
+
+- UTF-8 `.md`/`.markdown`, optional UTF-8 BOM. Root README/index becomes `index`; nested README/index becomes the directory landing page. Other filenames are normalized to stable ASCII slugs; non-ASCII-only segments use a deterministic hash suffix. Collisions between two source files mapping to one page are rejected rather than silently overwriting. Root `SUMMARY.md` links supply navigation order (explicit `order` wins); the summary remains an imported page.
+- Browser directory selection strips the selected outer folder; ZIP paths are relative to archive root and preserved. ZIPs should contain the documentation subtree, not a whole repository with unrelated executable/config files. Supported scalar front matter: `title`, `description` (inserted as escaped introductory Markdown), `slug`, `section`, `order`. Quoted and plain scalars only; unsupported keys, sequences, aliases, tags and multiline YAML are rejected. Ordinary thematic breaks remain Markdown.
+- Relative Markdown/image/attachment destinations are resolved from the source file, including reference definitions, percent-encoded filenames, local anchors/query suffixes and nested image links. Supported rich-block bodies and card links are rewritten; code, HTML and Mermaid source remain protected. Existing canonical `/docs`, `/media`, `/studio`, `/api` and `/w` links and external URLs are left alone. Unresolved relative links are listed and left unchanged; fix them before publication. No external resource is fetched. This is not a generic HTML, MDX, Docusaurus or arbitrary YAML converter.
+- **Skip** keeps existing pages; **Update** replaces only the draft, retaining page ID and public snapshot; unchanged drafts are not revised; **Rename** allocates a free suffix and rewrites imported links to it. Retired paths require Rename. Assets are validated by the existing MediaStore, copied privately and deduplicated by content within the workspace. Media references are validated by CommonMark before the transaction. Existing media/history references and mandatory review remain enforced.
+- Limits: up to 200 regular files (400 ZIP entries including directories), 20 MiB ZIP or individual file, 64 MiB expanded input, 8 MiB Markdown total, 256 KiB per Markdown document, source path depth 24, asset folder depth 8. Existing workspace quotas also apply. ZIP file names never become extraction paths; entries are streamed into random private temporary files with checked size and CRC. Symlinks, special files, encrypted entries, traversal, duplicate paths, unsupported MIME and file/directory collisions are rejected. Cleanly rejected transactions leave the previous store and remove uncommitted blobs. A process crash can leave an orphan blob for existing orphan GC; imported metadata is atomic.
+
+### Install / verify
+
+Requires PHP `ext-zip` (libzip), in addition to existing extensions and locked CommonMark. Docker installs zip and sets `upload_max_filesize=20M`, `post_max_size=72M`, `max_file_uploads=200`, `memory_limit=256M`; configure equivalent reverse-proxy/PHP limits for non-Docker deployments. Back up the existing data before updating, rebuild the image or install the extension and run `composer install --no-dev --prefer-dist`. No content/identity schema migration. Existing JSON/TAR and full installation backups already include imported content and assets.
+
+```sh
+php tests/import.php
+python3 tests/import-http.py
+python3 tests/import-browser.py
+composer test
+```
+
+`php tests/import.php --policy-only` and `python3 tests/import-http.py --policy-only` run the dependency-independent validation/storage and HTTP denial checks. The default tests exercise actual ZIP, CommonMark, history, review, private media, backup and browser directory import; CI runs both PHP/HTTP and Chromium tests and the image runs the ZIP integration test.
 
 ## 0.3.0 — Workspaces & Teams Stable
 
@@ -288,7 +313,7 @@ Requirements: PHP 8.4.1+ with `mbstring`, `fileinfo`, `phar`, JSON, ctype, PCRE 
 composer install --no-dev --prefer-dist --no-interaction
 sh bin/install-mermaid.sh # Node 22/npm; install the local diagram library
 # Read-only demo (Studio is disabled until configured)
-php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
+php -d upload_max_filesize=20M -d post_max_size=72M -d max_file_uploads=200 -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 Open http://127.0.0.1:8080/ and `/login`. Public documentation is readable without initialization. To enable Studio on a fresh installation, initialize the owner from the trusted local CLI (run as the same OS user that owns the data directory):
@@ -299,7 +324,7 @@ export BOOK_SECURE_COOKIE=0 # local HTTP only; use 1 on HTTPS
 read -rs -p 'Owner password (12–72 bytes): ' BOOK_PASSWORD; echo
 printf '%s' "$BOOK_PASSWORD" | php bin/identity.php init admin admin@example.com 'Administrator'
 unset BOOK_PASSWORD
-php -d upload_max_filesize=20M -d post_max_size=24M -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
+php -d upload_max_filesize=20M -d post_max_size=72M -d max_file_uploads=200 -d memory_limit=256M -S 127.0.0.1:8080 -t public public/router.php
 ```
 
 No default password, open public registration or Basic Auth fallback. Invitation-only registration is available in 0.2.2. Sign in via `/login` and use `/account` to manage profile, password and sessions; `/account/users` is owner-only. Use HTTPS and `BOOK_SECURE_COOKIE=1` outside localhost. Secure cookies have the `__Host-` prefix, HttpOnly, SameSite=Strict and path `/`; do not use HTTP for real credentials. Reverse proxies should rate-limit `/login`, `/account/reset` and Studio; rate limiting inside the application uses `REMOTE_ADDR`, not client-supplied forwarded headers.
@@ -519,7 +544,7 @@ Use the Studio UI to author and publish. For direct links use `/docs/{book}/{ver
 
 Open **Studio → Media library** (`/studio/media`). Select or drop files, optionally enter a folder such as `guides/images`, and upload. With JavaScript, multiple files upload sequentially (up to 50 per batch), each with its own progress and result; successful files are retained even if others fail. The HTML form works for single files without JavaScript. Search by filename, folder or SHA-256; filter by exact folder or type, sort, and use pagination. Open a file, download it, copy its permanent URL, or expand Manage file to rename/move/delete it. Folders are logical metadata, not filesystem paths. Renaming must preserve file type; it does not change the file ID or links. Identical SHA-256/MIME content reuses the original ID and metadata; rename/move the existing item if needed.
 
-Supported formats: PNG, JPEG, GIF, WebP, PDF, ZIP and UTF-8 TXT/MD/CSV. The server checks actual MIME using `fileinfo` plus an extension allowlist, dimensions for raster images, and full raster decoding when GD is installed. SVG, HTML, executables and unrecognized formats are rejected. ZIP/PDF/text are delivered as attachments, never executed or extracted. This is not a malware scanner: use trusted administrator uploads and scan untrusted documents separately. Limits are 20 MiB per file, 1000 distinct files, 512 MiB original media total, and 4096 px per image side / 12 megapixels. Cached previews (320 px maximum, PNG) are generated on demand with GD; without GD the original image is shown. Keep enough disk for the originals, derived thumbnails and temporary backups. Set PHP `upload_max_filesize=20M`, `post_max_size=24M`, `memory_limit=256M`, and reverse proxy upload limits accordingly. The Docker image configures these settings and GD.
+Supported formats: PNG, JPEG, GIF, WebP, PDF, ZIP and UTF-8 TXT/MD/CSV. The server checks actual MIME using `fileinfo` plus an extension allowlist, dimensions for raster images, and full raster decoding when GD is installed. SVG, HTML, executables and unrecognized formats are rejected. ZIP/PDF/text are delivered as attachments, never executed or extracted. This is not a malware scanner: use trusted administrator uploads and scan untrusted documents separately. Limits are 20 MiB per file, 1000 distinct files, 512 MiB original media total, and 4096 px per image side / 12 megapixels. Cached previews (320 px maximum, PNG) are generated on demand with GD; without GD the original image is shown. Keep enough disk for the originals, derived thumbnails and temporary backups. Set PHP `upload_max_filesize=20M`, `post_max_size=72M`, `memory_limit=256M`, and reverse proxy upload limits accordingly. The Docker image configures these settings and GD.
 
 ### Using uploaded files in Markdown
 

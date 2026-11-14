@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — Markdown Import
+
+- Add scoped Studio import of Markdown files, browser directories and ZIP archives, including safe scalar front matter, README/index landing pages, SUMMARY navigation order and source-to-page mapping.
+- Preview Create/Update/Skip/Rename/Unchanged actions and unresolved links; sign confirmation to exact file hashes, session, workspace and current store. Apply drafts and media atomically with existing history, review provenance and activity, leaving published snapshots untouched.
+- Rewrite local document and media links, reference definitions and supported rich blocks while preserving protected code/HTML/Mermaid source. Validate real media MIME, deduplicate within the workspace and preserve canonical URLs.
+- Bound ZIP extraction and reject unsafe paths, duplicate entries, symlinks, encrypted entries, invalid checksums and oversized files. Add PHP ext-zip to Composer/Docker/readiness, update upload limits, and add PHP, multipart HTTP and Chromium regression tests.
+
 ## 0.3.0 — Workspaces & Teams Stable
 
 - Bind initialized installations to a durable private root identity anchor. Fail closed after identity loss or owner mismatch, including legacy Reader/API/media; regenerate the anchor on trusted full restore. Reject orphan workspace directories during readiness.

@@ -4,11 +4,12 @@
     "type": "project",
     "license": "Apache-2.0",
     "require": {
-        "php": ">=8.4.1 <9.0",
         "ext-fileinfo": "*",
         "ext-mbstring": "*",
         "ext-phar": "*",
-        "league/commonmark": "^2.10.7"
+        "ext-zip": "*",
+        "league/commonmark": "^2.10.7",
+        "php": ">=8.4.1 <9.0"
     },
     "config": {
         "allow-plugins": false,
@@ -16,6 +17,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/import.php",
+            "python3 tests/import-http.py",
             "@php tests/stable.php",
             "@php tests/installation.php",
             "python3 tests/installation-http.py",

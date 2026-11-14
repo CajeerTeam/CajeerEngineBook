@@ -42,7 +42,7 @@ final class Permissions
         if(!self::allows($role,'edit'))return false;
         if(in_array($method,['GET','HEAD'],true)){
             if(in_array($path,['/studio/export','/studio/media/backup'],true))return self::allows($role,'export');
-            return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team'],true)||str_starts_with($path,'/studio/media/file/');
+            return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import'],true)||str_starts_with($path,'/studio/media/file/');
         }
         if($method!=='POST')return false;
         $permission=match($path){
@@ -51,6 +51,7 @@ final class Permissions
             '/studio/media'=>match($action){'upload','update'=>'edit','delete'=>'delete',default=>''},
             '/studio/books'=>match($action){'create'=>'edit','visibility'=>'manage',default=>''},
             '/studio/editor/render'=>'edit',
+            '/studio/import'=>in_array($action,['preview','apply'],true)?'edit':'',
             '/studio/history'=>$action==='restore'?'edit':'',
             '/studio/team'=>$action==='read'?'edit':'',
             '/studio/reviews'=>match($action){'submit','comment','cancel'=>'edit','approve','changes','reject','publish'=>'publish','policy','prune'=>'ownership',default=>''},default=>'',
