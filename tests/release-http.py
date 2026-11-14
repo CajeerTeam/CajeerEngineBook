@@ -128,7 +128,7 @@ def run(base, persisted=False):
     _, _, b = admin.request('/studio', 'POST', {**form, 'action': 'publish', 'revision': 1}, headers)
     check(json.loads(b)['revision'] == 2, 'publication committed')
     _, h, b = public.request('/docs/' + PAGE)
-    check(h['Cache-Control'] == 'no-store' and b'data-book-mermaid' in b and b'book-steps' in b and b'<script>alert' not in b, 'real public HTML and no stale cache')
+    check('no-store' in h['Cache-Control'] and b'data-book-mermaid' in b and b'book-steps' in b and b'<script>alert' not in b, 'real public HTML and no stale cache')
     _, h, b = public.request(media + '?download=1')
     check(b == payload and h['Content-Disposition'].startswith('attachment'), 'published attachment downloadable')
     _, _, b = admin.request('/studio', 'POST', {**form, 'action': 'save', 'revision': 2, 'body': 'Unpublished secret release'}, headers)

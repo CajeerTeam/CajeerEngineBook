@@ -21,6 +21,17 @@ final class Workspaces
             if($w['legacy']&&$w['archived'])throw new \RuntimeException('Legacy workspace cannot be archived');
         }
     }
+    /** Do not silently omit orphan stores, which may contain otherwise unrecoverable data. */
+    public static function assertRegistryDirectories(string $root,array $identity):void
+    {
+        $dir=Files::path($root,'workspaces');if(!file_exists($dir))return;
+        if(!is_dir($dir))throw new \RuntimeException('Invalid workspace directory');$expected=[];
+        foreach($identity['workspaces'] as $w)if(!$w['legacy'])$expected[$w['organization']][$w['id']]=true;
+        foreach(new \DirectoryIterator($dir) as $org){
+            if($org->isDot())continue;if($org->isLink()||!$org->isDir()||!Workspaces::id($org->getFilename()))throw new \RuntimeException('Unexpected workspace directory entry');
+            foreach(new \DirectoryIterator($org->getPathname()) as $w){if($w->isDot())continue;if($w->isLink()||!$w->isDir()||!isset($expected[$org->getFilename()][$w->getFilename()]))throw new \RuntimeException('Unregistered workspace directory; inspect and preserve it before backup');}
+        }
+    }
     public static function legacy(array $db):?array{foreach($db['workspaces']??[] as $w)if($w['legacy'])return $w;return null;}
     public static function prefix(array $w):string{return $w['legacy']?'':'/w/'.$w['organization'].'/'.$w['id'];}
     public static function directory(string $root,array $w):string{return $w['legacy']?$root:Files::path($root,'workspaces/'.$w['organization'].'/'.$w['id']);}

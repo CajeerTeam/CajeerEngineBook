@@ -42,6 +42,7 @@ jobs:
       - run: python tests/interactive-browser.py --reader-only
       - run: python tests/interactive-browser.py
       - run: python tests/mermaid-browser.py
+      - run: python tests/installation-http.py --browser
 
   docker-release:
     needs: test
@@ -67,8 +68,10 @@ jobs:
           docker compose -p book-release-test exec -T book php tests/release.php
           docker compose -p book-release-test exec -T book php tests/installation.php
           python3 tests/release-http.py
+          python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json"
           docker compose -p book-release-test restart book
           python3 tests/release-http.py --check-persisted
+          python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json" --check-persisted
       - name: Show logs on failure
         if: failure()
         run: docker compose -p book-release-test logs --no-color

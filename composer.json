@@ -16,6 +16,7 @@
     },
     "scripts": {
         "test": [
+            "@php tests/stable.php",
             "@php tests/installation.php",
             "python3 tests/installation-http.py",
             "@php tests/activity.php",

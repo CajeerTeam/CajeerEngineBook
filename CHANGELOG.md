@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — Workspaces & Teams Stable
+
+- Bind initialized installations to a durable private root identity anchor. Fail closed after identity loss or owner mismatch, including legacy Reader/API/media; regenerate the anchor on trusted full restore. Reject orphan workspace directories during readiness.
+- Persist identity/session updates before scoped content dispatch while retaining the authorization lock; check all registered stores under a consistent identity lock. Return generic no-store/noindex errors without appending diagnostics to streamed responses.
+- Add integrated multi-user installation backup/restore and recovery tests covering all four roles, private documents, exact approved publication, review notifications, rich Markdown/Mermaid and historical draft recovery. Add a real browser scenario and a disposable Apache/Compose restart gate; correct the Reader cache-header regression assertion.
+- Document upgrade, identity-loss recovery, team acceptance and release checks. Keep Identity schema 4 and BookStore schemas 1/2; no new runtime dependencies.
+
 ## 0.2.9 — Security & Migration
 
 - Add operator-only full installation check, backup, staged restore and copy-based migration; verify registry, component hashes, permissions and all content stores before atomic directory publication. Preserve archived spaces, history, reviews and journals; revoke restored sessions and one-time credentials.

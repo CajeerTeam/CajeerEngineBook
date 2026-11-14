@@ -48,17 +48,6 @@ final class InstallationBackup
         if(!is_file($path)||!is_int($entry['size']??null)||$entry['size']<1||$entry['size']>$max||!is_string($entry['sha256']??null)||!preg_match('/\A[a-f0-9]{64}\z/D',$entry['sha256'])||filesize($path)!==$entry['size']||!hash_equals($entry['sha256'],Files::hash($path)))throw new \RuntimeException('Backup integrity mismatch: '.$name);
         return $path;
     }
-    /** Do not silently omit orphan stores, which may contain otherwise unrecoverable data. */
-    private static function assertRegistryDirectories(string $root,array $identity):void
-    {
-        $dir=Files::path($root,'workspaces');if(!file_exists($dir))return;
-        if(!is_dir($dir))throw new \RuntimeException('Invalid workspace directory');$expected=[];
-        foreach($identity['workspaces'] as $w)if(!$w['legacy'])$expected[$w['organization']][$w['id']]=true;
-        foreach(new \DirectoryIterator($dir) as $org){
-            if($org->isDot())continue;if($org->isLink()||!$org->isDir()||!Workspaces::id($org->getFilename()))throw new \RuntimeException('Unexpected workspace directory entry');
-            foreach(new \DirectoryIterator($org->getPathname()) as $w){if($w->isDot())continue;if($w->isLink()||!$w->isDir()||!isset($expected[$org->getFilename()][$w->getFilename()]))throw new \RuntimeException('Unregistered workspace directory; inspect and preserve it before backup');}
-        }
-    }
     /** Explicit recovery only for historical adoption of an untouched demo seed. */
     public static function materializeLegacySeed(string $root,string $public):void
     {
@@ -73,7 +62,7 @@ final class InstallationBackup
     {
         $root=DataDirectory::resolve($root,$public);if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
         return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root){
-            self::assertRegistryDirectories($root,$identity);$out=[];$legacy=new BookStore($root,Workspaces::legacy($identity)===null);
+            Workspaces::assertRegistryDirectories($root,$identity);$out=[];$legacy=new BookStore($root,Workspaces::legacy($identity)===null);
             $out['legacy']=(new StoreAudit($legacy,new MediaStore($root,$legacy)))->run();
             foreach($identity['workspaces'] as $w){if($w['legacy'])continue;$dir=Workspaces::directory($root,$w);$books=new BookStore($dir,false);$out[$w['id']]=(new StoreAudit($books,new MediaStore($dir,$books)))->run();}
             foreach($out as $id=>$r)if($r['reference_mismatches']!==0)throw new \RuntimeException('Media index mismatch in '.$id.'; run verify-data.php with explicit repair before backup');
@@ -87,7 +76,7 @@ final class InstallationBackup
         $stage=self::stage($target);
         try{
             (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage){
-                self::assertRegistryDirectories($root,$identity);
+                Workspaces::assertRegistryDirectories($root,$identity);
                 Files::write($stage.'/identity.json',json_encode($identity,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");$manifest=['format'=>1,'created'=>gmdate('c'),'files'=>['identity.json'=>self::entry($stage.'/identity.json')]];
                 $stores=['legacy.tar'=>[$root,Workspaces::legacy($identity)===null]];
                 foreach($identity['workspaces'] as $w)if(!$w['legacy'])$stores[$w['id'].'.tar']=[Workspaces::directory($root,$w),false];

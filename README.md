@@ -1,6 +1,29 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.0 — Workspaces & Teams Stable
+
+The integrated team release combines individual accounts, organizations, isolated workspaces, fixed Owner/Admin/Editor/Viewer roles, public/private books, Advanced Editor, revision history, independent review and approval, Team Studio, notifications and installation backup/restore. There are no new runtime dependencies or data schema changes. The application remains a single-node PHP installation with bounded JSON stores and an installation-wide identity lock; it is not a distributed or real-time collaborative editor.
+
+### Upgrade and release verification
+
+1. Stop web and standalone CLI writers; retain a trusted copy of the entire `BOOK_DATA_DIR` (including identity, workspace stores and media).
+2. Check existing data with `php bin/installation.php check` and create a full backup using `php bin/installation.php backup /secure/backups/book-before-030` (a new private directory).
+3. Apply the release files and rebuild (`docker compose up -d --build`), or install the locked Composer dependencies and local Mermaid assets (`sh bin/install-mermaid.sh`). Use HTTPS and `BOOK_SECURE_COOKIE=1` in production.
+4. Run `php bin/installation.php check` and confirm `/health/ready` returns 200. Sign in with the existing owner and verify a private workspace with an Editor and Viewer. A successful readiness response is not a substitute for a full integrity audit or restore rehearsal.
+
+The identity store now writes a private root-level `identity.required` anchor containing the installation owner's immutable ID. This file is automatically created when an existing valid identity is first accessed and when a new owner is initialized. Keep it in offline volume copies. Full installation restore reconstructs it from the validated identity backup. Losing `identity.json`, the whole identity directory, or replacing identity with a different owner no longer makes an initialized installation appear new. Content and authentication fail closed, including old legacy URLs; `/health/live` remains a process liveness endpoint, while `/health/ready` reports failure. Do not delete the marker or reinitialize an owner to recover missing identity: restore the matched installation backup into a new directory and switch the deployment after verification. A legacy-only installation that already lost identity before upgrading, without a marker or workspace directories, cannot be reliably distinguished from a never-initialized installation; verify its identity backup before starting the upgrade.
+
+Readiness validates the registered workspace directories, legacy store and scoped stores under a consistent identity lock. Session persistence is completed before content operations can send a response, with the lock retained for authorization through the operation. Unexpected application errors produce a generic 503 without private details or appended diagnostic text in streamed files.
+
+### Team acceptance workflow
+
+Create an organization, invite users, assign an Admin, Editor and Viewer, then create a private workspace. Give the Editor a book and save a draft; enable required review as Owner, select an independent Admin, request changes and resubmit, approve and publish the exact saved revision. Viewer can read the publication and its linked media but not Studio, drafts, history or review. A user from another organization cannot access these resources. Restore an earlier revision as a new draft; the approved publication stays unchanged. Use Team Studio to follow personal review tasks and notifications. Use a full installation backup for transfer, not a content-only export; restored sessions must sign in again.
+
+### Release tests
+
+`composer test` exercises the server, storage, HTTP and migration suites. After installing Playwright/Chromium, `python3 tests/installation-http.py --browser` runs the integrated multi-user workflow with real Markdown editing, review, full installation backup/restore, Reader and Mermaid rendering, revision recovery and access revocation. The Compose release gate additionally runs `tests/team-release-http.py` against a disposable Apache deployment before and after restart. Never point this test at production: it creates test users, organizations and documents. The `--storage-only` option for installation tests is a diagnostic without parser-dependent content, not full release certification. All dependency-backed tests and Docker gates must pass before production deployment.
 
 ## 0.2.9 — Security & Migration
 
@@ -479,7 +502,7 @@ Compose binds to 127.0.0.1:8080. Place an HTTPS reverse proxy in front of it, pa
 
 ## Content model and REST API
 
-A page is identified by `book/version/path` (lowercase ASCII slugs, nested paths allowed). Each entry has a draft, published snapshot and revision counter. The public reader only reads published snapshots. Studio's Copy version action duplicates published pages as new drafts. Existing page identifiers are immutable; create a new page to change its path. Section and numeric order control navigation.
+A page is identified by `book/version/path` (lowercase ASCII slugs, nested paths allowed). Each entry has a draft, published snapshot and revision counter. The public reader only reads published snapshots. Studio's Copy version action duplicates published pages as new drafts. Stable page IDs are immutable; Studio Page Tree can change draft paths and publish structural changes with redirects, subject to RBAC and review policy. Section and numeric order control navigation.
 
 - `GET /api/v1/pages` — published page metadata keyed by page identifier.
 - `GET /api/v1/pages/{book}/{version}/{path}` — published Markdown and metadata.
