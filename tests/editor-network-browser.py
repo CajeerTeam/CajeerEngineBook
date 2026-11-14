@@ -71,6 +71,12 @@ def main():
         expect(body).to_have_value('## Newer local edits')
         expect(page.locator('[data-editor-form] button[value=save]')).to_be_disabled()
         check(True, 'conflict after retry preserves source and blocks stale writes')
+        expect(page.locator('[data-editor-recovery]')).to_be_visible()
+        expect(page.locator('[data-server-version]')).to_have_attribute('href','/studio?edit=qa%2F1.0%2Fnetwork')
+        with page.expect_download() as event:
+            page.locator('[data-download-source]').click()
+        assert event.value.path().read_text() == '## Newer local edits'
+        check(True, 'conflict recovery downloads exact local Markdown without saving')
         check(not errors, 'no JavaScript exceptions')
         browser.close()
 

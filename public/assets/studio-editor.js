@@ -37,6 +37,10 @@
     function lockButtons() {
         submitButtons.forEach(button => { button.disabled = pending || transitioning || conflicted; });
         modes.forEach(button => { button.disabled = transitioning; });
+        const recovery = $('[data-editor-recovery]');
+        if (recovery) { recovery.hidden = !conflicted; const link = recovery.querySelector('[data-server-version]');
+            if (link) link.href = scoped('/studio?edit=' + encodeURIComponent([value('book'),value('version'),value('path')].join('/'))); }
+
     }
     function showMode(next) {
         mode = next;
@@ -947,6 +951,12 @@
         if (!syncVisual()) return;
         try { await navigator.clipboard.writeText(source.value); announce('Markdown copied'); }
         catch { showMode('markdown'); source.focus(); source.select(); announce('Markdown selected — use your copy shortcut'); }
+    });
+    $('[data-download-source]')?.addEventListener('click', () => {
+        if (!syncVisual()) return;
+        const url = URL.createObjectURL(new Blob([source.value], {type: 'text/markdown;charset=utf-8'}));
+        const a = document.createElement('a'); a.href = url; a.download = 'local-draft.md'; document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000); announce('Local Markdown downloaded');
     });
     const savedPreview = document.querySelector('[data-saved-preview]'); if (savedPreview) savedPreview.hidden = true;
     $('[data-enhanced]').hidden = false;

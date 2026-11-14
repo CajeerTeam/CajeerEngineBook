@@ -156,3 +156,15 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 .review-table{width:100%;border-collapse:collapse}
 .review-table td,.review-table th{padding:.6rem;border:1px solid var(--line);text-align:left;overflow-wrap:anywhere}
 .review-hash{overflow-wrap:anywhere}
+
+/* Team Studio / activity: server-rendered, keyboard accessible, responsive. */
+.team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.85rem;margin:1rem 0 1.5rem}
+.team-grid .org-card{margin:0;min-width:0;overflow-wrap:anywhere}
+.team-grid h3,.team-grid p{margin:.4rem 0}
+.team-event{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;border-bottom:1px solid var(--line);padding:.8rem .25rem;overflow-wrap:anywhere}
+.team-event p{margin:.35rem 0}.team-event small{opacity:.75}.team-event form{flex-shrink:0;margin:0}
+.team-unread{border-inline-start:3px solid var(--accent);padding-inline-start:.65rem}
+.team-tag{font-size:.75rem;border:1px solid currentColor;border-radius:.5rem;padding:.1rem .35rem}
+.team-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));align-items:end;gap:.6rem;margin:1rem 0}
+.team-filters label{min-width:0;display:flex;flex-direction:column;gap:.3rem}.team-filters input,.team-filters select{width:100%;box-sizing:border-box}
+@media(max-width:600px){.team-event{flex-wrap:wrap}.team-filters{grid-template-columns:1fr}}

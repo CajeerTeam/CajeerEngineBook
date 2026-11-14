@@ -4,6 +4,7 @@ namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 require_once __DIR__.'/RevisionHistory.php';
 require_once __DIR__.'/ReviewWorkflow.php';
+require_once __DIR__.'/ActivityJournal.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
@@ -25,6 +26,7 @@ final class BookStore {
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);
+        ActivityJournal::validate($db);
         return $db;
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
@@ -39,7 +41,7 @@ final class BookStore {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$historyAction===null?null:$db; $fn($db); if($before!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($before!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
@@ -47,6 +49,7 @@ final class BookStore {
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);
+        ActivityJournal::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);

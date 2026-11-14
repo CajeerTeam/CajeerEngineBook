@@ -13,6 +13,7 @@ final class StoreAudit
             PageTree::validate($db);
             RevisionHistory::validate($db,true);
             ReviewWorkflow::validate($db,true);
+            ActivityJournal::validate($db);
             if(count($db['pages'])>1000||count($db['media']??[])>MediaStore::MAX_FILES)throw new \RuntimeException('Store exceeds supported record counts');
             $items=$db['media']??[];$total=0;$changed=0;$snapshots=0;
             foreach($items as $id=>$item){

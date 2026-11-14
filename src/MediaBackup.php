@@ -85,6 +85,7 @@ final class MediaBackup
             PageTree::validate($db);
             RevisionHistory::validate($db,true);
             ReviewWorkflow::validate($db,true);
+            ActivityJournal::validate($db);
             ReviewWorkflow::refresh($db);
             BookStore::writeDatabase($stage.'/books.json',$db);unset($tar);
             if(file_exists($target)||is_link($target)||!rename($stage,$target))throw new \RuntimeException('Cannot publish restored directory');

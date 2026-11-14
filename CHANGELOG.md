@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.8 — Team Studio & Activity
+
+- Add global Team Studio workspace selector and scoped dashboard with personal review tasks, draft/notification counts, effective members, recent document filters, history links and author/publication state in Studio navigation.
+- Persist invitation, membership, role and review notifications with independent read receipts, CSRF-protected read actions and live RBAC filtering. Add scoped activity and administrative audit for successful identity, organization, workspace, content, media and review operations; record no credentials or document/comment bodies.
+- Commit journal events atomically with their state changes, bound each journal to 1,000 events/512 KiB within existing store limits, validate and preserve events in identity/content backups. No new schema migration or runtime dependencies.
+- Add explicit local Markdown download and separate current-version link for editor conflict/access recovery. Add PHP, multi-user HTTP, Chromium team and recovery regressions to CI.
+
 ## 0.2.7 — Review & Approval
 
 - Add scoped review queue, immutable saved-page and navigation snapshots, independent assigned reviewers, escaped discussion, request changes/reject/cancel, approval and atomic publication of exactly the approved state. Track known unpublished contributors and link publication history to review IDs.

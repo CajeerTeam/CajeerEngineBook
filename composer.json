@@ -16,6 +16,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/activity.php",
+            "python3 tests/team-http.py",
             "@php tests/identity.php",
             "python3 tests/identity-http.py",
             "@php tests/organizations.php",

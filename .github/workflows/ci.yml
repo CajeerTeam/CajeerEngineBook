@@ -32,6 +32,7 @@ jobs:
       - run: python tests/workspaces-browser.py
       - run: python tests/permissions-browser.py
       - run: python tests/reviews-browser.py
+      - run: python tests/team-browser.py
       - run: python tests/editor-network-browser.py
       - run: python tests/editor-browser.py
       - run: python tests/media-browser.py
