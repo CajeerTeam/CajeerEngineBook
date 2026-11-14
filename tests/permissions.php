@@ -17,7 +17,7 @@ try{
  $a=$s->createWorkspace($ot,$org,'Alpha','alpha');$b=$s->createWorkspace($ot,$org,'Beta','beta');$id=$a['id'];$bid=$b['id'];
  $path=$root.'/identity/identity.json';$db=Files::read($path);$db['schema']=2;Files::json($path,$db);
  $role=fn($token,$wid)=>$s->withWorkspace($token,$org,$wid,fn($ctx,$w)=>$w['role']??'none');
- check($role($tokens['writer'],$id)==='viewer'&&Files::read($path)['schema']===3,'schema 2 migration keeps member read access and session');
+ check($role($tokens['writer'],$id)==='viewer'&&Files::read($path)['schema']===4,'schema 2 migration keeps member read access and session');
  $assign=fn($actor,$target,$r)=>$s->mutateOrganization($actor,$org,$rev(),'role',['user'=>$users[$target],'role'=>$r]);
  $assign($ot,'manager','admin');$assign($ot,'writer','editor');
  check($role($tokens['manager'],$id)==='admin'&&$role($tokens['writer'],$id)==='editor'&&$role($tokens['reader'],$id)==='viewer','four effective roles');
@@ -43,7 +43,7 @@ try{
  $assign($ot,'writer','editor');check($role($tokens['writer'],$id)==='none','promotion preserves explicit denial');
  deny(fn()=>$s->assignWorkspaceRole($ot,$id,1,$users['writer'],'inherit'),'stale workspace revision rejected');
  $scope($ot,$id,'writer','inherit');$scope($ot,$bid,'writer','viewer');
- $backup=$s->backup();$restore=new IdentityStore($root.'/restored');$restore->restore($backup);$rt=$restore->login('writer','password-writer-123','192.0.2.9')['token'];check($backup['schema']===3&&$restore->withWorkspace($rt,$org,$bid,fn($c,$w)=>$w['role'])==='viewer','backup preserves organization and scoped role');
+ $backup=$s->backup();$restore=new IdentityStore($root.'/restored');$restore->restore($backup);$rt=$restore->login('writer','password-writer-123','192.0.2.9')['token'];check($backup['schema']===4&&$restore->withWorkspace($rt,$org,$bid,fn($c,$w)=>$w['role'])==='viewer','backup preserves organization and scoped role');
  $bad=$backup;$bad['workspaces'][$bid]['roles'][$users['reader']]='admin';deny(fn()=>$s->assignWorkspaceRole($ot,$bid,$wrev($bid),$users['reader'],'admin'),'workspace privilege escalation rejected');
  try{(new IdentityStore($root.'/bad'))->restore($bad);throw new LogicException('Accepted invalid backup');}catch(RuntimeException){check(true,'invalid persisted assignment rejected');}
  $s->mutateOrganization($ot,$org,$rev(),'remove',['user'=>$users['writer']]);check($role($tokens['writer'],$id)==='none'&&$role($tokens['writer'],$bid)==='none','removed member loses every scope');

@@ -48,6 +48,18 @@ def main():
                     editor=owner.locator('form[data-editor-form]');owner.locator('[data-mode="markdown"]').click();expect(owner.locator('[data-markdown-panel]')).to_be_visible();editor.locator('input[name="path"]').fill('start');editor.locator('input[name="title"]').fill('Scoped page');editor.locator('textarea[name="body"]').fill('# Scoped page\n\n[Self](/docs/guide/1.0/start)')
                     editor.locator('button[name="action"][value="publish"]').click();expect(owner.locator('[data-save-state]')).to_contain_text(re.compile('Published|Saved',re.I),timeout=15000)
                     assert owner.url.startswith(base+prefix+'/studio?edit=');load(owner,prefix+'/docs/guide/1.0/start');expect(owner.get_by_role('link',name='Self')).to_have_attribute('href',prefix+'/docs/guide/1.0/start');print('PASS real editor AJAX publish and scoped Reader link',flush=True)
+                # Privacy controls must persist through real forms and protect the public Reader.
+                load(owner,prefix+'/studio/books');form=action('visibility');form.locator('select[name="visibility"]').select_option('private')
+                if not bridged: owner.once('dialog',lambda dialog:dialog.accept())
+                submit(owner,form,{},'Save visibility');expect(action('visibility').locator('select[name="visibility"]')).to_have_value('private')
+                load(owner,'/workspaces');form=action('visibility');form.locator('select[name="visibility"]').select_option('public');
+                if not bridged: owner.once('dialog',lambda dialog:dialog.accept())
+                submit(owner,form,{},'Save visibility');load(guest,prefix+'/');expect(guest.get_by_role('heading',name='Documentation, on your terms.')).to_be_visible()
+                if not bridged: load(guest,prefix+'/docs/guide/1.0/start',404);expect(guest.get_by_role('heading',name='Page not found')).to_be_visible()
+                load(owner,'/workspaces');form=action('visibility');form.locator('select[name="visibility"]').select_option('private');
+                if not bridged: owner.once('dialog',lambda dialog:dialog.accept())
+                submit(owner,form,{},'Save visibility');load(guest,prefix+'/',401)
+                print('PASS browser workspace and book visibility controls',flush=True)
                 load(owner,'/workspaces');submit(owner,action('archive'),{},'Archive workspace');load(owner,prefix+'/',404);load(owner,'/workspaces');submit(owner,action('restore'),{},'Restore workspace');load(owner,prefix+'/studio/books');expect(owner.get_by_role('heading',name='Engineering guide')).to_be_visible();print('PASS archive/restore preserves book',flush=True)
                 assert not errors,errors;browser.close()
         finally:server.terminate();server.wait(timeout=5)

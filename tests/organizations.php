@@ -12,7 +12,7 @@ try{
  $b=$s->createUser($at,'writer','Writer','writer@example.com','password-writer-123');$bt=$s->login('writer','password-writer-123','192.0.2.2')['token'];
  $c=$s->createUser($at,'outsider','Outsider','outsider@example.com','password-outsider-123');$ct=$s->login('outsider','password-outsider-123','192.0.2.3')['token'];
  $path=$dir.'/identity/identity.json';$old=Files::read($path);$old['schema']=1;unset($old['organizations'],$old['invitations']);Files::json($path,$old);
- check($s->current($at)['user']['id']===$a['id']&&Files::read($path)['schema']===3,'v1 migration preserves user ID and session');
+ check($s->current($at)['user']['id']===$a['id']&&Files::read($path)['schema']===4,'v1 migration preserves user ID and session');
  $o=$s->createOrganization($at,'Engineering','Engineering');$id=$o['id'];$rev=fn()=>$s->organization($at,$id)['revision'];
  check($o['slug']==='engineering'&&$o['role']==='owner'&&$o['member_count']===1,'creation and canonical slug');
  deny(fn()=>$s->createOrganization($bt,'Duplicate','ENGINEERING'),'case insensitive unique slug');

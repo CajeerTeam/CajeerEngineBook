@@ -17,6 +17,7 @@ final class Workspaces
             $key=$w['organization'].':'.$w['slug'];if(isset($slugs[$key])||($w['legacy']&&$legacy))throw new \RuntimeException('Duplicate workspace');$slugs[$key]=true;$legacy=$legacy||$w['legacy'];
             if(!is_array($w['roles']??[]))throw new \RuntimeException('Invalid workspace roles');
             $o=$db['organizations'][$w['organization']];foreach($w['roles']??[] as $uid=>$role){$r=Permissions::organization($o,$uid);if(!in_array($r,Permissions::MEMBER_ROLES,true)||!in_array($role,['none','viewer','editor','admin'],true)||Permissions::workspace($o,$w,$uid)!==$role)throw new \RuntimeException('Invalid workspace assignment');}
+            if(!in_array($w['visibility']??null,Visibility::WORKSPACE,true))throw new \RuntimeException('Invalid workspace visibility');
             if($w['legacy']&&$w['archived'])throw new \RuntimeException('Legacy workspace cannot be archived');
         }
     }
@@ -32,7 +33,7 @@ final class Workspaces
         if($legacy&&($o['owner']!==$uid||!($db['users'][$uid]['owner']??false)||self::legacy($db)))throw new OrganizationAccessException('Legacy documentation already assigned or installation owner required.');
         $db['workspaces']??=[];if(count($db['workspaces'])>=self::LIMIT)throw new \DomainException('Workspace quota exceeded.');
         $slug=Organizations::slug($slug);$name=Organizations::name($name);self::unique($db,$org,$slug);
-        $id=bin2hex(random_bytes(16));$w=['id'=>$id,'organization'=>$org,'name'=>$name,'slug'=>$slug,'legacy'=>$legacy,'archived'=>false,'revision'=>1,'created'=>time()];$db['workspaces'][$id]=$w;return $w;
+        $id=bin2hex(random_bytes(16));$w=['id'=>$id,'organization'=>$org,'name'=>$name,'slug'=>$slug,'legacy'=>$legacy,'visibility'=>$legacy?'public':'private','archived'=>false,'revision'=>1,'created'=>time()];$db['workspaces'][$id]=$w;return $w;
     }
     private static function unique(array $db,string $org,string $slug,string $except=''):void{foreach($db['workspaces']??[] as $id=>$w)if($id!==$except&&$w['organization']===$org&&$w['slug']===$slug)throw new \DomainException('Workspace slug already exists in organization.');}
     public static function mutate(array &$db,string $uid,string $id,int $rev,string $action,string $name,string $slug):void{
@@ -40,10 +41,17 @@ final class Workspaces
         if(!$o||!Permissions::allows(Permissions::workspace($o,$w,$uid),'manage')||$o['archived'])throw new OrganizationAccessException('Workspace management permission required.');
         if($w['revision']!==$rev)throw new \DomainException('Workspace changed. Reload.');
         if($action==='rename'&&!$w['archived']){$w['name']=Organizations::name($name);$slug=Organizations::slug($slug);self::unique($db,$w['organization'],$slug,$id);$w['slug']=$slug;}
+        elseif($action==='visibility'&&!$w['archived']){if(!in_array($name,Visibility::WORKSPACE,true))throw new \InvalidArgumentException('Invalid visibility');$w['visibility']=$name;}
         elseif($action==='archive'&&!$w['legacy']&&!$w['archived'])$w['archived']=true;
         elseif($action==='restore'&&$w['archived'])$w['archived']=false;
         else throw new \InvalidArgumentException('Invalid workspace operation.');
         $w['revision']++;$db['workspaces'][$id]=$w;
+    }
+    /** Public Reader only. Explicitly denied signed-in members retain the denial. */
+    public static function publicAccess(array $db,string $uid,string $org,string $id):?array{
+        $w=$db['workspaces'][$id]??null;$o=$db['organizations'][$org]??null;
+        if(!$w||!$o||$w['organization']!==$org||$w['legacy']||$w['archived']||$o['archived']||Visibility::workspace($w)!=='public'||isset($o['members'][$uid]))return null;
+        return array_diff_key($w,['roles'=>true])+['owner'=>false,'role'=>'none'];
     }
     /** Route identity never comes from cookies, request body, or a mutable slug. */
     public static function access(array $db,string $uid,string $org,string $id):?array{

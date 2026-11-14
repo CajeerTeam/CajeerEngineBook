@@ -169,12 +169,12 @@ final class MediaStore
         return Files::path($this->dir,'media/'.$id.'.thumb.png');
     }
     /** Generate a bounded preview once; thumbnails are derived and not included in backups. */
-    public function thumbnail(string $id): ?array
+    public function thumbnail(string $id,?callable $authorized=null): ?array
     {
         if(!self::validId($id)||!function_exists('imagecreatefromstring'))return null;
-        return $this->books->snapshot(function(array $db)use($id){
+        return $this->books->snapshot(function(array $db)use($id,$authorized){
             $item=$db['media'][$id]??null;
-            if(!$item||!str_starts_with($item['mime'],'image/'))return null;
+            if(!$item||($authorized&&!$authorized($db,$id))||!str_starts_with($item['mime'],'image/'))return null;
             $path=$this->thumbPath($id);
             if(!is_file($path)){
                 $source=$this->blob($id);
@@ -195,12 +195,12 @@ final class MediaStore
             return [fstat($stream)['size'],$stream];
         });
     }
-    public function open(string $id,bool $private): ?array
+    public function open(string $id,bool $private,?callable $authorized=null): ?array
     {
         if(!self::validId($id)) return null;
-        return $this->books->snapshot(function(array $db)use($id,$private){
+        return $this->books->snapshot(function(array $db)use($id,$private,$authorized){
             $item=$db['media'][$id]??null;
-            if(!$item || (!$private && !self::references($db,$id,true))) return null;
+            if(!$item || (!$private && !($authorized?$authorized($db,$id):self::references($db,$id,true)))) return null;
             $path=$this->blob($id);if(!is_file($path)) throw new \RuntimeException('Missing media blob');
             $stream=fopen($path,'rb');if(!$stream) throw new \RuntimeException('Cannot open media');
             if(fstat($stream)['size']!==$item['size']){fclose($stream);throw new \RuntimeException('Damaged media blob');}

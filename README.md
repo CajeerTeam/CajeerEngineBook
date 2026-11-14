@@ -1,6 +1,45 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.2.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.2.5 — Private Documentation
+
+### Configure visibility
+
+- **Workspaces → Workspace visibility → Save visibility** (Owner/Admin): `private` requires a current organization member with effective workspace read access; `public` allows anonymous Reader access to published books that are not private. New scoped workspaces and existing scoped workspaces from 0.2.4 default to private. Archived workspaces/organizations are never readable.
+- **Studio → Books → Book visibility → Save visibility** (Owner/Admin): `inherit`, `private`, or `public`. An inherited book follows the workspace. A private book is readable only by authorized workspace members. Explicit public cannot override a private workspace. Existing books inherit by default. All versions, paths, and published snapshots of the book follow its current visibility; drafts remain Studio-only. Visibility changes are immediate, revision-checked, and do not publish drafts.
+- Existing root/legacy Reader remains public by default. Before adoption, Installation Owner can restrict individual legacy books. After adoption, the legacy workspace can also be made private via Workspaces; old `/docs/`, `/api/v1/`, `/search`, and `/media/` URLs follow the same policy. Login and account management remain reachable. Archiving the owning organization hides its legacy content as well.
+
+| Workspace | Book | Anonymous / nonmember | Member with read access |
+|---|---|---|---|
+| Public | Inherit/Public | Published only | Published only |
+| Public | Private | No | Published only |
+| Private | Any | No | Published only |
+| Archived | Any | No | No |
+
+The explicit workspace `none` assignment still denies a signed-in member. Public content, by definition, is accessible anonymously; denial is not a way to keep public material secret. Use private workspace/book visibility for confidential content. Book-level assignments independent of workspace membership are not included. Editor and Viewer cannot change visibility. Public Reader access never grants authoring, preview, export, or private media privileges.
+
+### Privacy enforcement
+
+Catalog, sidebar, version selector, previous/next links, Reader, API and search share a visibility-filtered published list. Redirects and internal link rewriting cannot disclose a hidden target. An anonymous request for a private workspace receives 401; a signed-in user without access gets 404. A hidden book/page inside a public workspace returns 404 without its title/body/redirect. Dynamic Reader/API/media responses use `Cache-Control: private, no-store`; Reader responses vary on Cookie, and protected/denied responses carry `X-Robots-Tag: noindex`. Configure reverse proxies/CDNs to respect these headers and never cache authenticated responses.
+
+Media originals, download and thumbnail routes check published AST media references in the same workspace and in a book accessible to that requester. A draft-only file requires Studio authorization; a Viewer cannot use Media Picker or `/studio/media/file/`. **A file referenced by any public published book is public**, even if also used in a private book; remove all public references or make those books private to revoke anonymous delivery. Studio labels files as Public reference, Restricted published reference or Studio only. Previously downloaded copies cannot be recalled. Review public Markdown before publication; the policy does not redact secrets intentionally written into public documents or their links.
+
+### Upgrade from 0.2.4
+
+Stop writes and back up the complete `BOOK_DATA_DIR` (identity, legacy content, every workspace and media). Overlay the changed files, rebuild/restart and check `/health/ready`. Identity automatically migrates schema 1/2/3 to 4, preserving users, sessions, organization roles, workspace restrictions and stable IDs. Workspace visibility defaults to private for nonlegacy and public for legacy. BookStore remains schema 1 with optional book visibility and visibility-revision fields. No new runtime dependencies. Existing Markdown, files, drafts and published URLs are not rewritten.
+
+Identity CLI backups now use schema 4 and preserve workspace visibility; restore supports schemas 1–4. Content TAR/JSON preserve book visibility. For recovery use a matched identity backup and all content backups from the same stopped installation; an older registry backup cannot recover newer privacy choices. **Do not downgrade code alone**: old readers can ignore book restrictions. Restore the full pre-upgrade snapshot for rollback. Keep backups private.
+
+### Privacy tests
+
+```sh
+php tests/privacy.php
+python3 tests/privacy-http.py
+python3 tests/workspaces-browser.py
+```
+
+The default HTTP test creates and publishes actual Markdown pages using CommonMark, uploads files, checks private Reader/Preview and tests redirect/media boundaries. `--storage-only` tests the same authorization and HTTP paths with genuine stored published snapshots, omitting parser-dependent rendering. The browser suite verifies real visibility forms and uses normal navigation in CI; `BOOK_TEST_BROWSER_TRANSPORT=1` is a form-transport fallback for loopback-restricted local environments. Full Composer and Docker Release Gate remain required before deployment.
 
 ## 0.2.4 — Roles & Permissions
 
@@ -18,7 +57,7 @@ Use **Organizations → Members → Change role** to assign roles. Owner can app
 | Manage Editor/Viewer organization membership, invitations | yes | yes | no | no |
 | Appoint Admin, transfer Owner, organization settings/lifecycle | yes | no | no | no |
 
-The table describes effective content roles for a workspace and organization roles for organization operations. Server-side deny-by-default Studio action policy runs under the identity lock, before any content lock; changes to membership or roles cannot interleave with authorized content writes. CSRF and optimistic revisions are retained. Viewer/Editor cannot bypass publication/export restrictions by direct POST, AJAX, or alternate legacy Studio routes. A `none` assignment excludes the workspace from the listing and denies scoped Reader/API/media as well as Studio. Already public legacy Reader URLs remain public; configurable visibility is planned for 0.2.5. Before legacy adoption only Installation Owner can use root Studio; after adoption it follows the effective role of the legacy workspace.
+The table describes effective content roles for a workspace and organization roles for organization operations. Server-side deny-by-default Studio action policy runs under the identity lock, before any content lock; changes to membership or roles cannot interleave with authorized content writes. CSRF and optimistic revisions are retained. Viewer/Editor cannot bypass publication/export restrictions by direct POST, AJAX, or alternate legacy Studio routes. A `none` assignment excludes the workspace from the listing and denies scoped Reader/API/media as well as Studio. As of 0.2.5, legacy Reader and scoped visibility follow the policies above. Before legacy adoption only Installation Owner can use root Studio; after adoption it follows the effective role of the legacy workspace.
 
 ### Upgrade from 0.2.3
 
@@ -91,7 +130,7 @@ php bin/identity.php restore /secure/identity.json
 php bin/workspaces.php restore WORKSPACE_ID /secure/workspace.tar
 ```
 
-Check `/health/ready` after startup; all registered stores must be present. Identity backup does not restore sessions or invitation tokens. RBAC and workspace assignments are implemented in 0.2.4; configurable visibility is planned for 0.2.5. Cross-workspace book moves and permanent workspace deletion are intentionally not exposed in 0.2.3; archive preserves data.
+Check `/health/ready` after startup; all registered stores must be present. Identity backup does not restore sessions or invitation tokens. RBAC and workspace assignments were implemented in 0.2.4; configurable visibility is implemented in 0.2.5. Cross-workspace book moves and permanent workspace deletion are intentionally not exposed in 0.2.3; archive preserves data.
 
 ### Workspace tests
 

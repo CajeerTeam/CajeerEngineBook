@@ -24,6 +24,8 @@
             "python3 tests/workspaces-http.py",
             "@php tests/permissions.php",
             "python3 tests/permissions-http.py",
+            "@php tests/privacy.php",
+            "python3 tests/privacy-http.py",
             "@php tests/smoke.php",
             "@php tests/markdown-policy.php",
             "@php tests/markdown.php",

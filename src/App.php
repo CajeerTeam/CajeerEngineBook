@@ -5,7 +5,7 @@ use CajeerEngine\Template\{CajeerTemplateEngine,TemplateSandbox};
 use CajeerEngine\Runtime\ServiceContainer;
 final class App {
     private BookStore $store; private MediaStore $media; private MediaController $mediaController; private CajeerTemplateEngine $view;
-    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private AuthController $auth; private IdentityStore $identityStore;
+    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore;
     public function __construct(private readonly string $root){
         $this->installationDir=$this->dataDir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
         $c=new ServiceContainer();$c->set('store',fn()=>new BookStore($this->dataDir));$this->store=$c->get('store');
@@ -18,7 +18,7 @@ final class App {
     private static function link(string $url,string $label,string $class=''):string{return '<a class="'.self::e($class).'" href="'.self::e(WorkspaceUrls::url($url)).'">'.self::e($label).'</a>';}
     private function page(string $title,string $body,array $pages=[],string $current='',string $toc='',string $query=''):void{
         $nav=PageTreeView::reader($pages,$current);
-        if($this->workspace)$body='<p class="eyebrow"><a href="/workspaces">Workspaces</a> / '.self::e($this->workspace['name']).' · '.self::e(ucfirst($this->workspace['role'])).'</p>'.$body;
+        if($this->workspace)$body='<p class="eyebrow"><a href="/workspaces">Workspaces</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
         echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio','Studio'):'']);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
@@ -31,21 +31,34 @@ final class App {
                 if(!preg_match('~\A/w/([a-f0-9]{32})/([a-f0-9]{32})(/.*)?\z~D',$path,$m)){http_response_code(404);return;}
                 $inner=$m[3]??'/';
                 if(!preg_match('~\A/(?:$|(?:studio|docs|media|api/v1|search)(?:/|$))~D',$inner)){http_response_code(404);return;}
+                $publicRead=in_array($method,['GET','HEAD'],true)&&$inner!=='/studio'&&!str_starts_with($inner,'/studio/');
                 $this->identityStore->withWorkspace($this->auth->token(),$m[1],$m[2],function($ctx,$w)use($inner,$method){
-                    header('Cache-Control: private, no-store');header('X-Robots-Tag: noindex, nofollow');
-                    if(!$ctx||!$w){http_response_code($ctx?404:401);if(($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor'||($_SERVER['HTTP_X_BOOK_MEDIA']??'')==='1'){$this->json(['error'=>'Workspace unavailable. Retain local edits and sign in or request access.']);return;}$this->page('Workspace unavailable','<h1>Workspace unavailable</h1><p><a href="/login">Sign in</a> or <a href="/workspaces">choose a workspace</a>.</p>');return;}
-                    $this->workspace=$w;$this->scopedIdentity=$ctx;$this->studioRole=$w['role'];
+                    header('Cache-Control: private, no-store');header('Vary: Cookie');if(!$w||$ctx||Visibility::workspace($w)==='private')header('X-Robots-Tag: noindex, nofollow');
+                    if(!$w){$this->unavailable($inner,$ctx,true);return;}
+                    $this->workspace=$w;$this->scopedIdentity=$ctx;$this->studioRole=$w['role'];$this->readerVisibility=Visibility::workspace($w);
                     WorkspaceUrls::set(Workspaces::prefix($w));
                     $this->dataDir=Workspaces::directory($this->installationDir,$w);
                     $this->store=new BookStore($this->dataDir,false);$this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
                     try{$this->dispatch($inner,$method);}finally{WorkspaceUrls::set('');}
-                });return;
+                },$publicRead);return;
             }
             if($path==='/studio'||str_starts_with($path,'/studio/')){
-                $this->identityStore->withLegacyStudio($this->auth->token(),function($ctx,$allowed,$role)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->dispatch($path,$method);});return;
+                $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';$this->dispatch($path,$method);});return;
             }
-            $this->dispatch($path,$method);
+            // Account, control-plane and health routes must remain reachable even when legacy content is private.
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/workspaces','/organizations','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
+            $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
+                $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';
+                header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
+                if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
+            });
         }catch(\Throwable $e){error_log((string)$e);http_response_code(503);echo 'Service unavailable';}
+    }
+    private function unavailable(string $path,?array $ctx,bool $scoped=false):void{
+        http_response_code($ctx?404:401);header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');
+        if(str_starts_with($path,'/api/')||($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor'||($_SERVER['HTTP_X_BOOK_MEDIA']??'')==='1'){$this->json(['error'=>'Documentation unavailable. Sign in or request access.']);return;}
+        if(str_starts_with($path,'/media/')){echo 'Media not found';return;}
+        $label=$scoped?'Workspace unavailable':'Documentation unavailable';$this->page($label,'<h1>'.$label.'</h1><p><a href="/login">Sign in</a> or <a href="/workspaces">choose a workspace</a>.</p>');
     }
     private function dispatch(string $path,string $method):void{
         try{
@@ -56,26 +69,26 @@ final class App {
             if($path==='/organizations'||str_starts_with($path,'/organizations/')){(new OrganizationController($this->identityStore,$this->auth))->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/studio'||str_starts_with($path,'/studio/')){$this->studio($path,$method);return;}
             if($method==='POST'){http_response_code(405);header('Allow: GET, HEAD');return;}
-            if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method);return;}
+            if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method,fn($db,$id)=>Visibility::media($db,$id,$this->readerVisibility,$this->studioRole));return;}
             if($path==='/health/live'){$this->json(['status'=>'ok']);return;}
             if($path==='/health/ready'){
                 try { $this->store->checkReady(); $this->identityStore->checkReady(); $this->identityStore->checkWorkspaceStores($this->installationDir); ReleaseHealth::check($this->root); $this->json(['status'=>'ok']); }
                 catch(\Throwable $e){error_log('Readiness: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);}
                 return;
             }
-            $db=$this->store->read();$pages=BookStore::published($db);
+            $db=$this->store->read();$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
             if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true]),$pages));return;}
-            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if($target=PageTree::redirect($db,$key)){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true]));return;}
+            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true]));return;}
             if($path==='/search'||$path==='/api/v1/search'){$q=is_string($_GET['q']??null)?trim(substr($_GET['q'],0,200)):'';$hits=[];foreach($pages as $key=>$p){if($q!==''&&preg_match('/'.preg_quote($q,'/').'/iu',$p['title'].' '.$p['body']))$hits[]=['key'=>$key,'title'=>$p['title'],'url'=>self::url($key)];if(count($hits)>=50)break;}if($path==='/api/v1/search'){$this->json($hits);return;}$html='<div class="eyebrow">SEARCH</div><h1>Search documentation</h1><p>'.count($hits).' results</p>';foreach($hits as $hit)$html.='<div class="result">'.self::link($hit['url'],$hit['title']).'</div>';$this->page('Search',$html,$pages,'','',$q);return;}
             if($path==='/'){$books=BookStore::books($db);$html='<div class="eyebrow">CAJEERENGINE BOOK / DOCUMENTATION</div><h1>Documentation, on your terms.</h1><p class="lead">A self-hosted knowledge base for your products, APIs and teams.</p><div class="cards">';$seen=[];foreach($pages as $key=>$p){[$b,$v]=explode('/',$key);if(isset($seen["$b/$v"]))continue;$seen["$b/$v"]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),'Read documentation →').'</div>';}$this->page('Documentation',$html.'</div>',$pages);return;}
-            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,PageTree::linkMap($db));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1><article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if($target=PageTree::redirect($db,$key)){$this->redirect('/docs/'.$target);return;}}
-            http_response_code(404);$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);
+            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,Visibility::links($db,$pages));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1><article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
+            http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);
         }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){error_log((string)$e);http_response_code(503);echo 'Service unavailable';}
     }
     private function redirect(string $path): void {
         $q=$_SERVER['QUERY_STRING']??'';
         if(is_string($q)&&$q!==''&&!preg_match('/[\x00-\x20\x7f]/',$q))$path.='?'.$q;
-        header('Cache-Control: no-store');header('Location: '.WorkspaceUrls::url($path),true,308);
+        header('Cache-Control: private, no-store');header('Location: '.WorkspaceUrls::url($path),true,308);
     }
     private function studio(string $path,string $method):void{
         header('Cache-Control: no-store');header('X-Robots-Tag: noindex');
@@ -87,7 +100,10 @@ final class App {
             if(empty($_POST) && ini_parse_quantity((string)ini_get('post_max_size'))>0 && (int)($_SERVER['CONTENT_LENGTH']??0)>ini_parse_quantity((string)ini_get('post_max_size'))){http_response_code(413);echo 'Request exceeds server upload limit';return;}
             if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);echo 'Invalid CSRF token';return;}
             if($path==='/studio/media'){$this->mediaController->post($csrf);return;}
-            if($path==='/studio/books'){try{if(($_POST['action']??'')!=='create')throw new \InvalidArgumentException('Unknown book action');$this->store->createBook(is_string($_POST['slug']??null)?$_POST['slug']:'',is_string($_POST['title']??null)?$_POST['title']:'');header('Location: '.WorkspaceUrls::url('/studio/books'),true,303);}catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$this->page('Books',$this->booksMarkup($csrf,$e->getMessage()));}return;}
+            if($path==='/studio/books'){try{$action=$_POST['action']??'';$slug=is_string($_POST['slug']??null)?$_POST['slug']:'';
+                if($action==='create')$this->store->createBook($slug,is_string($_POST['title']??null)?$_POST['title']:'');
+                elseif($action==='visibility'){$rev=filter_var($_POST['revision']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);if($rev===false)throw new \InvalidArgumentException('Invalid revision');$this->store->setBookVisibility($slug,is_string($_POST['visibility']??null)?$_POST['visibility']:'',$rev);}
+                else throw new \InvalidArgumentException('Unknown book action');header('Location: '.WorkspaceUrls::url('/studio/books'),true,303);}catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$this->page('Books',$this->booksMarkup($csrf,$e->getMessage()));}return;}
             $action=$_POST['action']??'';$str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';
             if($path==='/studio/tree'){
                 try{
@@ -124,7 +140,7 @@ final class App {
         }
         if($path==='/studio/books'){$this->page('Books',$this->booksMarkup($csrf));return;}
         if($path==='/studio/media/picker'){$this->mediaController->picker();return;}
-        if($path==='/studio/media'){$this->page('Media library',$this->mediaController->markup($csrf,$admin));return;}
+        if($path==='/studio/media'){$this->page('Media library',$this->mediaController->markup($csrf,$admin,$this->readerVisibility));return;}
         if(str_starts_with($path,'/studio/media/file/')){$this->mediaController->serve(substr($path,19),true,$method);return;}
         if($path==='/studio/media/backup'){(new MediaBackup($this->dataDir,$this->store,$this->media))->download($method);return;}
         $db=$this->store->read();if($path==='/studio/tree'){$scope=is_string($_GET['scope']??null)?$_GET['scope']:'';$notice=match($_GET['notice']??''){'published'=>'Tree published. Draft content unchanged.','saved'=>'Draft tree saved.',default=>''};$this->page('Page tree',PageTreeView::studio($db,$csrf,$scope,$notice,$admin),BookStore::published($db));return;}if($path==='/studio/export'){header('Content-Disposition: attachment; filename="cajeerbook-backup.json"');$this->json($db);return;}if($path!=='/studio'){http_response_code(404);return;}
@@ -139,7 +155,13 @@ final class App {
     }
     private function booksMarkup(string $csrf,string $error=''):string{
         $db=$this->store->read();$h='<h1>Books</h1><p><a href="'.WorkspaceUrls::url('/studio').'">Studio</a> · <a href="/workspaces">Workspaces</a></p>'.($error!==''?'<p role="alert">'.self::e($error).'</p>':'');
-        foreach(BookStore::books($db) as $b){$count=0;foreach($db['pages'] as $key=>$entry)if(str_starts_with($key,$b['slug'].'/'))$count++;$h.='<section class="org-card"><h2>'.self::e($b['title']).'</h2><p>'.self::e($b['slug']).' · '.$count.' pages</p><a href="'.WorkspaceUrls::url('/studio?book=').rawurlencode($b['slug']).'">Create page</a></section>';}
+        foreach(BookStore::books($db) as $b){
+            $count=0;foreach($db['pages'] as $key=>$entry)if(str_starts_with($key,$b['slug'].'/'))$count++;
+            $h.='<section class="org-card"><h2>'.self::e($b['title']).'</h2><p>'.self::e($b['slug']).' · '.$count.' pages · '.(Visibility::publicBook($b,$this->readerVisibility)?'Public':'Private').'</p><a href="'.WorkspaceUrls::url('/studio?book=').rawurlencode($b['slug']).'">Create page</a>';
+            if(Permissions::allows($this->studioRole,'manage')){$options='';foreach(Visibility::BOOK as $v)$options.='<option value="'.$v.'"'.(Visibility::book($b)===$v?' selected':'').'>'.ucfirst($v).'</option>';
+                $h.='<form class="editor" method="post" action="'.WorkspaceUrls::url('/studio/books').'"><input type="hidden" name="csrf" value="'.self::e($csrf).'"><input type="hidden" name="action" value="visibility"><input type="hidden" name="slug" value="'.self::e($b['slug']).'"><input type="hidden" name="revision" value="'.($b['visibility_revision']??1).'"><label>Book visibility<select name="visibility">'.$options.'</select></label><p>Private workspace always takes precedence. Public books expose published pages and referenced media to anyone.</p><button data-confirm="Change book visibility?">Save visibility</button></form>';}
+            $h.='</section>';
+        }
         return $h.'<h2>Create book</h2><form class="editor" method="post" action="'.WorkspaceUrls::url('/studio/books').'"><input type="hidden" name="csrf" value="'.self::e($csrf).'"><input type="hidden" name="action" value="create"><label>Book slug<input required name="slug" maxlength="64"></label><label>Title<input required name="title" maxlength="200"></label><button class="primary">Create book</button></form>';
     }
 

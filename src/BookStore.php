@@ -144,12 +144,17 @@ final class BookStore {
     public static function books(array $db):array{
         $books=$db['books']??[];if(!is_array($books)||count($books)>1000)throw new \RuntimeException('Invalid book registry');$ids=[];
         foreach($books as $slug=>$b){if(!self::slug((string)$slug)||!is_array($b)||($b['slug']??null)!==(string)$slug||!is_string($b['id']??null)||!preg_match('/\A[a-f0-9]{32}\z/D',$b['id'])||isset($ids[$b['id']])||!is_string($b['title']??null)||trim($b['title'])===''||strlen($b['title'])>200||!preg_match('//u',$b['title']))throw new \RuntimeException('Invalid book record');$ids[$b['id']]=true;}
+        foreach($books as $b)if(!in_array(array_key_exists('visibility',$b)?$b['visibility']:'inherit',['inherit','public','private'],true)||!is_int(array_key_exists('visibility_revision',$b)?$b['visibility_revision']:1)||($b['visibility_revision']??1)<1)throw new \RuntimeException('Invalid book visibility');
         foreach($db['pages'] as $key=>$entry){$slug=explode('/',$key,2)[0];if(!isset($books[$slug]))$books[$slug]=['slug'=>$slug,'id'=>substr(hash('sha256','legacy-book:'.$slug),0,32),'title'=>$slug];}
         if(count($books)>1000)throw new \RuntimeException('Book quota exceeded');ksort($books,SORT_STRING);return $books;
     }
     public function createBook(string $slug,string $title):void{
         $title=trim($title);if(!self::slug($slug)||$title===''||strlen($title)>200||!preg_match('//u',$title)||preg_match('/[\x00-\x1f\x7f]/',$title))throw new \InvalidArgumentException('Invalid book fields');
         $this->change(function(&$db)use($slug,$title){$books=self::books($db);if(isset($books[$slug]))throw new \DomainException('Book already exists');if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$slug]=['slug'=>$slug,'id'=>bin2hex(random_bytes(16)),'title'=>$title];$db['books']=$books;});
+    }
+    public function setBookVisibility(string $slug,string $visibility,int $revision):void{
+        if(!in_array($visibility,['inherit','public','private'],true)||$revision<1)throw new \InvalidArgumentException('Invalid book visibility');
+        $this->change(function(&$db)use($slug,$visibility,$revision){$books=self::books($db);$b=$books[$slug]??null;if(!$b)throw new \InvalidArgumentException('Unknown book');if(($b['visibility_revision']??1)!==$revision)throw new \DomainException('Book visibility changed. Reload.');$b['visibility']=$visibility;$b['visibility_revision']=$revision+1;$books[$slug]=$b;$db['books']=$books;});
     }
     public static function published(array $db): array {
         $pages=[]; foreach($db['pages'] as $key=>$entry)if($entry['published']!==null)$pages[PageTree::publicKey($key,$entry)]=$entry['published']+['id'=>PageTree::id($key,$entry)];

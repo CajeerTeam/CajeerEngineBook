@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5 — Private Documentation
+
+- Add workspace Public/Private visibility and book Inherit/Public/Private controls for Owner/Admin, with private-workspace ceiling and optimistic revisions. Existing scoped spaces stay private; legacy stays public by default. Identity schema 4 preserves visibility in backups and migrates older schemas under the existing lock.
+- Apply one published-content visibility projection to catalogs, navigation, Reader, search, API, and redirects (including legacy paths and archived organizations). Public Reader access never grants Studio privileges. Restrict media originals, downloads and thumbnails to references in accessible published snapshots; keep draft-only media protected by Studio RBAC.
+- Add private/no-store and cookie-varying Reader responses, noindex for protected/denied responses, visibility labels and confirmation controls. Preserve canonical Markdown and existing content stores. Add PHP, real multi-user HTTP and Chromium privacy regressions; no new runtime dependencies.
+
 ## 0.2.4 — Roles & Permissions
 
 - Implement Owner/Admin/Editor/Viewer with an organization role ceiling and explicit workspace restrictions, including deny and inherited access. Existing Member accounts become Viewer; new invitations default to Viewer.

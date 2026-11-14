@@ -49,7 +49,7 @@ final class Permissions
             '/studio'=>match($action){'save','copy'=>'edit','publish','unpublish'=>'publish','delete'=>'delete',default=>''},
             '/studio/tree'=>match($action){'move','duplicate'=>'edit','publish'=>'publish',default=>''},
             '/studio/media'=>match($action){'upload','update'=>'edit','delete'=>'delete',default=>''},
-            '/studio/books'=>$action==='create'?'edit':'',
+            '/studio/books'=>match($action){'create'=>'edit','visibility'=>'manage',default=>''},
             '/studio/editor/render'=>'edit',default=>'',
         };
         return self::allows($role,$permission);
