@@ -300,6 +300,7 @@
     function serializeSegment(segment) {
         if (segment.deleted) return '';
         if (!segment.changed) return segment.source;
+        if (['callout','cards'].includes(segment.kind)) return richMarkdown(segment) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
         if (['image','attachment'].includes(segment.kind)) return mediaMarkdown(segment.media) + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || '');
         if (segment.kind === 'table') { const text = tableMarkdown(segment); return segment.source && text === segment.initialTable ? segment.source : text + (segment.source.match(/(?:\r\n|\r|\n)+$/)?.[0] || ''); }
         if (segment.source && (segment.kind === 'code' ? segment.code.value === segment.initialCode && segment.language.value === segment.initialLanguage : segment.content.innerHTML === segment.initialHtml)) return segment.source;
@@ -310,8 +311,9 @@
     function syncVisual() {
         if (mode !== 'visual') return true;
         try {
-            let result = '', previousChanged = false;
+            let result = '', previousChanged = false, richCost = 0;
             for (const segment of segments) {
+                if (!segment.deleted && ['callout','cards'].includes(segment.kind)) { richCost += segment.kind==='callout'?1:segment.component.cards.length; if (richCost>96) throw new Error('A page supports at most 96 callout/card bodies. Remove a component.'); }
                 const text = serializeSegment(segment), changed = text !== segment.source;
                 if (!text.trim()) { result += text; previousChanged ||= changed; continue; }
                 if (result.trim() && (changed || previousChanged) && !/\n[ \t]*\n[ \t]*$/.test(result)) result += /\n[ \t]*$/.test(result) ? '\n' : '\n\n';
@@ -349,6 +351,7 @@
     }
     function changeSegment(segment) {
         segment.changed = true;
+        if (segment.richPreview) segment.richPreview.hidden=true;
         if (segment.kind === 'table') recordTableHistory(segment);
         if (syncVisual()) updateDirty();
         else { dirty = true; clearTimeout(timer); announce('Unsaved visual changes'); }
@@ -514,17 +517,152 @@
             }
         },initialFile);
     }
+    // Components keep their structured fields and nested Markdown separate from the
+    // document's contenteditable DOM. Only the changed component is serialized.
+    const richTypes = ['note','info','tip','warning','danger','success'];
+    const richIcons = ['','book','code','link','download','rocket','check','info'];
+    const newCard = () => ({title:'New card',body:'',href:'',icon:'',image:'',alt:''});
+    function richMarkdown(segment) {
+        for (const sync of segment.bodySync.values()) sync();
+        const d=segment.component;
+        const text=(s,max,multi=false)=>typeof s==='string' && encoder.encode(s).length<=max && !(multi?/\x00|[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/:/[\x00-\x1f\x7f]/).test(s);
+        const url=(s,image)=>!s || (text(s,2048) && safeUrl(s) && !s.startsWith('/studio/') && !/^mailto:$/i.test(s) && (!image || !/^(mailto:|#|\?)/i.test(s)));
+        if (segment.kind==='callout') {
+            if (!richTypes.includes(d.type) || !text(d.title,512) || !text(d.body,65536,true)) throw new Error('Invalid callout type, title or body (64 KiB maximum).');
+        } else {
+            if (![1,2,3,4].includes(d.columns) || d.cards.length<1 || d.cards.length>12) throw new Error('Choose 1–12 cards and 1–4 columns.');
+            for (const c of d.cards) if (!text(c.title,512) || !c.title.trim() || !text(c.body,65536,true) || !url(c.href,false) || !url(c.image,true) || !text(c.alt,512) || !richIcons.includes(c.icon)) throw new Error('Invalid card: enter a title, safe link/image URLs and valid text.');
+        }
+        // JSON escapes line breaks in Markdown bodies. A longer fence still guards
+        // literal backtick runs in values and is accepted by CommonMark.
+        return fenceCode(JSON.stringify(d,null,2),segment.kind==='callout'?'book-callout':'book-cards');
+    }
+    function richButton(label,fn) { const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',fn);return b; }
+    function richField(parent,name,object,key,segment,choices=null,onChange=null) {
+        const label=document.createElement('label');label.textContent=name;
+        const input=document.createElement(choices?'select':'input');input.setAttribute('aria-label',name);
+        if (choices) for (const item of choices) input.add(new Option(item===''?'None':String(item),String(item)));
+        else {input.type='text';input.maxLength=['href','image'].includes(key)?2048:512;}
+        input.value=String(object[key]);label.append(input);parent.append(label);
+        input.addEventListener('focus',()=>setActive(segment));
+        input.addEventListener(choices?'change':'input',()=>{object[key]=key==='columns'?Number(input.value):input.value;onChange?.();changeSegment(segment);});
+        return input;
+    }
+    function mountRichBody(segment,object,parent,initial,name) {
+        const box=document.createElement('div');box.className='editor-rich-body';
+        const label=document.createElement('div');label.className='editor-rich-body-label';label.textContent=name;
+        const controls=document.createElement('div');controls.className='editor-rich-actions';
+        const area=document.createElement('textarea');area.rows=5;area.setAttribute('aria-label',name+' Markdown');area.value=object.body;
+        const visual=document.createElement('article');visual.className='editor-block-content editor-rich-text';visual.contentEditable='true';visual.setAttribute('role','textbox');visual.setAttribute('aria-label',name+' visual');visual.setAttribute('aria-multiline','true');visual.hidden=true;
+        const formatting=document.createElement('div');formatting.className='editor-rich-actions';formatting.hidden=true;
+        let editing=false,modified=false,ticket=0,range=null;
+        function sync() { if (editing && modified) object.body=serializeChildren(visual); }
+        segment.bodySync.set(object,sync);
+        function enter(parts) {
+            // Rich mode is lossless when untouched. Complex bodies (tables, code,
+            // definitions, images, directives) keep full Markdown editing instead.
+            if (!Array.isArray(parts) || parts.map(p=>p.source).join('')!==object.body || parts.some(p=>p.kind!=='rich' && !(p.kind==='gap' && !p.source.trim()))) return false;
+            visual.replaceChildren();
+            for (const p of parts) if (p.kind==='rich') { const t=document.createElement('template');t.innerHTML=p.html;visual.append(t.content); }
+            visual.querySelectorAll('.heading-anchor').forEach(el=>el.remove());
+            visual.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+            visual.querySelectorAll('a[data-book-source-href]').forEach(el=>{el.setAttribute('href',el.dataset.bookSourceHref);el.removeAttribute('data-book-source-href');});
+            visual.querySelectorAll('input[type=checkbox]').forEach(el=>{el.disabled=false;el.contentEditable='false';});
+            if (!visual.hasChildNodes()) {const p=document.createElement('p');p.append(document.createElement('br'));visual.append(p);}
+            modified=false;editing=true;range=null;area.hidden=true;visual.hidden=false;formatting.hidden=false;return true;
+        }
+        function leave() { sync();area.value=object.body;editing=false;modified=false;range=null;visual.hidden=true;formatting.hidden=true;area.hidden=false; }
+        const sourceButton=richButton('Markdown',()=>{++ticket;try{leave();area.focus();}catch(e){fail(e.message);}});
+        const visualButton=richButton('Visual text',async()=>{
+            if (editing) {visual.focus();return;}
+            const current=area.value, mine=++ticket;visualButton.disabled=true;
+            try { const params=parameters(current);params.set('mode','visual');const result=await request('/studio/editor/render',params);
+                if (!box.isConnected || segment.deleted || mine!==ticket || area.value!==current || mode!=='visual') return;
+                if (!enter(result.blocks)) {fail('This body contains complex Markdown. Edit it in Markdown mode; the full Preview supports all blocks.');return;}
+                visual.focus();
+            } catch(e){fail(e.message);} finally{visualButton.disabled=false;}
+        });
+        controls.append(visualButton,sourceButton);
+        function changed(){modified=true;changeSegment(segment);}
+        function capture(){const s=getSelection();if(s?.rangeCount && visual.contains(s.getRangeAt(0).commonAncestorContainer))range=s.getRangeAt(0).cloneRange();}
+        for (const [command,title] of [['bold','Bold'],['italic','Italic'],['strikeThrough','Strike'],['insertUnorderedList','Bullets'],['insertOrderedList','Numbered'],['inlineCode','Code'],['link','Link'],['undo','Undo'],['redo','Redo']]) {
+            const b=richButton(title,()=>{
+                if (!editing)return;visual.focus();if(range && visual.contains(range.commonAncestorContainer)){const s=getSelection();s.removeAllRanges();s.addRange(range);}
+                try {
+                    if(command==='link'){const u=prompt('Link URL','https://');if(u===null)return;if(!u||!safeUrl(u))throw new Error('Invalid link URL.');document.execCommand('createLink',false,u);}
+                    else if(command==='inlineCode'){const t=getSelection().toString();if(!t)return;const c=document.createElement('code');c.textContent=t;document.execCommand('insertHTML',false,c.outerHTML);}
+                    else {document.execCommand('styleWithCSS',false,false);document.execCommand(command);}
+                    capture();changed();
+                }catch(e){fail(e.message);}
+            });b.addEventListener('pointerdown',e=>{capture();e.preventDefault();});formatting.append(b);
+        }
+        area.addEventListener('focus',()=>setActive(segment));visual.addEventListener('focus',()=>setActive(segment));
+        area.addEventListener('input',()=>{object.body=area.value;++ticket;changeSegment(segment);});
+        visual.addEventListener('input',changed);visual.addEventListener('keyup',capture);visual.addEventListener('mouseup',capture);
+        visual.addEventListener('change',e=>{if(e.target.matches('input[type=checkbox]')){e.target.toggleAttribute('checked',e.target.checked);changed();}});
+        visual.addEventListener('paste',e=>{e.preventDefault();document.execCommand('insertText',false,e.clipboardData.getData('text/plain'));});
+        visual.addEventListener('drop',e=>e.preventDefault());visual.addEventListener('click',e=>{if(e.target.closest('a'))e.preventDefault();});
+        box.append(label,controls,formatting,area,visual);parent.append(box);
+        if (initial) enter(initial);else if (!object.body) enter([]);
+    }
+    function mountRichComponent(segment,wrapper) {
+        const d=segment.component;segment.bodySync=new Map();
+        const controls=document.createElement('div');controls.className='editor-rich-controls';
+        const preview=document.createElement('article');preview.className='editor-rich-preview';preview.hidden=true;segment.richPreview=preview;
+        let previewTicket=0;
+        const previewButton=richButton('Refresh component preview',async()=>{
+            const ticket=++previewTicket;previewButton.disabled=true;
+            try { const md=richMarkdown(segment),params=parameters(md);params.set('mode','preview');const r=await request('/studio/editor/render',params);
+                if(ticket!==previewTicket || segment.deleted || !wrapper.isConnected || mode!=='visual')return;
+                if(md!==richMarkdown(segment)){fail('Component changed during rendering. Refresh the preview again.');return;}
+                showPreview(r.html);
+            }catch(e){fail(e.message);}finally{previewButton.disabled=false;}
+        });
+        function showPreview(html) {
+            preview.innerHTML=html;preview.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+            preview.hidden=false;window.BookCode?.enhance(preview);window.BookImages?.enhance(preview);
+        }
+        preview.addEventListener('click',e=>{if(e.target.closest('a'))e.preventDefault();});
+        if(segment.html) showPreview(segment.html);
+        wrapper.append(controls);
+        if(segment.kind==='callout') {
+            richField(controls,'Callout type',d,'type',segment,richTypes);
+            richField(controls,'Callout title',d,'title',segment);
+            mountRichBody(segment,d,controls,segment.bodyEditors?.[0],'Callout body');
+        } else {
+            richField(controls,'Card columns',d,'columns',segment,[1,2,3,4]);
+            const list=document.createElement('div');list.className='editor-card-list';controls.append(list);
+            const nodes=new Map();
+            const add=richButton('Add card',()=>{if(d.cards.length>=12)return;const c=newCard();d.cards.push(c);mountCard(c,null);refresh();changeSegment(segment);});
+            function refresh(){for(const c of d.cards)list.append(nodes.get(c).node);d.cards.forEach((c,i)=>{const n=nodes.get(c);n.title.textContent='Card '+(i+1);n.up.disabled=i===0;n.down.disabled=i===d.cards.length-1;n.remove.disabled=d.cards.length===1;});add.disabled=d.cards.length>=12;}
+            function mountCard(c,initial){
+                const node=document.createElement('section');node.className='editor-card-fields';const header=document.createElement('div');header.className='editor-rich-actions';
+                const title=document.createElement('strong');header.append(title);
+                const move=delta=>{const i=d.cards.indexOf(c),j=i+delta;if(j<0||j>=d.cards.length)return;[d.cards[i],d.cards[j]]=[d.cards[j],d.cards[i]];refresh();changeSegment(segment);};
+                const up=richButton('Card ↑',()=>move(-1)),down=richButton('Card ↓',()=>move(1));
+                const remove=richButton('Remove card',()=>{if(d.cards.length===1 || !confirm('Remove this card?'))return;d.cards.splice(d.cards.indexOf(c),1);segment.bodySync.delete(c);nodes.delete(c);node.remove();refresh();changeSegment(segment);});
+                header.append(up,down,remove);node.append(header);
+                richField(node,'Card title',c,'title',segment);richField(node,'Card link',c,'href',segment);richField(node,'Card icon',c,'icon',segment,richIcons);
+                const image=richField(node,'Card image URL',c,'image',segment),alt=richField(node,'Card image alt',c,'alt',segment);
+                node.append(richButton('Choose card image',()=>window.BookMedia.pick('image',value('csrf'),item=>{if(segment.deleted || !node.isConnected || mode!=='visual')return;c.image='/media/'+item.id;if(!c.alt)c.alt=item.name;image.value=c.image;alt.value=c.alt;changeSegment(segment);}))); 
+                mountRichBody(segment,c,node,initial,'Card body');nodes.set(c,{node,title,up,down,remove});list.append(node);
+            }
+            d.cards.forEach((c,i)=>mountCard(c,segment.bodyEditors?.[i]));controls.append(add);refresh();
+        }
+        controls.append(previewButton);wrapper.append(preview);
+    }
     function renderSegment(segment) {
         if (segment.kind === 'gap' && !segment.source.trim()) return;
         const wrapper = document.createElement('div'); wrapper.className = 'editor-block'; segment.element = wrapper;
         const bar = document.createElement('div'); bar.className = 'editor-block-bar';
-        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : 'Text block'; bar.append(label);
-        if (['rich', 'code', 'table', 'image', 'attachment'].includes(segment.kind)) {
+        const label = document.createElement('span'); label.textContent = segment.kind === 'protected' || segment.kind === 'gap' ? 'Protected Markdown — edit in Markdown mode' : segment.kind === 'code' ? 'Code block' : segment.kind === 'table' ? 'Table' : segment.kind === 'image' ? 'Image' : segment.kind === 'attachment' ? 'Attachment' : segment.kind === 'callout' ? 'Callout' : segment.kind === 'cards' ? 'Cards' : 'Text block'; bar.append(label);
+        if (['rich', 'code', 'table', 'image', 'attachment', 'callout', 'cards'].includes(segment.kind)) {
             const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove block';
             remove.addEventListener('click', () => { if (!window.confirm('Remove this block from the draft?')) return; segment.deleted = true; wrapper.remove(); if (active === segment) setActive(null); if (syncVisual()) updateDirty(); }); bar.append(remove);
         }
         wrapper.append(bar);
-        if (['image','attachment'].includes(segment.kind)) { mountMedia(segment, wrapper); }
+        if (['callout','cards'].includes(segment.kind)) { mountRichComponent(segment, wrapper); }
+        else if (['image','attachment'].includes(segment.kind)) { mountMedia(segment, wrapper); }
         else if (segment.kind === 'code') {
             const temp = document.createElement('template'); temp.innerHTML = segment.html;
             const code = temp.content.querySelector('pre>code');
@@ -560,7 +698,7 @@
         blocks.append(wrapper);
     }
     function installBlocks(data, original) {
-        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table','image','attachment'].includes(s.kind) || (['image','attachment'].includes(s.kind) && (!s.media || s.media.kind !== s.kind)) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
+        if (!Array.isArray(data) || data.some(s => !['rich','code','gap','protected','table','image','attachment','callout','cards'].includes(s.kind) || (['image','attachment'].includes(s.kind) && (!s.media || s.media.kind !== s.kind)) || (['callout','cards'].includes(s.kind) && (!s.component || !Array.isArray(s.bodyEditors))) || typeof s.source !== 'string' || typeof s.html !== 'string') || data.map(s => s.source).join('') !== original) throw new Error('Visual conversion did not preserve the Markdown source. Continue in Markdown mode.');
         segments = data.map(s => ({...s, changed: false, deleted: false})); blocks.replaceChildren(); active = null; selection = null;
         segments.forEach(renderSegment);
         if (!original.trim()) { const initial = {source: '', html: '<p><br></p>', kind: 'rich', changed: false, deleted: false}; segments.push(initial); renderSegment(initial); }
@@ -591,6 +729,14 @@
     function addBlock() {
         const kind = $('[data-add-kind]').value;
         if (['image','attachment'].includes(kind)) { insertMedia(kind); return; }
+        if (['callout','cards'].includes(kind)) {
+            const component=kind==='callout'?{v:1,type:'note',title:'',body:''}:{v:1,columns:2,cards:[newCard()]};
+            const segment={kind,component,source:'',html:'',changed:true,deleted:false};
+            // Insert before active block, or at the beginning, so an unclosed fence cannot consume the component.
+            const at=active && !active.deleted?Math.max(0,segments.indexOf(active)):0;
+            const next=segments.slice(at).find(s=>!s.deleted && s.element);segments.splice(at,0,segment);renderSegment(segment);
+            if(next?.element)blocks.insertBefore(segment.element,next.element);setActive(segment);changeSegment(segment);segment.element.scrollIntoView({block:'nearest'});return;
+        }
         const segment = {source: '', html: '', kind: kind === 'code' ? 'code' : kind === 'table' ? 'table' : 'rich', changed: true, deleted: false};
         const templates = {table: '<div class="markdown-table"><table><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead><tbody><tr><td></td><td></td></tr></tbody></table></div>', task: '<ul><li><input type="checkbox">Task</li></ul>', p: '<p><br></p>', h2: '<h2><br></h2>', blockquote: '<blockquote><p><br></p></blockquote>', ul: '<ul><li><br></li></ul>', ol: '<ol><li><br></li></ol>', hr: '<hr>', code: '<pre><code></code></pre>'};
         segment.html = templates[kind]; segments.push(segment); renderSegment(segment);

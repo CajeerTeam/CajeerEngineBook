@@ -1,6 +1,6 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.1.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
 
 ## Features
 
@@ -12,6 +12,8 @@ Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.
 - Media library: drag-and-drop uploads, folders, search/filter, immutable files, SHA-256 deduplication, private previews, safe published access, thumbnails and full TAR backup/restore.
 - Images and attachments: insert or upload directly in Studio, edit alternative text, captions, image width/alignment, replace media, insert download blocks, and open images at full size in Reader/Preview.
 - Local file persistence with locking and atomic replacement, no SaaS, database, Node, CDN or external API required at runtime. Composer installs PHP dependencies at build/install time.
+
+- Rich documentation components: six callout types, responsive card grids with links, icons and media; structured Visual editing, nested Markdown and shared preview.
 
 ## Start locally
 
@@ -211,3 +213,35 @@ Architecture: `src/` Book logic, `core/` reused upstream components, `templates/
 ## Roadmap (not implemented in 0.1.6)
 
 Callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+
+
+## Callouts and cards (0.1.7)
+
+In Studio Visual mode, select **Callout** or **Cards** in Add block. Edit the type, title, body and card properties. A card group supports 1–12 cards, 1–4 responsive columns, reorder/remove operations, predefined icons, optional links and an optional image (choose/upload via the existing media picker). Each body supports Visual text for ordinary paragraphs, headings, lists, links and inline marks, or Markdown for the complete CommonMark/GFM syntax. Use Refresh component preview or the global Preview to see the real server output. Unchanged blocks retain their original source.
+
+The versioned Book extension uses reserved top-level CommonMark fenced blocks with inert JSON metadata and Markdown strings. No MDX, raw executable HTML, or CDN. Example (the `body` field is Markdown, with JSON newline escapes):
+
+~~~~markdown
+```book-callout
+{"v":1,"type":"warning","title":"Before updating","body":"**Back up your data.**\n\n- Stop writes\n- Copy the data directory"}
+```
+
+```book-cards
+{
+  "v": 1,
+  "columns": 2,
+  "cards": [
+    {"title":"Installation","body":"Read the **installation guide**.","href":"getting-started","icon":"book","image":"","alt":""},
+    {"title":"API","body":"Explore the REST API.","href":"/docs/handbook/1.0/api","icon":"code","image":"","alt":""}
+  ]
+}
+```
+~~~~
+
+Callout types: `note`, `info`, `tip`, `warning`, `danger`, `success`. Icons: empty, `book`, `code`, `link`, `download`, `rocket`, `check`, `info`. All properties are required in the version 1 JSON schema; empty optional strings are permitted. Card titles cannot be blank. Body size is limited to 64 KiB each, page size to 256 KiB, titles/alt to 512 UTF-8 bytes and URLs to 2048 bytes. A page expands up to 96 callout/card bodies; later components and malformed/unknown-version payloads display as ordinary protected code, not executable content. Ordinary fenced code is unchanged. Nested Markdown can contain tables, code, links, lists and images; nested Book component fences are intentionally rendered as ordinary code in this release. Reference definitions are local to each body; inner heading IDs are scoped to the component and excluded from the page TOC.
+
+Card links use the same relative URL and moved-page link map as the rest of the document. Canonical `/media/<id>` links/images in cards and nested Markdown participate in existing reference tracking; private draft previews use authenticated media URLs, published snapshots use public URLs. To download an attachment use its canonical media link. Card images accept HTTP(S) or relative URLs, but not data/javascript or Studio URLs.
+
+Upgrade from 0.1.6 by overlaying the changed files and restarting/rebuilding. No migration or new dependencies. Back up `BOOK_DATA_DIR` first. Old versions render these blocks as code; if rolling back after authoring components, keep a pre-upgrade backup because older media-reference logic does not recognize component references.
+
+Tests: `composer test` includes `tests/rich-blocks.php`; `python tests/rich-blocks-browser.py` runs full Studio/Reader E2E with Composer dependencies and Playwright Chromium. `php tests/rich-blocks.php --policy-only` exercises the standalone validation and HTML generation without Composer.

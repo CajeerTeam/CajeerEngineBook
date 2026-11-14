@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7 — Callouts & Cards
+
+- Add six callout variants and responsive card groups, with local images, links, icons and nested CommonMark/GFM bodies.
+- Edit component properties, simple visual text and complete Markdown in Studio; add, reorder and remove cards and preview through the shared renderer. Preserve untouched source and protect malformed or unsupported components.
+- Resolve card and nested body URLs using the existing Markdown policy, keep draft media private and include rich component references in publication/deletion checks. Bound component expansion and isolate nested heading anchors.
+- Add PHP policy/renderer/storage tests and browser E2E. No new runtime dependencies or storage migration.
+
 ## 0.1.6 — Page Tree & Drag-and-Drop
 
 - Add a nested Studio page tree with branch drag-and-drop, keyboard/touch form alternative, before/after/inside/root operations, slug renaming, child creation and draft-only branch duplication.

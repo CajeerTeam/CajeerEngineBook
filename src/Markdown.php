@@ -37,12 +37,13 @@ final class Markdown
     }
 
     /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
-    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = []): array
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = [], ?string $richPrefix = null): array
     {
         self::validate($md);
         $environment = self::environment();
         $document = (new MarkdownParser($environment))->parse($md);
-        $legacy = self::legacyAnchors($md);
+        $legacy = $richPrefix === null ? self::legacyAnchors($md) : [];
+        $richBudget = RichBlocks::MAX_BUDGET; $richIndex = 0; $fragmentLinks = [];
         $toc = [];
         $used = ['main' => true, 'theme' => true];
         $nextSuffix = [];
@@ -63,11 +64,11 @@ final class Markdown
                 while (isset($used[$id])) $id = $base.'-'.$n++;
                 $nextSuffix[$base] = $n;
                 $used[$id] = true;
-                $node->data->set('attributes.id', $id);
+                $node->data->set('attributes.id', ($richPrefix ?? '').$id);
                 if (isset($legacy[$node->getStartLine()])) {
                     $node->data->set('book_legacy_anchor', $legacy[$node->getStartLine()]);
                 }
-                $toc[] = ['id' => $id, 'title' => $title !== '' ? $title : 'Untitled section', 'level' => $node->getLevel()];
+                $toc[] = ['id' => ($richPrefix ?? '').$id, 'title' => $title !== '' ? $title : 'Untitled section', 'level' => $node->getLevel()];
             } elseif ($node instanceof Link || $node instanceof Image) {
                 $originalUrl = $node->getUrl();
                 $url = self::safeUrl($originalUrl, $node instanceof Image, $pageKey, $linkBase);
@@ -99,6 +100,7 @@ final class Markdown
                     }
                 }
                 $node->setUrl($url ?? '#');
+                if ($richPrefix !== null && $node instanceof Link && $url !== null && str_starts_with($url,'#')) $fragmentLinks[]=$node;
                 if ($url === null) $node->data->set('book_editor_unsafe', true);
                 if ($node instanceof Image && $url === null) {
                     $invalidImages[] = $node;
@@ -108,10 +110,37 @@ final class Markdown
                     $node->data->set('attributes.referrerpolicy', 'no-referrer');
                 }
             } elseif ($node instanceof FencedCode) {
+                $info = trim($node->getInfo() ?? '');
+                $component = $richPrefix === null && $node->parent() instanceof Document ? RichBlocks::parse($info,$node->getLiteral()) : null;
+                if ($component !== null && RichBlocks::cost($component) <= $richBudget) {
+                    $richBudget -= RichBlocks::cost($component); ++$richIndex;
+                    $bodyHtml=[]; $bodyEditors=[];
+                    foreach (RichBlocks::bodies($component) as $i=>$body) {
+                        $inner=self::render($body,$pageKey,$editor,$studio,$linkBase,$linkMap,'book:rich:'.$richIndex.':'.$i.':');
+                        $bodyHtml[]=$inner['html'];
+                        if ($editor) $bodyEditors[]=$inner['blocks'];
+                    }
+                    $resolve=static function(string $url,bool $image) use ($pageKey,$linkBase,$linkMap,$studio,$editor): ?string {
+                        $url=self::safeUrl($url,$image,$pageKey,$linkBase);
+                        if ($url!==null && !$image && $linkMap) $url=PageTree::rewriteLink($url,$linkMap);
+                        if ($url!==null && ($studio || $editor) && ($id=self::mediaId($url))!==null) $url='/studio/media/file/'.$id;
+                        return $url;
+                    };
+                    $node->data->set('book_rich_html',RichBlocks::html($component,$bodyHtml,$resolve));
+                    $node->data->set('book_rich_data',$component);
+                    if ($editor) $node->data->set('book_rich_editors',$bodyEditors);
+                }
                 $language = $node->getInfoWords()[0] ?? '';
                 if (preg_match('/\A[a-zA-Z0-9_+.-]{1,64}\z/D', $language)) {
                     $node->data->set('attributes.data-language', $language);
                 }
+            }
+        }
+        if ($richPrefix !== null) {
+            $anchors=array_fill_keys(array_column($toc,'id'),true);
+            foreach ($fragmentLinks as $link) {
+                $target=$richPrefix.rawurldecode(substr($link->getUrl(),1));
+                if (isset($anchors[$target])) $link->setUrl('#'.$target);
             }
         }
         // Do not detach nodes while a NodeWalker is traversing the tree.
@@ -142,6 +171,7 @@ final class Markdown
         $environment->addExtension(new GithubFlavoredMarkdownExtension());
         $environment->addRenderer(Heading::class, new MarkdownHeadingRenderer(), 100);
         $environment->addRenderer(Paragraph::class, new MediaParagraphRenderer(), 100);
+        $environment->addRenderer(FencedCode::class, new RichBlockRenderer(), 100);
         return $environment;
     }
 
@@ -151,16 +181,27 @@ final class Markdown
     }
 
     /** Only actual CommonMark links/images (including reference links), never code or prose. */
-    public static function mediaReferences(string $md,string $pageKey): array
+    public static function mediaReferences(string $md,string $pageKey,bool $allowRich=true): array
     {
         // Canonical local media paths are the supported authoring contract.
         // Parse all documents so entity-escaped/reference destinations are handled too.
         self::validate($md);
         $document=(new MarkdownParser(self::environment()))->parse($md);
-        $ids=[];$walker=$document->walker();
+        $ids=[];$walker=$document->walker();$budget=RichBlocks::MAX_BUDGET;
         while($event=$walker->next()){
             if(!$event->isEntering()) continue;
             $node=$event->getNode();
+            if ($allowRich && $node instanceof FencedCode && $node->parent() instanceof Document) {
+                $component=RichBlocks::parse(trim($node->getInfo()??''),$node->getLiteral());
+                if ($component!==null && RichBlocks::cost($component)<=$budget) {
+                    $budget-=RichBlocks::cost($component);
+                    foreach (RichBlocks::bodies($component) as $body) foreach (self::mediaReferences($body,$pageKey,false) as $id) $ids[$id]=true;
+                    foreach ($component['cards']??[] as $card) foreach (['href','image'] as $field) {
+                        $url=self::safeUrl($card[$field],$field==='image',$pageKey);
+                        if ($url!==null && ($id=self::mediaId($url))!==null) $ids[$id]=true;
+                    }
+                }
+            }
             if($node instanceof Link || $node instanceof Image){
                 $url=self::safeUrl($node->getUrl(),$node instanceof Image,$pageKey);
                 if($url!==null && ($id=self::mediaId($url))!==null) $ids[$id]=true;
