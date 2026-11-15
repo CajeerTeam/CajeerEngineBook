@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — Webhooks & Automation
+
+- Verify GitHub HMAC and GitLab secret-token webhooks, repository/project and branch, push and merged PR/MR; deduplicate raw bodies and delivery IDs.
+- Transactional inbox/outbox, signed HTTPS metadata delivery, persistent queue, exponential retries, dead-letter/manual retry, fenced leases and crash recovery.
+- Worker imports Git drafts through existing sync, reauthorizes and commits completion atomically; no publication bypass.
+- Admin Automation Studio, Team activity, encrypted secrets, outbound origins, pinned TLS, optional Compose worker and schema 5 backup compatibility.
+- PHP, HTTP and actual TLS integration tests; no new runtime dependencies.
+
 ## 0.3.6 — SDK & Code Examples
 
 - Add Reader SDK & Code Examples for published OpenAPI operations: cURL, TypeScript/JavaScript, Python and PHP with selectable server/auth alternative and placeholder credentials.

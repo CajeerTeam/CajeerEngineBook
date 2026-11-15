@@ -174,6 +174,17 @@ final class IdentityStore
             if(Permissions::allows($role,$permission))$out[$id]=['id'=>$id,'username'=>$u['username'],'role'=>$role];}
         return $out;
     }
+    /** Trusted automation entrypoint; the configured administrator is re-evaluated on each phase. */
+    public function automationWorkspace(string $org,string $id,callable $fn):mixed{
+        return $this->transaction(function($db)use($org,$id,$fn){
+            if($id===''){$w=Workspaces::legacy($db);if($org!=='')return null;}
+            else{$w=$db['workspaces'][$id]??null;if(!$w||$w['organization']!==$org||$w['legacy'])return null;}
+            return $fn($w,self::reviewUsers($db,$w,'manage'));
+        },false);
+    }
+    public function automationScopes():array{
+        return $this->transaction(function($db){$out=[['org'=>'','id'=>'']];foreach($db['workspaces'] as $w)if(!$w['legacy'])$out[]=['org'=>$w['organization'],'id'=>$w['id']];return $out;},false);
+    }
     public function withWorkspace(string $token,string $org,string $id,callable $fn,bool $publishedRead=false):mixed{
         return $this->transaction(function(&$db,$flush)use($token,$org,$id,$fn,$publishedRead){
             $ctx=self::context($db,$token);$uid=$ctx['user']['id']??'';

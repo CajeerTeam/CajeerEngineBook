@@ -13,7 +13,7 @@ final class OpenApiStore
     private static function idValid(mixed $s):bool{return is_string($s)&&preg_match('/\A[a-f0-9]{32}\z/D',$s)===1;}
     private static function scope(string $book,string $version,string $slug):string{return BookStore::key($book,$version,'reference/'.$slug);}
     public static function validate(array $db):void{
-        $all=$db['openapi']??[];if(!is_array($all)||count($all)>self::MAX_SPECS||($all&&($db['schema']??null)!==4))throw new \RuntimeException('Invalid OpenAPI store.');
+        $all=$db['openapi']??[];if(!is_array($all)||count($all)>self::MAX_SPECS||($all&&!in_array($db['schema']??null,[4,5],true)))throw new \RuntimeException('Invalid OpenAPI store.');
         $bytes=0;$ids=[];
         foreach($all as $scope=>$s){
             if(!is_array($s)||!is_string($s['book']??null)||!is_string($s['version']??null)||!is_string($s['slug']??null)||!BookStore::slug($s['slug'])||self::scope($s['book'],$s['version'],$s['slug'])!==$scope||!self::idValid($s['id']??null)||isset($ids[$s['id']])||!is_int($s['revision']??null)||$s['revision']<1||!is_array($s['pages']??null)||count($s['pages'])>OpenApiReference::MAX_PAGES||!is_array($s['revisions']??null)||!array_is_list($s['revisions'])||!$s['revisions']||count($s['revisions'])>self::MAX_REVISIONS)throw new \RuntimeException('Invalid OpenAPI source record.');
@@ -76,7 +76,7 @@ final class OpenApiStore
                     $db['pages'][$key]=$e;}
                 $s['pages'][$key]=['id'=>$e['id'],'base'=>self::fingerprint($p),'retired'=>$plan['rows'][$key]['retired']];
             }
-            $s['revision']++;$r=['revision'=>$s['revision'],'bundle'=>$bundle,'sha256'=>$sha,'commit'=>$commit,'at'=>gmdate('c'),'actor'=>['id'=>$actor['id'],'username'=>$actor['username']]];foreach(['title','api_version','format'] as $k)$r[$k]=$plan['model'][$k];$s['revisions'][]=$r;$s['revisions']=array_slice($s['revisions'],-self::MAX_REVISIONS);$db['schema']=4;$db['openapi'][$scope]=$s;
+            $s['revision']++;$r=['revision'=>$s['revision'],'bundle'=>$bundle,'sha256'=>$sha,'commit'=>$commit,'at'=>gmdate('c'),'actor'=>['id'=>$actor['id'],'username'=>$actor['username']]];foreach(['title','api_version','format'] as $k)$r[$k]=$plan['model'][$k];$s['revisions'][]=$r;$s['revisions']=array_slice($s['revisions'],-self::MAX_REVISIONS);$db['schema']=max(4,$db['schema']??1);$db['openapi'][$scope]=$s;
             // Evict oldest non-current source revisions first; never discard another specification's current source.
             while(true){$bytes=0;$oldest=null;foreach($db['openapi'] as $k=>$item){foreach($item['revisions'] as $r)$bytes+=strlen($r['bundle']);if(count($item['revisions'])>1&&($oldest===null||$item['revisions'][0]['at']<$db['openapi'][$oldest]['revisions'][0]['at']))$oldest=$k;}if($bytes<=self::MAX_BYTES)break;if($oldest===null)throw new \DomainException('OpenAPI source storage quota exceeded.');array_shift($db['openapi'][$oldest]['revisions']);}
         },'save','OpenAPI reference import');

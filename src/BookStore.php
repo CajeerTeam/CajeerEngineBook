@@ -11,6 +11,7 @@ require_once __DIR__.'/ImportFiles.php';
 require_once __DIR__.'/OpenApiDocument.php';
 require_once __DIR__.'/OpenApiReference.php';
 require_once __DIR__.'/OpenApiStore.php';
+require_once __DIR__.'/AutomationQueue.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
@@ -28,7 +29,7 @@ final class BookStore {
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
         if(!is_file($file)&&(!$this->seed||glob(Files::path($this->dir,'media').'/*.blob')))throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
-        if(!in_array($db['schema']??null,[1,2,3,4],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        if(!in_array($db['schema']??null,[1,2,3,4,5],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         try{self::validatePages($db);}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid persisted page tree',0,$e);}
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
@@ -36,6 +37,7 @@ final class BookStore {
         ActivityJournal::validate($db);
         GitHubSync::validate($db);
         OpenApiStore::validate($db);
+        AutomationQueue::validate($db);
         return $db;
     }
     /** Validate the trust boundary before any projection, including public book visibility. */
@@ -69,7 +71,7 @@ final class BookStore {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
@@ -81,6 +83,7 @@ final class BookStore {
         ActivityJournal::validate($db);
         GitHubSync::validate($db);
         OpenApiStore::validate($db);
+        AutomationQueue::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);

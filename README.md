@@ -1,6 +1,32 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.7 — Webhooks & Automation
+
+In Studio → **Automation**, an Owner/Admin can configure one inbound Git webhook and one outgoing HTTPS destination per workspace. Configure Git first for inbound delivery. Automation imports drafts only; it never publishes. Incoming events synchronize the current configured branch HEAD at a verified immutable commit, not an old event's commit. Conflicts stop for manual Studio resolution.
+
+### Deployment
+
+```sh
+export BOOK_AUTOMATION_KEY="$(php -r 'echo bin2hex(random_bytes(32));')"
+export BOOK_WEBHOOK_ORIGINS="https://receiver.example.org"
+docker compose --profile automation up -d --build
+```
+
+Keep the key permanently in protected deployment configuration; both web and worker need it. Use separate random 32–128 printable non-space ASCII inbound/outbound secrets (`openssl rand -hex 32`). Git still uses `BOOK_GITHUB_KEY` and `BOOK_GITLAB_ORIGINS`. Without Docker run `BOOK_DATA_DIR=/var/lib/cajeerbook php bin/worker.php --loop` as the same restricted user as the web server under a supervisor. `--once` processes at most one due job per workspace. Single-node only: an installation-wide flock serializes workers and permits immediate abandoned-claim recovery. Network operations release Identity/BookStore locks and reauthorize before applying changes.
+
+Copy the URL displayed in Automation to the provider. GitHub: JSON payload and push/pull request events, configured secret. GitLab: push/merge request events, configured secret token. Scoped URLs `/w/{org}/{workspace}/webhooks/github` and `/w/{org}/{workspace}/webhooks/gitlab`; legacy `/webhooks/github` and `/webhooks/gitlab`. Serve HTTPS externally. GitHub validates `X-Hub-Signature-256` over the raw body; GitLab validates `X-Gitlab-Token`. Only configured repository/project and branch, push and merged PR/MR trigger synchronization. Deduplication uses delivery ID and raw body within the receipt window; same ID with different body is rejected. HTTP 202 means durably queued, 200 ignored/duplicate, not sync success. Check jobs in Studio.
+
+### Outgoing delivery
+
+Select events and an exact HTTPS destination in `BOOK_WEBHOOK_ORIGINS`; no query, credentials, fragments, traversal or redirects. Events: `document.changed`, `document.published` (public snapshot change including unpublish), `review.requested`, `review.approved`, `git.sync.completed` (actual Git sync change), `git.sync.failed`, `openapi.updated`. Event JSON is `{"id":"...","event":"document.changed","at":1760000000}`; no Markdown, private paths, review comments or credentials. Event enqueue and content mutation commit together; multiple changes in a transaction are coalesced by type. Headers: `X-Cajeer-Delivery`, `X-Cajeer-Timestamp` (Unix seconds), `X-Cajeer-Signature: sha256=<hex>`. Verify HMAC-SHA256 using outgoing secret over `timestamp + "." + raw_body` before parsing; validate timestamp freshness (e.g. five minutes) and deduplicate delivery ID in receiver's own transaction. Retries preserve ID and body with fresh timestamp/signature. HTTPS uses pinned globally routable IPv4, certificate/hostname validation, 15-second wire deadline and bounded response; private destinations are not supported. Use trusted DNS and egress policy.
+
+Jobs persist with queued/running/succeeded/dead/cancelled, attempts, due time and lease fencing. HTTP 2xx completes; 408/425/429/5xx and network/provider failures retry after 30/60/120/240 seconds, at most five attempts; other 4xx/3xx or conflicts stop. Dead jobs can be retried in Studio. Delivery is **at least once**, not exactly once: a lost response or crash after receiver action can repeat the request. Completed Git import and job completion commit atomically. Reconfiguration (including rotation) cancels active jobs; rotate provider secret too. Revoked administrator rights or replaced Git connection prevent applying fetched changes; transmitted external actions cannot be recalled.
+
+Limits per workspace: 512 retained jobs, 448 pending (64 sync), 2048 receipt keys (two per event), seven-day receipt TTL; unexpired receipts are never evicted (new events rejected at quota), oldest terminal jobs are evicted, never pending work. Body limit 1 MiB. Full outbox rejects initiating mutation instead of losing events: drain/retry or disable explicitly. The configuring administrator must remain enabled with effective Admin/Owner access; reconfigure if that account changes. Archived workspaces are not processed. SDK downloads are not persisted events; automatic OpenAPI fetch, SDK and static builds are outside this release.
+
+Back up entire data directory and both encryption keys separately. BookStore schema 5 on automation configuration; TAR/installation backup includes queue, receipts, encrypted secrets and configuration. Stop original worker before restoring/migrating; restored jobs may redeliver, receivers must deduplicate. Older versions cannot read schema 5; rollback requires pre-upgrade backup. No new runtime dependencies. Test: `php tests/automation.php`, `python3 tests/automation-http.py`, `python3 tests/automation-https.py`; `--policy-only` for first two without CommonMark. TLS test uses a local trusted fixture through private wire primitive; production rejects local addresses.
 
 ## 0.3.6 — SDK & Code Examples
 

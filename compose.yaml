@@ -4,12 +4,32 @@ services:
     ports:
       - "127.0.0.1:8080:80"
     environment:
+      BOOK_AUTOMATION_KEY: ${BOOK_AUTOMATION_KEY:-}
+      BOOK_WEBHOOK_ORIGINS: ${BOOK_WEBHOOK_ORIGINS:-}
       BOOK_ADMIN_HASH: ${BOOK_ADMIN_HASH:-}
       BOOK_GITHUB_KEY: ${BOOK_GITHUB_KEY:-}
       BOOK_GITLAB_ORIGINS: ${BOOK_GITLAB_ORIGINS:-}
       BOOK_PLAYGROUND_ORIGINS: ${BOOK_PLAYGROUND_ORIGINS:-}
       BOOK_PLAYGROUND_PROXY_ORIGINS: ${BOOK_PLAYGROUND_PROXY_ORIGINS:-}
       BOOK_SECURE_COOKIE: ${BOOK_SECURE_COOKIE:-0}
+    volumes:
+      - book-data:/var/lib/cajeerbook
+    restart: unless-stopped
+  worker:
+    build: .
+    profiles: [automation]
+    user: www-data
+    init: true
+    command: [php, bin/worker.php, --loop]
+    healthcheck:
+      disable: true
+    depends_on:
+      - book
+    environment:
+      BOOK_AUTOMATION_KEY: ${BOOK_AUTOMATION_KEY:-}
+      BOOK_WEBHOOK_ORIGINS: ${BOOK_WEBHOOK_ORIGINS:-}
+      BOOK_GITHUB_KEY: ${BOOK_GITHUB_KEY:-}
+      BOOK_GITLAB_ORIGINS: ${BOOK_GITLAB_ORIGINS:-}
     volumes:
       - book-data:/var/lib/cajeerbook
     restart: unless-stopped

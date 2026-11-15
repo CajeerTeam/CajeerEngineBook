@@ -10,10 +10,10 @@ final class ApiPlaygroundTransport
     public static function publicIp(string $ip):bool {
         return filter_var($ip,FILTER_VALIDATE_IP,FILTER_FLAG_IPV4|FILTER_FLAG_GLOBAL_RANGE)!==false && (int)explode('.',$ip)[0]<224;
     }
-    public static function send(array $request):array {
+    public static function send(array $request,string $allowlist='BOOK_PLAYGROUND_PROXY_ORIGINS'):array {
         $p=parse_url($request['url']);if(!is_array($p)||($p['scheme']??null)!=='https'||isset($p['user'])||isset($p['pass'])||isset($p['fragment'])||!is_string($p['host']??null)||strlen($request['url'])>8192)throw new \InvalidArgumentException('Invalid API proxy target.');
         $origin=ApiPlayground::origin('https://'.$p['host'].(isset($p['port'])?':'.$p['port']:''));
-        if($origin!==$request['origin']||!in_array($origin,ApiPlayground::origins('BOOK_PLAYGROUND_PROXY_ORIGINS'),true))throw new \InvalidArgumentException('API proxy server is not enabled.');
+        if($origin!==$request['origin']||!in_array($origin,ApiPlayground::origins($allowlist),true))throw new \InvalidArgumentException('API proxy server is not enabled.');
         $host=parse_url($origin,PHP_URL_HOST);$port=parse_url($origin,PHP_URL_PORT)??443;
         // The OS resolver is trusted by deployment. Pin the checked IPv4 address for the actual connection.
         $addresses=@gethostbynamel($host);if(!$addresses||count($addresses)>32)throw new \RuntimeException('API DNS lookup failed.');

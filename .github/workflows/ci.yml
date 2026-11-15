@@ -69,6 +69,7 @@ jobs:
         env:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
+          docker compose -p book-release-test exec -T book php tests/automation.php
           docker compose -p book-release-test exec -T book php tests/sdk.php
           docker compose -p book-release-test exec -T book php tests/playground.php
           docker compose -p book-release-test exec -T book php tests/openapi.php
@@ -79,6 +80,7 @@ jobs:
           docker compose -p book-release-test exec -T book php tests/installation.php
           python3 tests/release-http.py
           python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json"
+          docker compose -p book-release-test exec -T -u www-data book php bin/worker.php --once
           docker compose -p book-release-test restart book
           python3 tests/release-http.py --check-persisted
           python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json" --check-persisted

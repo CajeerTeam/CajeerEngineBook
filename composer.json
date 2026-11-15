@@ -19,6 +19,9 @@
     },
     "scripts": {
         "test": [
+            "@php tests/automation.php",
+            "python3 tests/automation-https.py",
+            "python3 tests/automation-http.py",
             "@php tests/sdk.php",
             "python3 tests/sdk-clients.py",
             "@php tests/playground.php",
