@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5 — Enterprise SSO / OIDC
+
+- Corporate OIDC sign-in: pinned HTTPS issuer discovery, authorization code + PKCE S256, browser-bound one-time state and nonce, RS256 JWKS signature and issuer/audience/time validation. No provider tokens stored.
+- Transactional JIT identities keyed by issuer and subject, explicit viewer/editor group mapping, organization membership synchronization, preserved workspace restrictions, and local account disable/revocation. No email-based account linking or local password bypass for federated identities.
+- Optional installation-wide SSO enforcement with local emergency owner access; short-lived federated sessions and policy-change invalidation. Deployment-controlled provider configuration, owner status view and CLI discovery check.
+- Shared authorization flow state and sessions use existing PostgreSQL identity transactions; portable backups preserve identity links but exclude temporary flows. Redis ingress limits and query-free access logging for callback confidentiality. Signed-token tests and two-node HTTP/HTTPS provider integration gate, including PostgreSQL CI.
+
 ## 0.4.4 — Redis & Distributed Runtime
 
 - Optional authenticated Redis 7 runtime for PostgreSQL deployments: HMAC-bound, installation-scoped caches of public Markdown renders and search responses, revision-based invalidation and bounded TTL; identity and private content remain SQL-authoritative.

@@ -1,0 +1,98 @@
+<?php
+declare(strict_types=1);
+namespace CajeerBook;
+
+/** Operator-configured OIDC confidential client. Only a pinned HTTPS issuer is trusted. */
+final class Oidc
+{
+    public const CALLBACK='/auth/oidc/callback';
+    public static function required():bool{return getenv('BOOK_OIDC_REQUIRED')==='1';}
+    public static function config():?array
+    {
+        $raw=getenv('BOOK_OIDC_CONFIG');if($raw===false||$raw==='')return null;
+        $c=json_decode($raw,true,16,JSON_THROW_ON_ERROR);
+        if(!is_array($c)||strlen($raw)>16384)throw new \RuntimeException('Invalid OIDC configuration.');
+        foreach(['issuer','client_id','redirect_uri','organization','label'] as $k)if(!is_string($c[$k]??null)||$c[$k]===''||strlen($c[$k])>512||preg_match('/[\x00-\x20\x7f]/',$k==='label'?str_replace(' ','',$c[$k]):$c[$k]))throw new \RuntimeException('Invalid OIDC configuration.');
+        self::url($c['issuer']);self::url($c['redirect_uri']);
+        if(str_ends_with($c['issuer'],'/')||parse_url($c['issuer'],PHP_URL_QUERY)!==null||parse_url($c['redirect_uri'],PHP_URL_PATH)!==self::CALLBACK||parse_url($c['redirect_uri'],PHP_URL_QUERY)!==null||!preg_match('/\A[a-f0-9]{32}\z/D',$c['organization']))throw new \RuntimeException('Invalid OIDC issuer, callback or organization.');
+        if(!is_array($c['groups']??null)||!$c['groups']||count($c['groups'])>100)throw new \RuntimeException('OIDC group mapping is required.');
+        foreach($c['groups'] as $g=>$role)if(!is_string($g)||strlen($g)>256||$g===''||!in_array($role,['viewer','editor'],true))throw new \RuntimeException('Invalid OIDC group mapping.');
+        $c['group_claim']??='groups';if(!is_string($c['group_claim'])||!preg_match('/\A[a-zA-Z0-9_.-]{1,64}\z/D',$c['group_claim']))throw new \RuntimeException('Invalid OIDC group claim.');
+        $c['auth_method']??='client_secret_basic';if(!in_array($c['auth_method'],['client_secret_basic','client_secret_post'],true))throw new \RuntimeException('Invalid OIDC client authentication.');
+        $c['secret']=getenv('BOOK_OIDC_CLIENT_SECRET')?:'';if($c['secret']===''||strlen($c['secret'])>4096)throw new \RuntimeException('Missing OIDC client secret.');
+        return $c;
+    }
+    public static function fingerprint(array $c):string{return hash('sha256',json_encode($c,JSON_THROW_ON_ERROR));}
+    private static function url(string $url):array
+    {
+        $p=parse_url($url);if(!is_array($p)||($p['scheme']??'')!=='https'||!isset($p['host'])||isset($p['user'])||isset($p['pass'])||isset($p['fragment'])||preg_match('/[\x00-\x20\x7f\\\\]/',$url)||!filter_var($url,FILTER_VALIDATE_URL))throw new \RuntimeException('OIDC requires HTTPS URLs.');return $p;
+    }
+    private static function endpoint(string $url,string $issuer):string
+    {
+        $a=self::url($url);$b=self::url($issuer);if(strtolower($a['host'])!==strtolower($b['host'])||($a['port']??443)!==($b['port']??443))throw new \RuntimeException('OIDC endpoint outside configured issuer origin.');return $url;
+    }
+    private static function request(string $url,?array $form=null,string $authorization=''):array
+    {
+        self::url($url);$headers="Accept: application/json\r\nConnection: close\r\n";
+        if($form!==null)$headers.="Content-Type: application/x-www-form-urlencoded\r\n";
+        if($authorization!=='')$headers.='Authorization: '.$authorization."\r\n";
+        $opts=['method'=>$form===null?'GET':'POST','header'=>$headers,'timeout'=>8,'follow_location'=>0,'max_redirects'=>0,'ignore_errors'=>true];
+        if($form!==null)$opts['content']=http_build_query($form,'','&',PHP_QUERY_RFC3986);
+        $ctx=stream_context_create(['http'=>$opts,'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
+        $h=@fopen($url,'rb',false,$ctx);if(!$h)throw new \RuntimeException('OIDC provider unavailable.');
+        try{$meta=stream_get_meta_data($h);$status=$meta['wrapper_data'][0]??'';if(!preg_match('~^HTTP/\S+ 200(?: |$)~',$status))throw new \RuntimeException('OIDC provider rejected request.');$raw=stream_get_contents($h,1048577);if(!is_string($raw)||strlen($raw)>1048576||!feof($h)||stream_get_meta_data($h)['timed_out'])throw new \RuntimeException('Invalid OIDC response size or timeout.');}finally{fclose($h);}
+        $data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new \RuntimeException('Invalid OIDC response.');return $data;
+    }
+    public static function discovery(array $c):array
+    {
+        $d=self::request($c['issuer'].'/.well-known/openid-configuration');
+        if(($d['issuer']??null)!==$c['issuer']||!in_array('RS256',$d['id_token_signing_alg_values_supported']??[],true)||!in_array('code',$d['response_types_supported']??[],true))throw new \RuntimeException('OIDC discovery mismatch.');
+        foreach(['authorization_endpoint','token_endpoint','jwks_uri'] as $k){if(!is_string($d[$k]??null))throw new \RuntimeException('Missing OIDC endpoint.');self::endpoint($d[$k],$c['issuer']);}
+        if(isset($d['code_challenge_methods_supported'])&&!in_array('S256',$d['code_challenge_methods_supported'],true))throw new \RuntimeException('OIDC provider lacks PKCE S256.');
+        if(isset($d['token_endpoint_auth_methods_supported'])&&!in_array($c['auth_method'],$d['token_endpoint_auth_methods_supported'],true))throw new \RuntimeException('OIDC client authentication unsupported.');
+        return $d;
+    }
+    public static function b64(string $bytes):string{return rtrim(strtr(base64_encode($bytes),'+/','-_'),'=');}
+    private static function decode(string $s):string
+    {
+        if($s===''||!preg_match('/\A[A-Za-z0-9_-]+\z/D',$s))throw new \RuntimeException('Invalid OIDC encoding.');$v=base64_decode(strtr($s,'-_','+/'),true);if($v===false||self::b64($v)!==$s)throw new \RuntimeException('Invalid OIDC encoding.');return $v;
+    }
+    public static function authorization(array $c,array $d,array $flow):string
+    {
+        return $d['authorization_endpoint'].(str_contains($d['authorization_endpoint'],'?')?'&':'?').http_build_query(['response_type'=>'code','client_id'=>$c['client_id'],'redirect_uri'=>$c['redirect_uri'],'scope'=>'openid profile email','state'=>$flow['state'],'nonce'=>$flow['nonce'],'code_challenge'=>self::b64(hash('sha256',$flow['verifier'],true)),'code_challenge_method'=>'S256','response_mode'=>'query'],'','&',PHP_QUERY_RFC3986);
+    }
+    public static function exchange(array $c,array $flow,string $code):array
+    {
+        if($code===''||strlen($code)>4096||preg_match('/[\x00-\x20\x7f]/',$code))throw new \RuntimeException('Invalid OIDC authorization code.');
+        $d=self::discovery($c);$form=['grant_type'=>'authorization_code','code'=>$code,'redirect_uri'=>$c['redirect_uri'],'code_verifier'=>$flow['verifier'],'client_id'=>$c['client_id']];$auth='';
+        if($c['auth_method']==='client_secret_basic'){$auth='Basic '.base64_encode(urlencode($c['client_id']).':'.urlencode($c['secret']));unset($form['client_id']);}else $form['client_secret']=$c['secret'];
+        $r=self::request($d['token_endpoint'],$form,$auth);if(!is_string($r['id_token']??null))throw new \RuntimeException('Missing OIDC ID token.');
+        return self::verify($r['id_token'],self::request($d['jwks_uri']),$c,$flow['nonce'],time());
+    }
+    private static function der(int $tag,string $s):string{$n=strlen($s);$len=$n<128?chr($n):($n<256?"\x81".chr($n):"\x82".pack('n',$n));return chr($tag).$len.$s;}
+    private static function integer(string $s):string{$s=ltrim($s,"\0");if($s==='')$s="\0";if(ord($s[0])&128)$s="\0".$s;return self::der(2,$s);}
+    private static function key(array $j):\OpenSSLAsymmetricKey
+    {
+        if(!is_string($j['n']??null)||!is_string($j['e']??null))throw new \RuntimeException('Invalid RSA JWK.');$n=self::decode($j['n']);$e=self::decode($j['e']);if(strlen($n)<256||strlen($n)>1024||strlen($e)>8)throw new \RuntimeException('Invalid RSA key size.');
+        $rsa=self::der(48,self::integer($n).self::integer($e));$spki=self::der(48,hex2bin('300d06092a864886f70d0101010500').self::der(3,"\0".$rsa));$key=openssl_pkey_get_public("-----BEGIN PUBLIC KEY-----\n".chunk_split(base64_encode($spki),64,"\n")."-----END PUBLIC KEY-----\n");
+        if(!$key||openssl_pkey_get_details($key)['bits']<2048)throw new \RuntimeException('Invalid RSA key.');return $key;
+    }
+    /** Verify signed claims before they reach identity storage. No JWT-supplied URLs or keys. */
+    public static function verify(string $jwt,array $jwks,array $c,string $nonce,int $now):array
+    {
+        if(strlen($jwt)>65536||count($parts=explode('.',$jwt))!==3)throw new \RuntimeException('Invalid ID token.');
+        [$h,$p,$s]=$parts;$head=json_decode(self::decode($h),true,8,JSON_THROW_ON_ERROR);$claims=json_decode(self::decode($p),true,16,JSON_THROW_ON_ERROR);
+        if(!is_array($head)||!is_array($claims)||($head['alg']??null)!=='RS256'||!is_string($head['kid']??null)||$head['kid']===''||strlen($head['kid'])>256||isset($head['crit'])||isset($head['jku'])||isset($head['jwk'])||isset($head['x5u']))throw new \RuntimeException('Unsupported ID token header.');
+        $matches=[];foreach($jwks['keys']??[] as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&($j['use']??'sig')==='sig'&&($j['alg']??'RS256')==='RS256'&&(!isset($j['key_ops'])||in_array('verify',$j['key_ops'],true)))$matches[]=$j;
+        if(count($matches)!==1||openssl_verify($h.'.'.$p,self::decode($s),self::key($matches[0]),OPENSSL_ALGO_SHA256)!==1)throw new \RuntimeException('Invalid ID token signature.');
+        $aud=$claims['aud']??null;$aud=is_string($aud)?[$aud]:$aud;
+        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||($claims['nonce']??null)!==$nonce||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
+        if(!is_int($claims['exp']??null)||$claims['exp']<=$now||!is_int($claims['iat']??null)||$claims['iat']>$now+60||$claims['iat']<$now-600||$claims['exp']<=$claims['iat']||(isset($claims['nbf'])&&(!is_int($claims['nbf'])||$claims['nbf']>$now+60)))throw new \RuntimeException('Invalid ID token time claims.');
+        return $claims;
+    }
+    public static function role(array $c,array $claims):string
+    {
+        $groups=$claims[$c['group_claim']]??[];if(!is_array($groups)||!array_is_list($groups)||count($groups)>1000)return 'none';$role='none';
+        foreach($groups as $g){if(!is_string($g))return 'none';$r=$c['groups'][$g]??'none';if($r==='editor')$role='editor';elseif($r==='viewer'&&$role==='none')$role='viewer';}return $role;
+    }
+}

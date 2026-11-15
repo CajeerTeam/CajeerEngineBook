@@ -1,6 +1,49 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.5 — Enterprise SSO / OIDC
+
+Corporate sign-in uses OpenID Connect Authorization Code + PKCE S256, exact issuer and audience, one-time state/nonce, HTTPS discovery and RS256 JWKS signature verification. The existing IdentityStore transaction persists the short-lived authorization flow and JIT identity; no Redis-only state or sticky sessions are required. Existing local users and content remain unchanged unless mandatory SSO is enabled. No SQL schema migration is required for a healthy 0.4.4 installation.
+
+### Configure an identity provider
+
+1. Create the target organization in Book as a local owner and copy its 32-hex ID from `/organizations/<id>`. Keep the installation owner's recovery credentials offline.
+2. In Keycloak, a tenant-specific Microsoft Entra ID application, Okta, or a compatible OIDC provider, register a confidential web client using Authorization Code, PKCE S256 and RS256. Register the exact public HTTPS redirect URI `https://book.example.org/auth/oidc/callback`. Configure a groups (or roles) claim **in the ID token**. Disable implicit flow; no refresh token, offline scope or UserInfo request is needed. Use an issuer-specific client, not a generic multi-tenant issuer.
+3. Set the following on every web node, using a private environment/secret manager. In Compose, the variables are forwarded to the `book` service. The JSON value must be on one line (single-quoted in `.env`); the secret is a separate variable. Example with a Keycloak realm (replace all example values):
+
+```dotenv
+BOOK_SECURE_COOKIE=1
+BOOK_OIDC_CONFIG='{"issuer":"https://id.example.org/realms/company","client_id":"book","redirect_uri":"https://book.example.org/auth/oidc/callback","organization":"0123456789abcdef0123456789abcdef","label":"Company SSO","group_claim":"groups","groups":{"book-readers":"viewer","book-editors":"editor"},"auth_method":"client_secret_basic"}'
+BOOK_OIDC_CLIENT_SECRET=<secret-from-provider>
+BOOK_OIDC_REQUIRED=0
+```
+
+For Entra ID use the exact tenant issuer `https://login.microsoftonline.com/<tenant-id>/v2.0`, `client_secret_post` if required, and group object IDs or app role names; set `group_claim` to `roles` for app roles. For Okta use the exact authorization-server issuer, configure the groups claim in ID tokens, and choose the registered client authentication method. Discovery's authorization, token and JWKS endpoints must share the issuer's HTTPS origin; providers with cross-origin endpoints are intentionally unsupported. Use the provider's exact case-sensitive group names (Keycloak full group paths if configured). Providers that emit group-overage pointers rather than a groups list are denied; configure app roles or a bounded group claim. The implementation does not call Microsoft Graph or follow claims-supplied URLs. Only `viewer` and `editor` mappings are permitted; when both match, editor wins. Unmapped users are denied.
+
+4. Serve Book through a trusted HTTPS ingress; do not expose internal HTTP directly. Configure external proxy access logs to exclude callback query strings (the provided Apache and Nginx configs omit queries). The callback uses a short-lived Secure/HttpOnly/SameSite=Lax state cookie; normal sessions remain Secure/HttpOnly/SameSite=Strict. Configure all nodes identically, including the secret. Run `php bin/oidc.php check` (inside the app container for Compose) to verify configuration, organization and HTTPS discovery. This check does not require an interactive user or print secrets. The login page now displays **Sign in with Company SSO**. Owner status and account disable controls are in **Account → Users**.
+
+### Access and lifecycle
+
+- JIT creates an ordinary local user only after a valid signed ID token and mapped group. The immutable key is `(issuer, sub)`, not email. A deterministic `sso-...` username is used. Verified email is optional; an existing email collision is rejected rather than linking accounts. Existing local accounts are not automatically linked; migration/linking of pre-existing accounts requires a future explicit identity-link workflow. No provider password, access token, refresh token or ID token is stored.
+- The configured organization membership is managed by the IdP; mapped roles are reconciled transactionally on each login. Local workspace restrictions remain authoritative, including explicit `none`; role downgrades clamp stronger workspace grants, and group removal/rejoin preserves prior restrictions. A managed membership cannot be manually elevated or removed to circumvent the policy. Local owner can disable the account immediately, revoking all sessions. Federated users cannot become organization owners or use local password/reset. Other organizations may explicitly invite them through existing RBAC, but the configured group remains required for sign-in.
+- Each successful federated login revokes previous sessions and issues a new session bounded by the ID token expiry and one hour. Group removal at reauthentication denies login and revokes prior sessions. IdP-only revocation is observed at next login/expiry, **not instantaneously**; use local disable for immediate revocation. No background SCIM or back-channel logout. Local logout revokes the Book session, not the provider's SSO session. Signing keys are fetched fresh on every callback, supporting rotation without trusting JWT-supplied key URLs.
+- Set `BOOK_OIDC_REQUIRED=1` only after testing the provider and planning access for existing users: non-owner local sessions and password login are denied (including existing organization owners); the installation owner always retains local access. This is installation-wide, not per-organization. Changing the provider policy/secret invalidates federated sessions; removing the provider disables federated login. Restore the previous configuration consistently on all replicas before re-enabling access; never roll mixed policy versions across web nodes. If IdP is unavailable, the installation owner can still log in locally. Readiness does not depend on external IdP availability.
+- The single provider and target organization are operator-configured, not editable from a tenant browser. Multiple simultaneous providers, SAML, SCIM, provider logout and automated account linking are outside 0.4.5. Backups retain identity links and membership but exclude temporary state and sessions; preserve deployment configuration and secrets independently. Do not downgrade to 0.4.4 after creating federated accounts: older code does not enforce OIDC policy. Use a matched pre-upgrade backup for rollback.
+
+### Upgrade / verification
+
+Stop all app and worker nodes, create a 0.4.4 installation backup using the old code, overlay 0.4.5, keep PostgreSQL namespace and media unchanged, rebuild images and check the existing database/search/runtime. Restart all web nodes with the same configuration. No additional migration is needed. For Compose with Redis and multiple replicas, use the existing four overlays described below. Set `BOOK_SECURE_COOKIE=1` and terminate TLS externally.
+
+```sh
+php bin/oidc.php check
+php tests/oidc-policy.php
+python3 tests/oidc-http.py
+# With the existing PostgreSQL test credentials and Composer dependencies:
+python3 tests/oidc-http.py --postgres
+```
+
+The HTTP test runs real Book App routes on two independent PHP processes and a local HTTPS OIDC fixture with RSA-signed ID tokens and PKCE verification. The PostgreSQL CI variant uses the same exchange against SQL identity. The fixture is not a production bypass; the real provider client is exercised. Provider-specific staging verification is required before enforcing SSO in production.
 
 ## 0.4.4 — Redis & Distributed Runtime
 

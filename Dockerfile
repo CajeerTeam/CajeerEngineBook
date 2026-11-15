@@ -21,7 +21,8 @@ RUN mkdir -p /var/lib/cajeerbook && chown www-data:www-data /var/lib/cajeerbook 
  && a2enmod rewrite remoteip \
  && sed -i 's|/var/www/html|/opt/cajeerbook/public|g' /etc/apache2/sites-available/000-default.conf \
  && printf '<Directory /opt/cajeerbook/public>\nRequire all granted\nAllowOverride None\nFallbackResource /index.php\nOptions -Indexes -FollowSymLinks\n</Directory>\n' > /etc/apache2/conf-available/book.conf \
- && a2enconf book
+ && a2enconf book \
+ && sed -i 's|CustomLog ${APACHE_LOG_DIR}/access.log combined|CustomLog ${APACHE_LOG_DIR}/access.log "%h %l %u %t %m %U %H %>s %b"|' /etc/apache2/sites-available/000-default.conf
 VOLUME ["/var/lib/cajeerbook"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD php -r '$c=stream_context_create(["http"=>["timeout"=>3]]);exit(@file_get_contents("http://127.0.0.1/health/ready",false,$c)===false?1:0);'
 EXPOSE 80

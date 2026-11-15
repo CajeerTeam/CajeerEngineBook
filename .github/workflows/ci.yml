@@ -142,6 +142,7 @@ jobs:
             -c "ALTER DATABASE book_test OWNER TO book_app"
       - run: php tests/postgres-content.php
       - run: php tests/postgres-identity.php
+      - run: python3 tests/oidc-http.py --postgres
       - run: php tests/postgres-search.php
       - run: python3 tests/search-http.py --postgres
       - run: python3 tests/ci-http.py --postgres

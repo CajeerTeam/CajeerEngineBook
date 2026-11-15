@@ -54,7 +54,7 @@ final class App {
                 $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();$this->dispatch($path,$method);});return;
             }
             // Account, control-plane and health routes must remain reachable even when legacy content is private.
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/workspaces','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
             $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
                 $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
@@ -67,6 +67,8 @@ final class App {
         if(!RedisRuntime::enabled())return true;
         $inner=preg_replace('~\\A/w/[a-f0-9]{32}/[a-f0-9]{32}(?=/)~D','',$path);
         $policy=match(true){
+            $method==='POST'&&$path==='/auth/oidc/start'=>['oidc-start',30,900,true],
+            $path==='/auth/oidc/callback'=>['oidc-callback',60,60,false],
             $method==='POST'&&$path==='/login'=>['login',30,900,true],
             $method==='POST'&&$path==='/account/reset'=>['reset',30,900,true],
             $method==='POST'&&$path==='/account'&&($_POST['action']??null)==='password'=>['password',30,900,true],
@@ -245,7 +247,7 @@ final class App {
         try{
             if($path==='/diagram-frame'){DiagramFrame::serve($method);return;}
             if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/team'){
                 header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
                 try{$mark=$method==='POST'?(is_string($_POST['id']??null)?$_POST['id']:''):null;if($method==='POST'&&($_POST['action']??'')!=='read')throw new \InvalidArgumentException('Unknown team action');

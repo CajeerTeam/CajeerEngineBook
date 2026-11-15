@@ -11,6 +11,7 @@ require_once __DIR__.'/Visibility.php';
 require_once __DIR__.'/ActivityJournal.php';
 require_once __DIR__.'/PostgresContentStore.php';
 require_once __DIR__.'/PostgresIdentityStore.php';
+require_once __DIR__.'/Oidc.php';
 
 /** Private, versioned identity state. All mutations (including rate limits) serialize on one lock. */
 final class IdentityStore
@@ -118,24 +119,28 @@ final class IdentityStore
         if(($db['schema']??null)!==4)throw new \RuntimeException('Unsupported identity schema');
         foreach(['users','sessions','resets','attempts'] as $k)if(!is_array($db[$k]??null))throw new \RuntimeException('Invalid identity state');
         if(count($db['users'])>self::MAX_USERS||count($db['sessions'])>self::MAX_USERS*10||count($db['resets'])>self::MAX_USERS||count($db['attempts'])>4096)throw new \RuntimeException('Invalid identity counts');
-        $names=[];$emails=[];$owners=0;
+        $names=[];$emails=[];$owners=0;$external=[];
         foreach($db['users'] as $id=>$u){
             if(!is_string($id)||!self::hex($id,32)||!is_array($u)||($u['id']??null)!==$id||!is_string($u['username']??null)||self::username($u['username'])!==$u['username']||!is_string($u['name']??null)||self::name($u['name'])!==$u['name']||!is_string($u['email']??null)||self::email($u['email'],true)!==$u['email']||!is_string($u['hash']??null)||!self::validHash($u['hash'])||!is_bool($u['owner']??null)||!is_bool($u['enabled']??null)||!is_int($u['created']??null))throw new \RuntimeException('Invalid identity user');
             if(isset($names[$u['username']])||($u['email']!==''&&isset($emails[$u['email']])))throw new \RuntimeException('Duplicate identity');$names[$u['username']]=true;$emails[$u['email']]=true;
+            if(isset($u['oidc'])){ $link=$u['oidc'];if($u['owner']||!is_array($link)||!is_string($link['issuer']??null)||!is_string($link['subject']??null)||$link['subject']===''||strlen($link['subject'])>255||!is_string($link['organization']??null)||!self::hex($link['organization'],32))throw new \RuntimeException('Invalid federated identity');if(isset($link['restrictions'])){if(!is_array($link['restrictions'])||count($link['restrictions'])>1000)throw new \RuntimeException('Invalid federated restrictions');foreach($link['restrictions'] as $wid=>$role)if(!is_string($wid)||!self::hex($wid,32)||!in_array($role,['none','viewer','editor','admin'],true))throw new \RuntimeException('Invalid federated restriction');}$key=hash('sha256',$link['issuer']."\0".$link['subject']);if(isset($external[$key]))throw new \RuntimeException('Duplicate federated identity');$external[$key]=true;}
             if($u['owner']){if(!$u['enabled'])throw new \RuntimeException('Disabled owner');$owners++;}
         }
         if($db['users']!==[]&&$owners!==1)throw new \RuntimeException('Identity owner invariant failed');
         foreach($db['sessions'] as $key=>$s)if(!is_string($key)||!self::hex($key,64)||!is_array($s)||!isset($db['users'][$s['user']??''])||!is_string($s['id']??null)||!self::hex($s['id'],32)||!is_string($s['csrf']??null)||!self::hex($s['csrf'],64)||!is_int($s['created']??null)||!is_int($s['seen']??null)||!is_int($s['expires']??null))throw new \RuntimeException('Invalid identity session');
         foreach($db['resets'] as $key=>$r)if(!is_string($key)||!self::hex($key,64)||!is_array($r)||!isset($db['users'][$r['user']??''])||!is_int($r['expires']??null))throw new \RuntimeException('Invalid reset record');
         foreach($db['attempts'] as $k=>$a)if(!is_string($k)||!self::hex($k,64)||!is_array($a)||!is_int($a['count']??null)||!is_int($a['until']??null)||$a['count']<1)throw new \RuntimeException('Invalid rate limit');
+        $flows=$db['oidc_flows']??[];if(!is_array($flows)||count($flows)>500)throw new \RuntimeException('Invalid OIDC flow state');
+        foreach($flows as $key=>$f)if(!is_string($key)||!self::hex($key,64)||!is_array($f)||!is_string($f['browser']??null)||!self::hex($f['browser'],64)||!is_string($f['policy']??null)||!self::hex($f['policy'],64)||!is_int($f['expires']??null)||!is_string($f['nonce']??null)||!preg_match('/\A[A-Za-z0-9_-]{43}\z/D',$f['nonce'])||!is_string($f['verifier']??null)||!preg_match('/\A[A-Za-z0-9_-]{64}\z/D',$f['verifier']))throw new \RuntimeException('Invalid OIDC flow');
         Organizations::validate($db);Workspaces::validate($db);ActivityJournal::validate($db);
     }
-    private static function safe(array $u):array{return array_intersect_key($u,array_flip(['id','username','name','email','owner','enabled','created']));}
+    private static function safe(array $u):array{return array_intersect_key($u,array_flip(['id','username','name','email','owner','enabled','created']))+(isset($u['oidc'])?['federated'=>true]:[]);}
     private static function find(array $db,string $username):?array{foreach($db['users'] as $u)if($u['username']===$username)return $u;return null;}
     private static function prune(array &$db,int $now):void{
-        foreach($db['sessions'] as $k=>$s)if($s['expires']<=$now||$s['seen']<=($now-self::IDLE)||!$db['users'][$s['user']]['enabled'])unset($db['sessions'][$k]);
+        foreach($db['sessions'] as $k=>$s)if($s['expires']<=$now||$s['seen']<=($now-self::IDLE)||!self::sessionAllowed($db['users'][$s['user']],$s))unset($db['sessions'][$k]);
         foreach($db['resets'] as $k=>$r)if($r['expires']<=$now)unset($db['resets'][$k]);
         foreach($db['attempts'] as $k=>$a)if($a['until']<=$now)unset($db['attempts'][$k]);
+        foreach($db['oidc_flows']??[] as $k=>$f)if($f['expires']<=$now)unset($db['oidc_flows'][$k]);
     }
     private static function rate(array &$db,string $bucket,string $ip,string $name,int $now):bool{
         $keys=[hash('sha256',$bucket.':ip:'.$ip)=>30,hash('sha256',$bucket.':account:'.$name)=>5];
@@ -155,9 +160,77 @@ final class IdentityStore
     }
     private static function requireSession(array $db,string $token):array{
         $s=self::hex($token,64)?($db['sessions'][hash('sha256',$token)]??null):null;$now=time();
-        if(!$s||$s['expires']<=$now||$s['seen']<=$now-self::IDLE||!($db['users'][$s['user']]['enabled']??false))throw new \DomainException('Session expired. Sign in again.');return $s;
+        if(!$s||$s['expires']<=$now||$s['seen']<=$now-self::IDLE||!self::sessionAllowed($db['users'][$s['user']],$s))throw new \DomainException('Session expired. Sign in again.');return $s;
     }
     private static function revoke(array &$db,string $id):void{foreach($db['sessions'] as $k=>$s)if($s['user']===$id)unset($db['sessions'][$k]);foreach($db['resets'] as $k=>$r)if($r['user']===$id)unset($db['resets'][$k]);}
+
+    private static function sessionAllowed(array $u,array $s):bool
+    {
+        if(!$u['enabled'])return false;
+        if($u['owner'])return true;
+        if(!isset($u['oidc']))return !Oidc::required();
+        try{$c=Oidc::config();return $c!==null&&($s['oidc_policy']??null)===Oidc::fingerprint($c)&&$u['oidc']['issuer']===$c['issuer']&&$u['oidc']['organization']===$c['organization'];}catch(\Throwable){return false;}
+    }
+    public function checkOidcOrganization(string $id):void{$this->transaction(function($db)use($id){if(!$db['users']||!isset($db['organizations'][$id])||$db['organizations'][$id]['archived'])throw new \DomainException('OIDC organization unavailable.');},false);}
+    /** Short-lived, browser-bound authorization transactions. No network calls under the identity lock. */
+    public function beginOidc(array $c,string $browser,string $ip):array
+    {
+        return $this->transaction(function(&$db)use($c,$browser,$ip){
+            $now=time();self::prune($db,$now);
+            if($db['users']===[]||!isset($db['organizations'][$c['organization']])||$db['organizations'][$c['organization']]['archived'])throw new \DomainException('OIDC organization unavailable.');
+            if(!self::rate($db,'oidc-start',$ip,hash('sha256',$browser),$now))return ['status'=>'limited'];
+            $db['oidc_flows']??=[];foreach($db['oidc_flows'] as $k=>$f)if($f['expires']<=$now||$f['browser']===hash('sha256',$browser))unset($db['oidc_flows'][$k]);
+            if(count($db['oidc_flows'])>=500)return ['status'=>'limited'];
+            $state=bin2hex(random_bytes(32));$f=['browser'=>hash('sha256',$browser),'nonce'=>Oidc::b64(random_bytes(32)),'verifier'=>Oidc::b64(random_bytes(48)),'expires'=>$now+300,'policy'=>Oidc::fingerprint($c)];
+            $db['oidc_flows'][hash('sha256',$state)]=$f;return ['status'=>'ok','state'=>$state]+$f;
+        });
+    }
+    public function consumeOidc(array $c,string $state,string $browser):?array
+    {
+        if(!self::hex($state,64)||!self::hex($browser,64))return null;
+        return $this->transaction(function(&$db)use($c,$state,$browser){
+            $k=hash('sha256',$state);$f=$db['oidc_flows'][$k]??null;
+            if(!$f||!hash_equals($f['browser'],hash('sha256',$browser)))return null;
+            unset($db['oidc_flows'][$k]);return $f['expires']>time()&&hash_equals($f['policy'],Oidc::fingerprint($c))?$f:null;
+        });
+    }
+    /** Claims are supplied only by Oidc::verify after signature, issuer, nonce and audience checks. */
+    public function federatedLogin(array $c,array $claims):array
+    {
+        return $this->transaction(function(&$db)use($c,$claims){
+            $now=time();self::prune($db,$now);$oid=$c['organization'];$o=$db['organizations'][$oid]??null;
+            if($db['users']===[]||!$o||$o['archived']||$claims['exp']<=$now)return ['status'=>'invalid'];
+            $u=null;foreach($db['users'] as $candidate)if(($candidate['oidc']['issuer']??null)===$c['issuer']&&($candidate['oidc']['subject']??null)===$claims['sub']){$u=$candidate;break;}
+            if($u&&(!$u['enabled']||$u['owner']||$u['oidc']['organization']!==$oid))return ['status'=>'invalid'];
+            $role=Oidc::role($c,$claims);
+            if($role==='none'){
+                if($u){self::revoke($db,$u['id']);$id=$u['id'];if(isset($o['members'][$id])&&$o['owner']!==$id){unset($o['members'][$id],$o['roles'][$id]);$o['revision']++;$o['updated']=$now;$db['organizations'][$oid]=$o;foreach($db['workspaces'] as &$w)if($w['organization']===$oid&&isset($w['roles'][$id])){$db['users'][$id]['oidc']['restrictions'][$w['id']]=$w['roles'][$id];unset($w['roles'][$id]);$w['revision']++;$w['updated']=$now;}unset($w);ActivityJournal::record($db,$u,'organization.remove','SSO group access removed',$id,$oid);}}
+                return ['status'=>'invalid'];
+            }
+            if(!$u){
+                $username='sso-'.substr(hash('sha256',$c['issuer']."\0".$claims['sub']),0,32);
+                $email='';if(($claims['email_verified']??false)===true&&is_string($claims['email']??null))$email=self::email($claims['email']);
+                $name=is_string($claims['name']??null)?$claims['name']:$username;
+                try{$name=self::name($name);}catch(\InvalidArgumentException){$name=$username;}
+                $u=self::add($db,$username,$name,$email,self::password(bin2hex(random_bytes(32))),false);$u['oidc']=['issuer'=>$c['issuer'],'subject'=>$claims['sub'],'organization'=>$oid];$db['users'][$u['id']]=$u;
+                ActivityJournal::record($db,$u,'account.create','SSO provisioning',$u['id']);
+            }
+            $id=$u['id'];if($o['owner']===$id)return ['status'=>'invalid'];
+            $old=Permissions::organization($o,$id);if($old!==$role){$o['members'][$id]??=$now;$o['roles'][$id]=$role;$o['revision']++;$o['updated']=$now;$db['organizations'][$oid]=$o;
+                foreach($db['invitations'] as $k=>$i)if($i['organization']===$oid&&($i['user']===$id||$i['username']===$u['username']))unset($db['invitations'][$k]);
+                ActivityJournal::record($db,$u,'organization.role','SSO group role',$id,$oid,'',[],$role);
+            }
+            foreach($db['workspaces'] as &$w)if($w['organization']===$oid&&isset($w['roles'][$id])&&($w['roles'][$id]==='admin'||($role==='viewer'&&$w['roles'][$id]==='editor'))){$w['roles'][$id]=$role;$w['revision']++;$w['updated']=$now;}unset($w);
+            // Restore narrower workspace grants after a group-removal/rejoin cycle.
+            foreach($u['oidc']['restrictions']??[] as $wid=>$restriction)if(isset($db['workspaces'][$wid])&&$db['workspaces'][$wid]['organization']===$oid&&in_array($restriction,['none','viewer','editor','admin'],true)){
+                $w=&$db['workspaces'][$wid];$w['roles']??=[];if(!isset($w['roles'][$id])){$w['roles'][$id]=$restriction==='none'?'none':($role==='viewer'?'viewer':($restriction==='admin'?'editor':$restriction));$w['revision']++;$w['updated']=$now;}unset($w);
+            }
+            unset($db['users'][$id]['oidc']['restrictions']);
+            // Preserve explicit workspace restrictions. Organization role is a ceiling.
+            self::revoke($db,$id);$r=self::session($db,$u,$now);$r['session']['expires']=min($claims['exp'],$now+3600);$r['session']['oidc_policy']=Oidc::fingerprint($c);$db['sessions'][hash('sha256',$r['token'])]=$r['session'];
+            ActivityJournal::record($db,$u,'login','SSO sign in',$id);return ['status'=>'ok']+$r;
+        });
+    }
     public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null)return;$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
     public function initialized():bool{return $this->transaction(fn($db)=>$db['users']!==[]);}
     public function initialize(string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($username,$name,$email,$password){if($db['users']!==[])throw new \DomainException('Identity already initialized.');$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),true);ActivityJournal::record($db,$u,'account.create',$u['username'],$u['id']);return self::safe($u);});}
@@ -166,7 +239,7 @@ final class IdentityStore
         return $this->transaction(function(&$db)use($username,$password,$ip,$legacyHash,$tooLong){$now=time();self::prune($db,$now);if(!self::rate($db,'login',$ip,$username,$now))return ['status'=>'limited'];
             $u=self::find($db,$username);$legacy=$db['users']===[]&&$username==='admin'&&self::validHash($legacyHash);$hash=$u['hash']??($legacy?$legacyHash:self::DUMMY);
             $ok=!$tooLong&&!str_contains($password,"\0")&&password_verify($password,$hash);
-            if(!$ok||(!$u&&!$legacy)||($u&&!$u['enabled']))return ['status'=>'invalid'];
+            if(!$ok||(!$u&&!$legacy)||($u&&(!$u['enabled']||isset($u['oidc'])||(!$u['owner']&&Oidc::required()))))return ['status'=>'invalid'];
             if($legacy)$u=self::add($db,'admin','Administrator','',$legacyHash,true);
             if(strlen($password)<=72&&password_needs_rehash($u['hash'],PASSWORD_DEFAULT)){$u['hash']=password_hash($password,PASSWORD_DEFAULT);$db['users'][$u['id']]=$u;}
             unset($db['attempts'][hash('sha256','login:account:'.$username)]);ActivityJournal::record($db,$u,'login','Sign in',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);
@@ -180,14 +253,14 @@ final class IdentityStore
     public function sessions(string $token):array{return $this->transaction(function(&$db)use($token){self::prune($db,time());$s=self::requireSession($db,$token);return array_values(array_map(fn($r)=>array_diff_key($r,['csrf'=>true]),array_filter($db['sessions'],fn($r)=>$r['user']===$s['user'])));});}
     public function revokeSession(string $token,string $id):void{$this->transaction(function(&$db)use($token,$id){$s=self::requireSession($db,$token);$n=0;foreach($db['sessions'] as $k=>$r)if($r['user']===$s['user']&&($id==='all'||$r['id']===$id)){unset($db['sessions'][$k]);$n++;}if($n)ActivityJournal::record($db,$db['users'][$s['user']],'account.sessions','Sessions revoked',$s['user'],'','',[],$n.' session(s)');});}
     public function profile(string $token,string $name,string $email):void{$this->transaction(function(&$db)use($token,$name,$email){$s=self::requireSession($db,$token);$name=self::name($name);$email=self::email($email);foreach($db['users'] as $id=>$u)if($id!==$s['user']&&$u['email']===$email)throw new \DomainException('Email already exists.');$db['users'][$s['user']]['name']=$name;$db['users'][$s['user']]['email']=$email;});}
-    public function changePassword(string $token,string $old,string $new,string $ip):array{return $this->transaction(function(&$db)use($token,$old,$new,$ip){$now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];if(!self::rate($db,'password',$ip,$u['id'],$now))return ['status'=>'limited'];if(strlen($old)>72||str_contains($old,"\0")||!password_verify($old,$u['hash']))return ['status'=>'invalid'];$u['hash']=self::password($new);$db['users'][$u['id']]=$u;self::revoke($db,$u['id']);ActivityJournal::record($db,$u,'account.password','Password changed',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);});}
+    public function changePassword(string $token,string $old,string $new,string $ip):array{return $this->transaction(function(&$db)use($token,$old,$new,$ip){$now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];if(isset($u['oidc']))return ['status'=>'invalid'];if(!self::rate($db,'password',$ip,$u['id'],$now))return ['status'=>'limited'];if(strlen($old)>72||str_contains($old,"\0")||!password_verify($old,$u['hash']))return ['status'=>'invalid'];$u['hash']=self::password($new);$db['users'][$u['id']]=$u;self::revoke($db,$u['id']);ActivityJournal::record($db,$u,'account.password','Password changed',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);});}
     private static function owner(array $db,string $token):void{$s=self::requireSession($db,$token);if(!$db['users'][$s['user']]['owner'])throw new \DomainException('Owner permission required.');}
     public function users(string $token):array{return $this->transaction(function(&$db)use($token){self::owner($db,$token);return array_values(array_map(self::safe(...),$db['users']));});}
     public function createUser(string $token,string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($token,$username,$name,$email,$password){self::owner($db,$token);$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),false);ActivityJournal::record($db,$db['users'][self::requireSession($db,$token)['user']],'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function setEnabled(string $token,string $id,bool $enabled):void{$this->transaction(function(&$db)use($token,$id,$enabled){self::owner($db,$token);$u=$db['users'][$id]??null;if(!$u||$u['owner'])throw new \DomainException('Cannot change this account.');if(!$enabled)foreach($db['organizations'] as $o)if($o['owner']===$id)throw new \DomainException('Transfer organization ownership before disabling this account.');$db['users'][$id]['enabled']=$enabled;if(!$enabled)self::revoke($db,$id);if($u['enabled']!==$enabled)ActivityJournal::record($db,$db['users'][self::requireSession($db,$token)['user']],$enabled?'account.enable':'account.disable',$u['username'],$id);});}
     /** Trusted operator only; token never stored in plaintext. */
-    public function issueReset(string $username):string{return $this->transaction(function(&$db)use($username){$u=self::find($db,self::username($username));if(!$u||!$u['enabled'])throw new \DomainException('Account unavailable.');self::prune($db,time());foreach($db['resets'] as $k=>$r)if($r['user']===$u['id'])unset($db['resets'][$k]);$token=bin2hex(random_bytes(32));$db['resets'][hash('sha256',$token)]=['user'=>$u['id'],'expires'=>time()+self::RESET_TTL];return $token;});}
-    public function reset(string $token,string $password,string $ip):string{return $this->transaction(function(&$db)use($token,$password,$ip){$now=time();self::prune($db,$now);$key=hash('sha256',substr($token,0,128));if(!self::rate($db,'reset',$ip,$key,$now))return 'limited';$r=self::hex($token,64)?($db['resets'][$key]??null):null;if(!$r||!$db['users'][$r['user']]['enabled'])return 'invalid';$db['users'][$r['user']]['hash']=self::password($password);self::revoke($db,$r['user']);ActivityJournal::record($db,$db['users'][$r['user']],'account.reset','Password recovered',$r['user']);return 'ok';});}
+    public function issueReset(string $username):string{return $this->transaction(function(&$db)use($username){$u=self::find($db,self::username($username));if(!$u||!$u['enabled']||isset($u['oidc']))throw new \DomainException('Account unavailable.');self::prune($db,time());foreach($db['resets'] as $k=>$r)if($r['user']===$u['id'])unset($db['resets'][$k]);$token=bin2hex(random_bytes(32));$db['resets'][hash('sha256',$token)]=['user'=>$u['id'],'expires'=>time()+self::RESET_TTL];return $token;});}
+    public function reset(string $token,string $password,string $ip):string{return $this->transaction(function(&$db)use($token,$password,$ip){$now=time();self::prune($db,$now);$key=hash('sha256',substr($token,0,128));if(!self::rate($db,'reset',$ip,$key,$now))return 'limited';$r=self::hex($token,64)?($db['resets'][$key]??null):null;if(!$r||!$db['users'][$r['user']]['enabled']||isset($db['users'][$r['user']]['oidc']))return 'invalid';$db['users'][$r['user']]['hash']=self::password($password);self::revoke($db,$r['user']);ActivityJournal::record($db,$db['users'][$r['user']],'account.reset','Password recovered',$r['user']);return 'ok';});}
     /** Trusted operator only: no credentials or membership records returned. */
     public function legacyWorkspaceAvailable(string $token):bool{return $this->transaction(fn($db)=>($db['users'][self::requireSession($db,$token)['user']]['owner']??false)&&Workspaces::legacy($db)===null);}
     public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
@@ -259,8 +332,8 @@ final class IdentityStore
     }
     public function organizations(string $token):array{return $this->transaction(fn($db)=>Organizations::list($db,self::requireSession($db,$token)['user']));}
     public function organization(string $token,string $id):?array{return $this->transaction(fn($db)=>Organizations::detail($db,self::requireSession($db,$token)['user'],$id));}
-    public function createOrganization(string $token,string $name,string $slug):array{return $this->transaction(function(&$db)use($token,$name,$slug){$uid=self::requireSession($db,$token)['user'];$o=Organizations::create($db,$uid,$name,$slug);ActivityJournal::record($db,$db['users'][$uid],'organization.create',$o['name'],$o['id'],$o['id']);return $o;});}
-    public function mutateOrganization(string $token,string $id,int $revision,string $action,array $fields):array{return $this->transaction(function(&$db)use($token,$id,$revision,$action,$fields){$uid=self::requireSession($db,$token)['user'];$old=$db['organizations'][$id]??null;$r=Organizations::mutate($db,$uid,$id,$revision,$action,$fields);$o=$db['organizations'][$id]??$old;$target='';$recipients=[];$detail='';
+    public function createOrganization(string $token,string $name,string $slug):array{return $this->transaction(function(&$db)use($token,$name,$slug){$uid=self::requireSession($db,$token)['user'];if(isset($db['users'][$uid]['oidc']))throw new \DomainException('Federated accounts cannot own organizations.');$o=Organizations::create($db,$uid,$name,$slug);ActivityJournal::record($db,$db['users'][$uid],'organization.create',$o['name'],$o['id'],$o['id']);return $o;});}
+    public function mutateOrganization(string $token,string $id,int $revision,string $action,array $fields):array{return $this->transaction(function(&$db)use($token,$id,$revision,$action,$fields){$uid=self::requireSession($db,$token)['user'];$old=$db['organizations'][$id]??null;if($action==='leave'&&($db['users'][$uid]['oidc']['organization']??null)===$id)throw new \DomainException('SSO membership is managed by the identity provider.');if(in_array($action,['role','remove'],true)&&($db['users'][$fields['user']??'']['oidc']['organization']??null)===$id)throw new \DomainException('SSO membership is managed by the identity provider. Disable the account to block access locally.');if($action==='transfer'&&isset($db['users'][$fields['user']??'']['oidc']))throw new \DomainException('Federated accounts cannot own organizations.');$r=Organizations::mutate($db,$uid,$id,$revision,$action,$fields);$o=$db['organizations'][$id]??$old;$target='';$recipients=[];$detail='';
         if(in_array($action,['role','transfer','remove'],true)){$target=$fields['user'];$recipients=[$target];$detail=$db['users'][$target]['username'].($action==='role'?' · '.$fields['role']:'');}
         elseif($action==='invite'){foreach($db['invitations'] as $i)if($i['organization']===$id&&$i['username']===$r['username']){$target=$i['id'];$recipients=$i['user']===null?[]:[$i['user']];$detail=$i['username'];break;}}
         elseif($action==='revoke')$target=$fields['invitation'];

@@ -22,6 +22,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/oidc-policy.php",
+            "python3 tests/oidc-http.py",
             "@php tests/redis-policy.php",
             "@php tests/postgres-policy.php",
             "@php tests/postgres-identity-policy.php",
