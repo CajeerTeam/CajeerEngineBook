@@ -70,6 +70,20 @@ final class InstallationBackup
             return ['identity_schema'=>$identity['schema'],'identity_backend'=>!$portable&&getenv('BOOK_PG_DSN')?'postgresql':'file','users'=>count($identity['users']),'organizations'=>count($identity['organizations']),'stores'=>$out];
         });
     }
+    /** Pin every content scope under the already-held identity lock. The nested
+     * store snapshots use shared locks too; no writer can advance another scope
+     * while the portable bundle and retained audit snapshot are being captured. */
+    private static function frozen(string $root,array $identity,callable $fn):void
+    {
+        if(getenv('BOOK_PG_DSN')){PostgresContentStore::freezeInstallation($root,$fn);return;}
+        $locks=[];
+        try{
+            $dirs=[$root];foreach($identity['workspaces'] as $w)if(!$w['legacy'])$dirs[]=Workspaces::directory($root,$w);sort($dirs,SORT_STRING);
+            foreach($dirs as $dir){$h=fopen(Files::path($dir,'books.lock'),'c+b');if(!$h)throw new \RuntimeException('Backup scope lock unavailable');$locks[]=$h;if(!flock($h,LOCK_SH))throw new \RuntimeException('Backup scope lock failed');}
+            $fn();
+        }finally{foreach($locks as $h)fclose($h);}
+    }
+
     public static function create(string $root,string $target,string $public):void
     {
         $root=DataDirectory::resolve($root,$public);$target=self::path($target,$public);self::separate($root,$target);
@@ -79,6 +93,7 @@ final class InstallationBackup
             if(getenv('BOOK_PG_DSN'))(new IdentityStore($root))->operatorAudit('backup.request');
             (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage){
                 Workspaces::assertRegistryDirectories($root,$identity);PostgresContentStore::assertRegistry($root,$identity);
+                self::frozen($root,$identity,function()use($root,$stage,$identity){
                 Files::write($stage.'/identity.json',json_encode($identity,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");$manifest=['format'=>1,'created'=>gmdate('c'),'files'=>['identity.json'=>self::entry($stage.'/identity.json')]];
                 $stores=['legacy.tar'=>[$root,Workspaces::legacy($identity)===null]];
                 foreach($identity['workspaces'] as $w)if(!$w['legacy'])$stores[$w['id'].'.tar']=[Workspaces::directory($root,$w),false];
@@ -93,6 +108,7 @@ final class InstallationBackup
                 if(getenv('BOOK_PG_DSN')){$name='audit-'.PostgresContentStore::namespace().'.jsonl';AuditSnapshot::create($root,$stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);}
                 if(count($manifest['files'])>Workspaces::LIMIT+102)throw new \RuntimeException('Too many historical audit snapshots; move older snapshots to protected archive storage.');
                 Files::json($stage.'/manifest.json',$manifest);
+                });
             });
             self::publish($stage,$target);
         }finally{self::clean($stage);}

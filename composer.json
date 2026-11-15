@@ -14,7 +14,8 @@
         "symfony/yaml": "^7.4.23"
     },
     "suggest": {
-        "ext-redis": "Required for the optional PostgreSQL distributed Redis runtime (0.4.4)."
+        "ext-redis": "Required for the optional PostgreSQL distributed Redis runtime (0.4.4).",
+        "ext-sodium": "Required for encrypted automated backup and recovery (0.4.9)."
     },
     "config": {
         "allow-plugins": false,
@@ -22,6 +23,7 @@
     },
     "scripts": {
         "test": [
+            "@php tests/recovery.php",
             "@php tests/audit-policy.php",
             "@php tests/domains.php",
             "python3 tests/domains-http.py --full",

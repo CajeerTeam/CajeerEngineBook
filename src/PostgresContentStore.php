@@ -16,6 +16,8 @@ final class PostgresContentStore
     private const IDENTITY_MARKER='postgres.identity.required';
     private const CHILDREN=['ci'=>['tokens','builds'],'automation'=>['jobs','receipts']];
     private ?PDO $connection=null;
+    private static ?PDO $backupConnection=null;
+    private static ?string $backupNamespace=null;
     private bool $wake=false;
     public function __construct(private readonly string $namespace,private readonly string $scope,private readonly string $binding) {}
 
@@ -112,9 +114,22 @@ final class PostgresContentStore
         $r=$this->query($pdo,'SELECT revision FROM cajeer_book.content_store WHERE installation=? AND scope=? '.($write?'FOR UPDATE':'FOR SHARE'),$this->params())->fetchColumn();
         if($r===false)throw new \RuntimeException('PostgreSQL workspace content missing; restore or migrate it explicitly.');
     }
+    /** Called under the identity snapshot lock. Reuse this read connection for
+     * nested snapshots so a queued exclusive writer cannot deadlock the backup. */
+    public static function freezeInstallation(string $root,callable $fn):void
+    {
+        if(self::$backupConnection!==null)throw new \LogicException('Nested installation freeze.');
+        $binding=self::identityBinding($root);if(!$binding)throw new \LogicException('PostgreSQL required.');
+        $pdo=self::connect();$pdo->beginTransaction();
+        try{
+            $q=$pdo->prepare('SELECT scope FROM cajeer_book.content_store WHERE installation=? ORDER BY scope FOR SHARE');$q->execute([$binding[0]]);$q->fetchAll(PDO::FETCH_COLUMN);$q->closeCursor();
+            self::$backupConnection=$pdo;self::$backupNamespace=$binding[0];$fn();$pdo->commit();
+        }finally{self::$backupConnection=null;self::$backupNamespace=null;if($pdo->inTransaction())$pdo->rollBack();}
+    }
     /** A single row lock pins all sections/records and the media lifecycle for the workspace. */
     public function transaction(bool $write,callable $fn):mixed
     {
+        if(self::$backupConnection!==null){if($write||$this->namespace!==self::$backupNamespace)throw new \LogicException('Write or foreign scope during backup snapshot.');return $fn($this->load(self::$backupConnection));}
         $pdo=$this->db();$pdo->beginTransaction();$this->wake=false;
         try{
             $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');

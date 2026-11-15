@@ -1,0 +1,40 @@
+# Use with compose.yaml; add compose.postgres.yaml for SQL installations.
+# The backup directory and key are outside the application volume. Only this service
+# receives remote repository credentials and the encryption key.
+services:
+  backup:
+    build: .
+    profiles: [backup]
+    user: www-data
+    init: true
+    command: [php, bin/recovery.php, loop]
+    healthcheck:
+      disable: true
+    depends_on:
+      book:
+        condition: service_healthy
+    environment:
+      BOOK_BACKUP_DIR: /var/lib/cajeerbackup
+      BOOK_BACKUP_KEY_FILE: /run/secrets/book-backup-key
+      BOOK_BACKUP_INTERVAL: ${BOOK_BACKUP_INTERVAL:-86400}
+      BOOK_BACKUP_RETENTION_DAYS: ${BOOK_BACKUP_RETENTION_DAYS:-30}
+      BOOK_BACKUP_S3_URI: ${BOOK_BACKUP_S3_URI:-}
+      BOOK_BACKUP_S3_ENDPOINT: ${BOOK_BACKUP_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      BOOK_PG_DSN: ${BOOK_BACKUP_PG_DSN:-}
+      BOOK_PG_USER: ${BOOK_PG_USER:-book}
+      BOOK_PG_PASSWORD: ${BOOK_PG_PASSWORD:-}
+      BOOK_PG_NAMESPACE: ${BOOK_PG_NAMESPACE:-}
+      BOOK_BACKUP_DRILL_PG_DSN: ${BOOK_BACKUP_DRILL_PG_DSN:-}
+      BOOK_BACKUP_DRILL_PG_USER: ${BOOK_BACKUP_DRILL_PG_USER:-}
+      BOOK_BACKUP_DRILL_PG_PASSWORD: ${BOOK_BACKUP_DRILL_PG_PASSWORD:-}
+    volumes:
+      - book-data:/var/lib/cajeerbook
+      - book-backups:/var/lib/cajeerbackup
+      - ${BOOK_BACKUP_KEY_PATH:?Set a private backup key file readable by uid 33}:/run/secrets/book-backup-key:ro
+    restart: unless-stopped
+volumes:
+  book-backups:

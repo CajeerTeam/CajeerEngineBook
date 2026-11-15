@@ -1,6 +1,48 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.9 — Automated Backup & Recovery
+
+The optional operator-only recovery service uses the existing full-installation portable backup and restore logic. It locks identity and all registered content scopes while copying consistent content, media and retained audit snapshots, then releases those locks before encryption and remote transfer. Backups use streaming libsodium XChaCha20-Poly1305 authenticated encryption; every scheduled backup must pass a real restore into a fresh private directory. If a remote repository is configured, the encrypted object is downloaded again, its SHA-256 compared, and the downloaded copy restored before success is recorded. No HTTP backup credentials or destructive live-restore endpoint is exposed.
+
+### Configuration
+
+- `BOOK_DATA_DIR`, `BOOK_PG_DSN`, `BOOK_PG_USER`, `BOOK_PG_PASSWORD`, `BOOK_PG_NAMESPACE`: existing source installation (omit SQL settings for file mode). Do not re-import stale JSON from an SQL installation.
+- `BOOK_BACKUP_DIR`: dedicated private directory (0700), **outside** the data directory and public web root, writable only by the scheduler account. Use one scheduler or a shared POSIX spool with reliable `flock` semantics. Do not point it at a shared system directory.
+- `BOOK_BACKUP_KEY_FILE`: 32 random bytes encoded as 64 hex characters in a private 0600/0400 file. Generate with `umask 077; openssl rand -hex 32 > /secure/book-backup.key`. Store a separate copy in a secret manager/offsite vault; without this key recovery is impossible. To rotate, keep old keys and start a new spool/repository prefix. PHP sodium is required. The key is not included in any backup.
+- `BOOK_BACKUP_INTERVAL`: seconds between captures of verified backups (default 86400; 300–604800). `BOOK_BACKUP_RETENTION_DAYS`: local retention (default 30; 1–3650). Keep at least the two latest verified local backups. Failed/pending artifacts are never pruned by age. A failure is retried after 300 seconds; the persistent pending artifact is retried before another snapshot is created. Monitor age of `last_capture` (the start of the last verified snapshot) as your actual RPO; `last_success` records verification completion. A delayed remote retry does not reset the capture interval.
+- `BOOK_BACKUP_S3_URI`: e.g. `s3://company-backups/book-production`. Optional `BOOK_BACKUP_S3_ENDPOINT`: HTTPS origin for S3-compatible services. Install AWS CLI; use standard AWS credential chain, TLS verification, region, and `AWS_CA_BUNDLE` for a private CA. Use a dedicated private bucket/prefix with only object write/read and multipart permissions; enable bucket versioning, encryption/immutability and lifecycle rules appropriate to retention, including cleanup of incomplete multipart uploads. The application never deletes remote objects. Record backup IDs or list objects with your storage tooling; keep the encryption key independent of the repository. For an independent mounted remote filesystem, set `BOOK_BACKUP_REMOTE_DIR` instead (existing directory, not overlapping live data/spool/public). Ensure the mount is present before starting the scheduler. Without either setting backups are local-only.
+- Optional `BOOK_BACKUP_DRILL_PG_DSN`, `BOOK_BACKUP_DRILL_PG_USER`, `BOOK_BACKUP_DRILL_PG_PASSWORD`: **separate, disposable PostgreSQL database** with schema creation permissions and pg_trgm available. Do not point it at production. Each drill imports a fresh random namespace, checks the actual SQL installation/search indexes/new audit chain, and removes only its marker-bound namespace. Without this configuration, the automatic drill performs a real portable file restore and integrity audit (including retained historical audit snapshots), not a PostgreSQL restore. An operator can additionally restore to a new directory and migrate to an independent PostgreSQL instance.
+
+### Operator commands and schedule
+
+```sh
+php bin/recovery.php run                     # immediate verified backup (or retry pending)
+php bin/recovery.php tick                    # run only if due; suitable for cron every minute
+php bin/recovery.php loop                    # supervised scheduler, polls once per minute
+php bin/recovery.php status                  # last verified ID/capture time, pending ID, failures
+php bin/recovery.php drill BACKUP_ID --remote # download and perform a fresh isolated restore
+php bin/recovery.php restore BACKUP_ID /safe/new-installation --remote
+```
+
+Omit `--remote` to read the local encrypted artifact. `restore` works with the old installation or database unavailable: set `BOOK_DATA_DIR` to the old/absent source path, supply a fresh private spool, the same key and remote URI, and a **new** destination directory with an existing parent. The restored directory is portable; for PostgreSQL, configure `BOOK_DATA_DIR` to that new directory, a new empty database/namespace and credentials, then run `php bin/postgres-content.php migrate --offline`, `php bin/postgres-content.php check`, `php bin/search.php check`, and `php bin/audit.php check` before opening traffic. Old sessions/reset/invite credentials are invalidated and custom domains require re-verification, as in existing portable restore. Keep the source offline during cutover and retain its data until the restored installation is verified. Never overlay restored files onto a running database or reuse a production namespace. Historical audit snapshots remain in `audit-history/`; separately preserve previously archived audit prefixes, TLS keys/certificates, environment configuration and integration encryption keys. Redis is rebuilt, not backed up. This is a logical portable backup, not physical WAL/PITR; for point-in-time recovery configure independent PostgreSQL physical backups/WAL archiving and coordinated media snapshots.
+
+The spool contains encrypted `.cbk` objects, verified `.json` reports and atomic `state.json`. Only a verified restore advances `last_success` and `last_capture`. After a remote outage the next attempt reuses the identical local object; if the pending local artifact is irrecoverably damaged, keep it for investigation and configure a fresh spool/prefix rather than deleting evidence. Plaintext staging is private and removed after each operation (or the next locked operation after a crash); use an encrypted filesystem and provision disk capacity for the portable bundle, encrypted local/downloaded files and restored copy. Backup capture may block writes, particularly large media; measure duration and schedule off-peak. No automated production overwrite is performed.
+
+### Docker
+
+Stop old writers and take an existing 0.4.8 backup before overlaying the changed files. No new SQL schema migration is required for an already healthy 0.4.8 installation. Add the optional `compose.backup.yaml` overlay, set `BOOK_BACKUP_KEY_PATH` to the host key file (readable by container uid 33, no group/other access), and set remote configuration in protected environment. The scheduler alone receives encryption/remote credentials. For SQL mode set `BOOK_BACKUP_PG_DSN=pgsql:host=postgres;port=5432;dbname=book;connect_timeout=5` and retain the existing PG credentials/namespace; file mode leaves this unset. Include other overlays already used by the installation. For example:
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.backup.yaml
+docker compose --profile backup build book backup
+docker compose up -d --wait postgres book
+docker compose --profile backup up -d backup
+docker compose exec -T backup php bin/recovery.php status
+```
+
+The backup named volume must survive container recreation; do not run `down -v` in production. On multi-host deployments, mount shared protected media/data and a dedicated shared spool or run one scheduler. Monitor scheduler logs, `last_success`, available space, `last_capture`, remote lifecycle and restore reports. The default automatic interval is daily; RPO/RTO depend on backup size, transfer and drill duration, not a guaranteed SLA.
 
 ## 0.4.8 — Enterprise Audit Log
 

@@ -6,7 +6,7 @@ FROM composer:2 AS composer-bin
 FROM php:8.4-apache
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
 WORKDIR /opt/cajeerbook
-RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev unzip ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev unzip ca-certificates awscli \
  && docker-php-ext-configure gd --with-jpeg --with-webp \
  && docker-php-ext-install mbstring gd zip pdo_pgsql \
  && pecl install redis-6.1.0 && docker-php-ext-enable redis \
@@ -17,7 +17,7 @@ RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-inte
 COPY . .
 COPY --from=mermaid-assets /build/public/assets/mermaid/ public/assets/mermaid/
 RUN printf "upload_max_filesize=20M\npost_max_size=72M\nmax_file_uploads=200\nmemory_limit=256M\nmax_execution_time=120\ndisplay_errors=Off\nlog_errors=On\nexpose_php=Off\n" > /usr/local/etc/php/conf.d/book-media.ini
-RUN mkdir -p /var/lib/cajeerbook && chown www-data:www-data /var/lib/cajeerbook \
+RUN mkdir -p /var/lib/cajeerbook /var/lib/cajeerbackup && chmod 0700 /var/lib/cajeerbackup && chown www-data:www-data /var/lib/cajeerbook /var/lib/cajeerbackup \
  && a2enmod rewrite remoteip \
  && sed -i 's|/var/www/html|/opt/cajeerbook/public|g' /etc/apache2/sites-available/000-default.conf \
  && printf '<Directory /opt/cajeerbook/public>\nRequire all granted\nAllowOverride None\nFallbackResource /index.php\nOptions -Indexes -FollowSymLinks\n</Directory>\n' > /etc/apache2/conf-available/book.conf \

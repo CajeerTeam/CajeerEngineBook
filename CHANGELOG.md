@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.9 — Automated Backup & Recovery
+
+- Installation-wide consistent portable snapshots: identity lock and shared content-scope locks, reused SQL read connection, verified media and retained audit history.
+- Streaming authenticated encrypted recovery envelopes (XChaCha20-Poly1305), persistent scheduler, exclusive lock, interval/retry state, verified local retention.
+- Optional S3-compatible HTTPS repository via AWS CLI or independent mounted filesystem repository; read-back SHA-256 and actual isolated restore before marking a backup successful.
+- Offline recovery CLI, remote-only restore, optional isolated PostgreSQL migration/search/audit drill, backup audit outcomes and separate Compose scheduler service.
+- Recovery tests for corruption, wrong keys, remote failure/retry, concurrency, retention and recovery; PostgreSQL and real HTTPS S3 gates in CI.
+
 ## 0.4.8 — Enterprise Audit Log
 
 - PostgreSQL audit streams with transactional identity/content event capture before ActivityJournal trimming, allowlisted metadata, request correlation, SHA-256 chains and SQL immutability checks.
