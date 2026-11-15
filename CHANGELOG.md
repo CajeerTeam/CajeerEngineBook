@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4 — Performance Benchmarking
+
+- Real quota-bounded synthetic corpora through identity/content/media transactions, linked translations, versions, draft/publication controls and history; 100k public pages across 100 workspaces.
+- Concurrent verified HTTP varied/repeated-key workloads, per-operation latency/throughput/error evidence, PHP process resources, telemetry deltas and compatible-baseline regression gate.
+- Full PostgreSQL/Redis workload, exact Search EXPLAIN ANALYZE/BUFFERS plans, SQL stats, real Studio writes, CI batch publishing and optional maintenance timings; dedicated disposable database guard and release-gate integration.
+- Actual file-mode baseline reports for 1k/10k/50k/100k and a failed 100-client stress report; SQL infrastructure qualification remains separate. No schema change from 0.5.3.
+
 ## 0.5.3 — Observability & Diagnostics
 
 - Bounded shared-volume HTTP and operation histograms, counters, structured request/job logs and request correlation. No raw credentials, SQL text or user-controlled labels in telemetry.

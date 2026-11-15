@@ -1,0 +1,230 @@
+{
+  "format": 1,
+  "release": "0.5.4",
+  "profile": {
+    "pages": 100000,
+    "per_workspace": 1000,
+    "requests_per_phase": 300,
+    "concurrency": 100,
+    "nodes": 2,
+    "seed": 42,
+    "backend": "file",
+    "redis": false,
+    "full": false,
+    "telemetry": true,
+    "rate": 0,
+    "engine": "php-cli-server",
+    "maintenance": false
+  },
+  "environment": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "cpu_count": 5,
+    "php": "8.4.24",
+    "python": "3.13.5",
+    "kernel": "6.18.57",
+    "php_extensions": "[\"Core\",\"date\",\"libxml\",\"openssl\",\"pcre\",\"zlib\",\"filter\",\"hash\",\"json\",\"pcntl\",\"random\",\"Reflection\",\"SPL\",\"session\",\"standard\",\"sodium\",\"PDO\",\"calendar\",\"ctype\",\"exif\",\"FFI\",\"fileinfo\",\"ftp\",\"gettext\",\"iconv\",\"Phar\",\"posix\",\"readline\",\"shmop\",\"sockets\",\"sysvmsg\",\"sysvsem\",\"sysvshm\",\"tokenizer\",\"Zend OPcache\"]",
+    "cpu_quota": "400000 100000",
+    "memory_quota": "4294967296",
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C"
+  },
+  "status": "failed",
+  "phases": [
+    {
+      "phase": "varied-keys",
+      "requests": 300,
+      "concurrency": 100,
+      "rate_limit_rps": 0,
+      "seconds": 10.414,
+      "throughput_rps": 28.807,
+      "successful_rps": 28.807,
+      "php_resources": {
+        "peak_rss_bytes": 64155648,
+        "cpu_seconds": 10.65,
+        "read_bytes": 16384,
+        "write_bytes": 1339392,
+        "processes": 2
+      },
+      "operations": {
+        "api": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "200": 100
+          },
+          "p50_ms": 2361.646,
+          "p95_ms": 5148.366,
+          "p99_ms": 5317.45,
+          "max_ms": 5384.193,
+          "response_bytes": 264763,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": false
+        },
+        "isolation": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "404": 100
+          },
+          "p50_ms": 2333.483,
+          "p95_ms": 4923.951,
+          "p99_ms": 5083.186,
+          "max_ms": 5084.956,
+          "response_bytes": 2100,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "media": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "200": 100
+          },
+          "p50_ms": 2314.338,
+          "p95_ms": 4847.57,
+          "p99_ms": 5252.627,
+          "max_ms": 5412.455,
+          "response_bytes": 2284,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        }
+      },
+      "passed": false
+    },
+    {
+      "phase": "repeated-keys",
+      "requests": 300,
+      "concurrency": 100,
+      "rate_limit_rps": 0,
+      "seconds": 6.987,
+      "throughput_rps": 42.935,
+      "successful_rps": 42.935,
+      "php_resources": {
+        "peak_rss_bytes": 62738432,
+        "cpu_seconds": 7.38,
+        "read_bytes": 0,
+        "write_bytes": 1368064,
+        "processes": 2
+      },
+      "operations": {
+        "api": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "200": 100
+          },
+          "p50_ms": 2285.298,
+          "p95_ms": 2427.694,
+          "p99_ms": 2447.233,
+          "max_ms": 2450.396,
+          "response_bytes": 173400,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "404": 100
+          },
+          "p50_ms": 2248.433,
+          "p95_ms": 2397.508,
+          "p99_ms": 2419.618,
+          "max_ms": 2427.354,
+          "response_bytes": 2100,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "media": {
+          "requests": 100,
+          "successes": 100,
+          "errors": 0,
+          "status_counts": {
+            "200": 100
+          },
+          "p50_ms": 2259.002,
+          "p95_ms": 2416.544,
+          "p99_ms": 2426.332,
+          "max_ms": 2448.486,
+          "response_bytes": 2200,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        }
+      },
+      "passed": true
+    }
+  ],
+  "corpus": {
+    "published_pages": 100000,
+    "workspace_count": 100,
+    "per_workspace": 1000,
+    "translations": 10000,
+    "body_bytes": 241543600,
+    "history_samples": 100,
+    "seed": 42,
+    "seconds": 58.305044925
+  },
+  "telemetry_delta": {
+    "http_requests_total{route=\"health\",method=\"GET\",status=\"2xx\"}": 0,
+    "http_request_duration_seconds_count{route=\"health\"}": 0,
+    "http_request_duration_seconds_sum{route=\"health\"}": 0.0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.005\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.01\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.025\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.05\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.3\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"10\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"+Inf\"}": 0,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"2xx\"}": 202,
+    "http_request_duration_seconds_count{route=\"api\"}": 404,
+    "http_request_duration_seconds_sum{route=\"api\"}": 20.163864,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.005\"}": 67,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.01\"}": 70,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.025\"}": 71,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.05\"}": 259,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.1\"}": 384,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.2\"}": 394,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.3\"}": 400,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.5\"}": 401,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"1\"}": 404,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"2\"}": 404,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"5\"}": 404,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"10\"}": 404,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"+Inf\"}": 404,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"2xx\"}": 202,
+    "http_request_duration_seconds_count{route=\"media\"}": 202,
+    "http_request_duration_seconds_sum{route=\"media\"}": 13.563541,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.005\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.01\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.025\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.05\"}": 70,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.1\"}": 194,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.2\"}": 198,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.3\"}": 198,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.5\"}": 198,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"1\"}": 202,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"2\"}": 202,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"5\"}": 202,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"10\"}": 202,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"+Inf\"}": 202,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"4xx\"}": 202,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"4xx\"}": 0
+  }
+}

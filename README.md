@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.5.4 — Performance Benchmarking
+
+Real disposable corpora at 1k, 10k, 50k and 100k public pages; two or more PHP HTTP nodes, per-operation latency and status checks, telemetry/resource snapshots, exact SQL search query plans and regression comparison. Full mode exercises Markdown Reader, PostgreSQL search, Studio writes and optional CI/backup/restore/reindex timings. Existing quotas and security policies are preserved; no database migration beyond schema 2 is needed. See [Performance benchmarking](docs/admin/performance.md) for commands, safety requirements, baseline evidence and the distinction between file-mode measurements and the full infrastructure gate.
 
 ## 0.5.3 — Observability & Diagnostics
 

@@ -1,0 +1,230 @@
+{
+  "format": 1,
+  "release": "0.5.4",
+  "profile": {
+    "pages": 10000,
+    "per_workspace": 1000,
+    "requests_per_phase": 120,
+    "concurrency": 8,
+    "nodes": 2,
+    "seed": 42,
+    "backend": "file",
+    "redis": false,
+    "full": false,
+    "telemetry": true,
+    "rate": 0,
+    "engine": "php-cli-server",
+    "maintenance": false
+  },
+  "environment": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "cpu_count": 5,
+    "php": "8.4.24",
+    "python": "3.13.5",
+    "kernel": "6.18.57",
+    "php_extensions": "[\"Core\",\"date\",\"libxml\",\"openssl\",\"pcre\",\"zlib\",\"filter\",\"hash\",\"json\",\"pcntl\",\"random\",\"Reflection\",\"SPL\",\"session\",\"standard\",\"sodium\",\"PDO\",\"calendar\",\"ctype\",\"exif\",\"FFI\",\"fileinfo\",\"ftp\",\"gettext\",\"iconv\",\"Phar\",\"posix\",\"readline\",\"shmop\",\"sockets\",\"sysvmsg\",\"sysvsem\",\"sysvshm\",\"tokenizer\",\"Zend OPcache\"]",
+    "cpu_quota": "400000 100000",
+    "memory_quota": "4294967296",
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C"
+  },
+  "status": "passed",
+  "phases": [
+    {
+      "phase": "varied-keys",
+      "requests": 120,
+      "concurrency": 8,
+      "rate_limit_rps": 0,
+      "seconds": 3.213,
+      "throughput_rps": 37.344,
+      "successful_rps": 37.344,
+      "php_resources": {
+        "peak_rss_bytes": 58384384,
+        "cpu_seconds": 3.43,
+        "read_bytes": 0,
+        "write_bytes": 532480,
+        "processes": 2
+      },
+      "operations": {
+        "api": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "200": 40
+          },
+          "p50_ms": 200.961,
+          "p95_ms": 424.16,
+          "p99_ms": 428.23,
+          "max_ms": 428.23,
+          "response_bytes": 106634,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "404": 40
+          },
+          "p50_ms": 166.383,
+          "p95_ms": 313.531,
+          "p99_ms": 395.564,
+          "max_ms": 395.564,
+          "response_bytes": 840,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "media": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "200": 40
+          },
+          "p50_ms": 194.204,
+          "p95_ms": 341.555,
+          "p99_ms": 422.551,
+          "max_ms": 422.551,
+          "response_bytes": 880,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        }
+      },
+      "passed": true
+    },
+    {
+      "phase": "repeated-keys",
+      "requests": 120,
+      "concurrency": 8,
+      "rate_limit_rps": 0,
+      "seconds": 2.767,
+      "throughput_rps": 43.366,
+      "successful_rps": 43.366,
+      "php_resources": {
+        "peak_rss_bytes": 59404288,
+        "cpu_seconds": 2.88,
+        "read_bytes": 0,
+        "write_bytes": 540672,
+        "processes": 2
+      },
+      "operations": {
+        "api": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "200": 40
+          },
+          "p50_ms": 189.38,
+          "p95_ms": 238.602,
+          "p99_ms": 263.475,
+          "max_ms": 263.475,
+          "response_bytes": 69360,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "404": 40
+          },
+          "p50_ms": 158.544,
+          "p95_ms": 225.79,
+          "p99_ms": 301.396,
+          "max_ms": 301.396,
+          "response_bytes": 840,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        },
+        "media": {
+          "requests": 40,
+          "successes": 40,
+          "errors": 0,
+          "status_counts": {
+            "200": 40
+          },
+          "p50_ms": 183.648,
+          "p95_ms": 265.138,
+          "p99_ms": 293.31,
+          "max_ms": 293.31,
+          "response_bytes": 880,
+          "error_examples": [],
+          "p95_limit_ms": 5000,
+          "passed": true
+        }
+      },
+      "passed": true
+    }
+  ],
+  "corpus": {
+    "published_pages": 10000,
+    "workspace_count": 10,
+    "per_workspace": 1000,
+    "translations": 1000,
+    "body_bytes": 24154360,
+    "history_samples": 10,
+    "seed": 42,
+    "seconds": 2.490360462
+  },
+  "telemetry_delta": {
+    "http_requests_total{route=\"health\",method=\"GET\",status=\"2xx\"}": 0,
+    "http_request_duration_seconds_count{route=\"health\"}": 0,
+    "http_request_duration_seconds_sum{route=\"health\"}": 0.0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.005\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.01\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.025\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.05\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.3\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"10\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"+Inf\"}": 0,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"2xx\"}": 82,
+    "http_request_duration_seconds_count{route=\"api\"}": 164,
+    "http_request_duration_seconds_sum{route=\"api\"}": 7.03604,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.005\"}": 26,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.01\"}": 26,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.025\"}": 26,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.05\"}": 110,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.1\"}": 156,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.2\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.3\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.5\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"1\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"2\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"5\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"10\"}": 164,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"+Inf\"}": 164,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"2xx\"}": 82,
+    "http_request_duration_seconds_count{route=\"media\"}": 82,
+    "http_request_duration_seconds_sum{route=\"media\"}": 4.413025,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.005\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.01\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.025\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.05\"}": 32,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.1\"}": 78,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.2\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.3\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.5\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"1\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"2\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"5\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"10\"}": 82,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"+Inf\"}": 82,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"4xx\"}": 82,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"4xx\"}": 0
+  }
+}

@@ -115,6 +115,8 @@ def native(g):
         args = shlex.split(command)
         if args[0] == '@php': args[0] = 'php'
         g.run(f'composer-{i+1:02d}-{Path(args[1]).stem}', args)
+    g.run('performance-policy',['python3','tests/performance-policy.py'])
+    g.run('performance-file',['python3','tests/performance-benchmark.py','--pages','100','--per-workspace','50','--requests','20','--concurrency','4','--full','--telemetry','--report-dir',str(g.report/'performance-file')],1200)
     g.run('monitoring-rules', ['docker','run','--rm','--entrypoint','/bin/promtool','-v',str(ROOT/'deploy/monitoring/alerts.yml')+':/rules/alerts.yml:ro','-v',str(ROOT/'tests/monitoring-rules.yml')+':/rules/tests.yml:ro','prom/prometheus:v3.5.0','test','rules','/rules/tests.yml'], 600)
     g.run('s3-https', ['bash','tests/recovery-s3.sh'], 1200)
     g.run('offline-search', ['node','tests/static-search-language.mjs'])
@@ -144,7 +146,8 @@ def postgres(g):
             '-c',"CREATE ROLE book_drill LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_drill_test_only'",
             '-c','ALTER DATABASE book_test OWNER TO book_app','-c','REVOKE CONNECT ON DATABASE book_test FROM PUBLIC',
             '-c','CREATE DATABASE book_drill OWNER book_drill','-c','REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC',
-            '-c','CREATE DATABASE book_migrations OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_migrations FROM PUBLIC'])
+            '-c','CREATE DATABASE book_migrations OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_migrations FROM PUBLIC',
+            '-c','CREATE DATABASE book_benchmark OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_benchmark FROM PUBLIC'])
         port=capture(['docker','port',pg,'5432/tcp'],g.env).rsplit(':',1)[1]
         rport=capture(['docker','port',redis,'6379/tcp'],g.env).rsplit(':',1)[1]
         g.env.update(BOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_test;connect_timeout=5',BOOK_PG_USER='book_app',BOOK_PG_PASSWORD='book_app_test_only')
@@ -160,6 +163,8 @@ def postgres(g):
         g.env.update(BOOK_REDIS_HOST='127.0.0.1',BOOK_REDIS_PORT=rport)
         g.run('redis-runtime',['php','tests/redis-runtime.php'])
         g.run('redis-http',['python3','tests/redis-http.py'])
+        benchmark_env=dict(g.env,BOOK_BENCHMARK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_benchmark;connect_timeout=5',BOOK_BENCHMARK_PG_USER='book_app',BOOK_BENCHMARK_PG_PASSWORD='book_app_test_only',BOOK_BENCHMARK_REDIS_HOST='127.0.0.1',BOOK_BENCHMARK_REDIS_PORT=rport)
+        g.run('performance-postgres',['python3','tests/performance-benchmark.py','--postgres','--redis','--full','--telemetry','--maintenance','--pages','1000','--per-workspace','500','--requests','60','--concurrency','8','--report-dir',str(g.report/'performance-postgres')],1800,benchmark_env)
     finally:
         for container in (pg,redis):
             # Preserve service diagnostics before cleanup if a test failed.

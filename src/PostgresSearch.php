@@ -7,7 +7,24 @@ require_once __DIR__.'/Observability.php';
 /** Transactional derived index, scoped to the same locked content revision as the Reader. */
 final class PostgresSearch
 {
-    private static function q(PDO $pdo,string $sql,array $args):\PDOStatement{$start=hrtime(true);$ok=false;try{$s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;}finally{Observability::operation('sql_search_query',$start,$ok);}}
+    /** Explicit CLI-only profiling of the actual query path, never enabled by HTTP or environment. */
+    private static ?array $plans=null;
+    private static function q(PDO $pdo,string $sql,array $args):\PDOStatement{
+        $start=hrtime(true);$ok=false;
+        try{
+            if(self::$plans!==null&&preg_match('/\A(?:SELECT|WITH)\b/i',$sql)){
+                $explain=$pdo->prepare('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '.$sql);$explain->execute($args);
+                self::$plans[]=json_decode($explain->fetchColumn(),true,512,JSON_THROW_ON_ERROR);
+            }
+            $s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;
+        }finally{Observability::operation('sql_search_query',$start,$ok);}
+    }
+    public static function explain(PDO $pdo,array $scope,string $visibility,string $role,array $options,bool $navigation=false):array{
+        if(PHP_SAPI!=='cli'||!$pdo->inTransaction()||self::$plans!==null)throw new \LogicException('Search profiling requires an isolated CLI transaction.');
+        self::$plans=[];
+        try{self::find($pdo,$scope,$visibility,$role,$options,$navigation);return self::$plans;}
+        finally{self::$plans=null;}
+    }
     public static function assertReady(PDO $pdo,array $scope):void
     {
         $pdo->query('SELECT locale FROM cajeer_book.search_document LIMIT 0');
