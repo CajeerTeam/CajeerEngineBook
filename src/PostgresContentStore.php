@@ -4,6 +4,8 @@ namespace CajeerBook;
 
 use CajeerEngine\Update\OperationFiles as Files;
 use PDO;
+require_once __DIR__.'/PostgresSearch.php';
+require_once __DIR__.'/Search.php';
 
 /** PostgreSQL content storage. Immutable media bytes remain on disk; identity shares the installation binding. */
 final class PostgresContentStore
@@ -166,6 +168,8 @@ final class PostgresContentStore
     /** Keep PHP array ordering and scalar types: JSON (not JSONB) preserves snapshot/digest semantics. */
     private function persist(PDO $pdo,array $before,array $after):void
     {
+        $previous=$before;$next=$after;
+        if($before!==[])PostgresSearch::assertReady($pdo,$this->params());
         $before=self::sections($before);$after=self::sections($after);$p=$this->params();
         $oldPositions=array_flip(array_keys($before));$position=0;
         foreach($before as $name=>$value)if(!array_key_exists($name,$after))$this->query($pdo,'DELETE FROM cajeer_book.content_section WHERE installation=? AND scope=? AND name=?',[...$p,(string)$name]);
@@ -187,6 +191,59 @@ final class PostgresContentStore
             }
         }
         $this->query($pdo,'UPDATE cajeer_book.content_store SET revision=revision+1 WHERE installation=? AND scope=?',$p);
+        PostgresSearch::sync($pdo,$p,$previous,$next);
+    }
+    public function search(string $visibility,string $role,array $options,bool $navigation):array
+    {
+        $pdo=$this->db();$pdo->beginTransaction();
+        try{$this->lock($pdo,false);$result=PostgresSearch::find($pdo,$this->params(),$visibility,$role,$options,$navigation);$pdo->commit();return $result;}
+        catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+    }
+    public function checkSearch():void{$this->searchInfo();}
+    /** Offline schema upgrade/rebuild; all scopes commit together, including archived ones. */
+    public static function reindex(string $root):array
+    {
+        $binding=self::identityBinding($root);if($binding===null)throw new \RuntimeException('PostgreSQL required.');
+        return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$binding){
+            Workspaces::assertRegistryDirectories($root,$identity);self::assertRegistry($root,$identity);
+            $pdo=self::connect();$pdo->beginTransaction();
+            try{
+                $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');
+                $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql');if($sql===false)throw new \RuntimeException('Missing PostgreSQL schema.');$pdo->exec($sql);
+                foreach(['search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm'] as $index){
+                    $valid=$pdo->query("SELECT indisvalid FROM pg_index WHERE indexrelid='cajeer_book.".$index."'::regclass")->fetchColumn();
+                    if(!in_array($valid,[true,1,'1','t'],true))$pdo->exec('REINDEX INDEX cajeer_book.'.$index);
+                }
+                $report=self::rebuildInstallation($pdo,$binding[0],$binding[1]);$pdo->commit();return $report;
+            }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        });
+    }
+    public function searchInfo():array
+    {
+        $pdo=$this->db();$pdo->beginTransaction();try{
+            $this->lock($pdo,false);PostgresSearch::assertReady($pdo,$this->params());
+            $count=(int)$this->query($pdo,'SELECT count(*) FROM cajeer_book.search_document WHERE installation=? AND scope=?',$this->params())->fetchColumn();
+            $expected=(int)$this->query($pdo,"SELECT count(*) FROM cajeer_book.pages WHERE installation=? AND scope=? AND value->>'published' IS NOT NULL",$this->params())->fetchColumn();
+            if($count!==$expected)throw new \RuntimeException('Search document count mismatch; reindex required.');
+            $indexes=(int)$pdo->query("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='cajeer_book.search_document'::regclass AND i.indisvalid AND c.relname IN ('search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm')")->fetchColumn();
+            if($indexes!==5)throw new \RuntimeException('Search indexes missing or invalid; reindex required.');
+            $revision=(int)$this->query($pdo,'SELECT revision FROM cajeer_book.search_state WHERE installation=? AND scope=?',$this->params())->fetchColumn();
+            $pdo->commit();return ['engine'=>'postgresql','documents'=>$count,'revision'=>$revision];
+        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+    }
+    public static function searchStatus(string $root):array
+    {
+        if(self::identityBinding($root)===null)throw new \RuntimeException('PostgreSQL required.');
+        return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root){
+            self::assertRegistry($root,$identity);$dirs=[$root];foreach($identity['workspaces'] as $w)if(!$w['legacy'])$dirs[]=Workspaces::directory($root,$w);
+            $result=[];foreach($dirs as $dir){$store=self::forDirectory($dir);$result[$store->scope]=$store->searchInfo()['documents'];}ksort($result);return $result;
+        });
+    }
+    private static function rebuildInstallation(PDO $pdo,string $id,string $binding):array
+    {
+        $q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$id]);if($q->fetchColumn()!==$binding)throw new \RuntimeException('PostgreSQL installation binding mismatch.');
+        $q=$pdo->prepare('SELECT scope FROM cajeer_book.content_store WHERE installation=? ORDER BY scope FOR UPDATE');$q->execute([$id]);$scopes=$q->fetchAll(PDO::FETCH_COLUMN);if(!in_array('legacy',$scopes,true))throw new \RuntimeException('Missing legacy scope.');
+        $report=[];foreach($scopes as $scope){$store=new self($id,$scope,$binding);$data=$store->load($pdo);BookStore::validateDatabase($data);PostgresSearch::sync($pdo,[$id,$scope],[],$data,true);$report[$scope]=count(BookStore::published($data));}ksort($report);return $report;
     }
     public function write(array $before,array $after):void
     {
@@ -259,6 +316,7 @@ final class PostgresContentStore
                     foreach($identity['workspaces'] as $w)if(!$w['legacy'])$dirs[Workspaces::directory($root,$w)]=false;
                     $report=[];
                     foreach($dirs as $dir=>$seed){$store=new BookStore($dir,$seed);$audit=(new StoreAudit($store,new MediaStore($dir,$store)))->run();if($audit['reference_mismatches']!==0)throw new \RuntimeException('Repair media references before identity migration.');$data=$store->read();BookStore::checkSize($data);$report[self::scope($root,$dir)]=['pages'=>count($data['pages']),'media'=>count($data['media']??[]),'history'=>count($data['history']??[])];}
+                    self::rebuildInstallation($pdo,$id,$marker[1]);
                     (new PostgresIdentityStore($id,$marker[1]))->import($pdo,$identity);$pdo->commit();
                     Files::write($root.'/'.self::IDENTITY_MARKER,$id.':'.$marker[1]."\n");return $report;
                 }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
@@ -295,6 +353,7 @@ final class PostgresContentStore
                         return ['pages'=>count($data['pages']),'media'=>count($data['media']??[]),'history'=>count($data['history']??[])];
                     });
                 }
+                self::rebuildInstallation($pdo,$id,$binding);
                 (new PostgresIdentityStore($id,$binding))->import($pdo,$identity);
                 $pdo->commit();
             }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}

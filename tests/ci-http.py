@@ -65,6 +65,9 @@ def exercise(base,data,env):
     assert digest.encode() in admin.request(route+'?id='+bid,200)[1];post(owner,route,'approve',403,id=bid,digest=digest);post(admin,route,'approve',200,id=bid,digest=digest,note='Checked release')
     result=api({'action':'publish','id':bid,'digest':digest},token=token);assert result['status']=='published' and len(json.loads(viewer.request(prefix+'/api/v1/pages',200)[1]))==2
     before=db()['pages'];assert api({'action':'publish','id':bid,'digest':digest},token=token)['status']=='published' and db()['pages']==before;outsider.request(prefix+'/api/v1/pages',404);guest.request(prefix+'/api/v1/pages',401)
+    if FULL:
+        h,raw=viewer.request(prefix+'/api/v1/search?q=Next',200);assert any(hit['key']=='guide/1/next' for hit in json.loads(raw)) and h['X-Search-Engine']==('postgresql' if POSTGRES else 'portable')
+        guest.request(prefix+'/api/v1/search?q=Next',401)
     check('whole-version approval, independent reviewer, build-only token, idempotent atomic deployment and private Reader')
     if FULL:
         export_payload={'action':'export','id':bid,'digest':digest}

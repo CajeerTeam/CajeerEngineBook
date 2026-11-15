@@ -36,6 +36,14 @@ final class BookStore {
         foreach(explode('/',$path) as $part) if(!self::slug($part)) throw new \InvalidArgumentException('Invalid page path');
         return "$book/$version/$path";
     }
+    public function search(string $visibility,string $role,array $options,bool $navigation=false):array {
+        if($pg=$this->backend())return $pg->search($visibility,$role,$options,$navigation);
+        return $this->snapshot(fn($db)=>Search::portable($db,$visibility,$role,$options,$navigation));
+    }
+    public function searchInfo():array {
+        if($pg=$this->backend())return $pg->searchInfo();
+        return $this->snapshot(fn($db)=>['engine'=>'portable','documents'=>count(self::published($db)),'revision'=>null]);
+    }
     public function read(): array {
         if($pg=$this->backend())return $pg->transaction(false,function(array $db){self::validateDatabase($db);return $db;});
         return $this->readFile();
@@ -121,6 +129,7 @@ final class BookStore {
         Files::write($path,$json);
     }
     public function checkReady(): void {
+        if($pg=$this->backend())$pg->checkSearch();
         $this->snapshot(function(array $db): void {
             if(count($db['pages'])>1000||count($db['media']??[])>MediaStore::MAX_FILES)throw new \RuntimeException('Store record quota exceeded');
             foreach($db['pages'] as $entry){

@@ -50,3 +50,44 @@ CREATE TABLE IF NOT EXISTS cajeer_book.activity PARTITION OF cajeer_book.content
 CREATE TABLE IF NOT EXISTS cajeer_book.openapi PARTITION OF cajeer_book.content_record FOR VALUES IN ('root:openapi');
 CREATE TABLE IF NOT EXISTS cajeer_book.other_content PARTITION OF cajeer_book.content_record DEFAULT;
 CREATE INDEX IF NOT EXISTS content_record_order ON cajeer_book.content_record (installation,scope,section,position);
+
+-- Derived published search projection (0.4.3). Never indexes drafts or historical revisions.
+CREATE TABLE IF NOT EXISTS cajeer_book.search_state (
+    installation text NOT NULL, scope text NOT NULL, revision bigint NOT NULL,
+    PRIMARY KEY (installation,scope),
+    FOREIGN KEY (installation,scope) REFERENCES cajeer_book.content_store ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS cajeer_book.search_document (
+    installation text NOT NULL, scope text NOT NULL, page_key text NOT NULL,
+    book text NOT NULL, version text NOT NULL, title text NOT NULL, section text NOT NULL,
+    page_order integer NOT NULL, is_public boolean NOT NULL, body text NOT NULL,
+    simple_vector tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('pg_catalog.simple'::regconfig,title),'A') ||
+        setweight(to_tsvector('pg_catalog.simple'::regconfig,regexp_replace(page_key,'[^a-zA-Z0-9]+',' ','g') || ' ' || section),'B') ||
+        setweight(to_tsvector('pg_catalog.simple'::regconfig,body),'D')) STORED,
+    english_vector tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('pg_catalog.english'::regconfig,title),'A') ||
+        setweight(to_tsvector('pg_catalog.english'::regconfig,section),'B') ||
+        setweight(to_tsvector('pg_catalog.english'::regconfig,body),'D')) STORED,
+    russian_vector tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('pg_catalog.russian'::regconfig,title),'A') ||
+        setweight(to_tsvector('pg_catalog.russian'::regconfig,section),'B') ||
+        setweight(to_tsvector('pg_catalog.russian'::regconfig,body),'D')) STORED,
+    PRIMARY KEY (installation,scope,page_key),
+    FOREIGN KEY (installation,scope) REFERENCES cajeer_book.content_store ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS search_simple_gin ON cajeer_book.search_document USING gin(simple_vector);
+CREATE INDEX IF NOT EXISTS search_english_gin ON cajeer_book.search_document USING gin(english_vector);
+CREATE INDEX IF NOT EXISTS search_russian_gin ON cajeer_book.search_document USING gin(russian_vector);
+CREATE INDEX IF NOT EXISTS search_scope_filter ON cajeer_book.search_document(installation,scope,book,version,is_public);
+
+-- pg_trgm is trusted in PostgreSQL 16. Respect preinstalled extension schemas.
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA cajeer_book;
+DO $search_indexes$
+DECLARE ext_schema text;
+BEGIN
+    SELECT n.nspname INTO STRICT ext_schema FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm';
+    EXECUTE format('CREATE INDEX IF NOT EXISTS search_title_trgm ON cajeer_book.search_document USING gin(title %I.gin_trgm_ops)',ext_schema);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS search_path_trgm ON cajeer_book.search_document USING gin(page_key %I.gin_trgm_ops)',ext_schema);
+END;
+$search_indexes$;

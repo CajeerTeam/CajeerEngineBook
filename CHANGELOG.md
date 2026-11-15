@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3 — Full-Text Search
+
+- Transactionally maintained PostgreSQL published-document index with weighted GIN vectors, English/Russian stemming, phrase/prefix matching, relevance, safe snippets and indexed `pg_trgm` title/path typo fallback.
+- Reader/API book/version filters and pagination, access-scoped totals, admin Search Inspector and offline reindex/check CLI. Existing file deployments retain bounded lexical search; Static Export stays independent.
+- Atomic index upgrade/rebuild for all registered scopes and readiness checks; SQL and HTTP regression scenarios for isolation, ranking, publication, visibility, rollback and recovery.
+
 ## 0.4.2 — PostgreSQL Identity & Migration
 
 - SQL-authoritative users, sessions, reset digests, rate limits, organizations, invitations, workspaces, memberships, organization roles, workspace overrides and identity activity; existing login and permission flows use the new backend. Installation-scoped constraints and immutable owner binding preserve isolation.

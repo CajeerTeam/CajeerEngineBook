@@ -41,7 +41,7 @@ final class Permissions
     public static function studio(string $role,string $path,string $method,string $action):bool {
         if(!self::allows($role,'edit'))return false;
         if(in_array($method,['GET','HEAD'],true)){
-            if(in_array($path,['/studio/automation','/studio/ci'],true))return self::allows($role,'manage');
+            if(in_array($path,['/studio/automation','/studio/ci','/studio/search'],true))return self::allows($role,'manage');
             if(in_array($path,['/studio/export','/studio/media/backup','/studio/static-export'],true))return self::allows($role,'export');
             return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
         }

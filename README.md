@@ -1,6 +1,26 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.3 — Full-Text Search
+
+The Reader and existing `GET /api/v1/search` now use a PostgreSQL published-document index in SQL mode. Weighted title, section, normalized path and rendered Markdown body are indexed by GIN (`simple`, `english`, `russian`); queries support multiple required terms, prefixes, quoted phrases and English/Russian stemming. Ranking uses `ts_rank_cd`; single unquoted terms with no exact/full-text matches can use indexed `pg_trgm` title/path similarity. Snippets are plain text, with bracket match markers, and escaped by the Reader. Workspace scope and current access rules restrict documents **before** ranking, counting and snippet generation. Drafts never enter this index. Publish, unpublish, rename, book visibility changes and CI publishing update the projection in the same transaction as the content revision. A stale/missing index is an error, not a fallback to old files.
+
+Search accepts `q`, optional `book` and `version` slugs, `limit` (1–50) and `offset` (0–1000). The API retains its JSON array and adds `snippet` and `score` per hit; `X-Total-Count`, `X-Search-Engine`, and `X-Search-Match` report authorized count, backend and match mode. The Reader offers filters and pagination. Owners/admins can use **Studio → Search inspector** to inspect counts, revision and query ranking with public/member visibility. File-backed installations have a bounded in-process lexical search with the same access rules and API; PostgreSQL-only stemming, trigram matching and persistent indexes require migration. Static Export's offline search is unchanged.
+
+### Upgrade an existing PostgreSQL 0.4.2 installation
+
+1. Stop all application and worker writers. Make a complete backup using the **old 0.4.2 code** (`php bin/installation.php backup /secure/book-042-backup`). Keep the same database, namespace, credentials and data directory.
+2. Overlay the 0.4.3 files, rebuild the app image if applicable, and install Composer dependencies. PostgreSQL 16 is the target. The application database role must be able to create the trusted `pg_trgm` extension (database CREATE privilege), or an administrator must preinstall it in a schema usable by the application role. The schema migration respects an existing extension's schema.
+3. With the normal PostgreSQL environment and data-directory permissions, run:
+
+   ```sh
+   php bin/search.php reindex --offline
+   php bin/search.php check
+   ```
+
+   With Compose, use `docker compose -f compose.yaml -f compose.postgres.yaml run --rm --no-deps --user www-data book php bin/search.php reindex --offline` and repeat with `check`. Reindex creates the schema and reconstructs every registered scope (including archived workspaces) from **current SQL** in a single transaction; it does not reimport JSON. The check reports indexed document counts per scope and verifies revision, counts and index validity. Do not start the new application until it passes. Fresh and direct file migrations build the index as part of `bin/postgres-content.php migrate --offline`; for an upgrade from 0.4.1 follow the identity upgrade below, then run the search check/reindex.
+4. Start services and check `/health/ready`, Reader search, authenticated workspace search and Studio. Use the same offline reindex procedure to recover the derived index; portable backups do not need to include it. Current content/identity quotas remain in place. The index avoids loading all page bodies per query; no large-installation performance SLA is asserted.
 
 ## 0.4.2 — PostgreSQL Identity & Migration
 
@@ -29,11 +49,11 @@ docker compose -f compose.yaml -f compose.postgres.yaml up -d --wait book
 
 If the installation is still file-backed, use the PostgreSQL deployment procedure below. A direct migration now transfers identity and content together in one SQL transaction, including all archived workspaces. Identity schemas 1–4 and content schemas 1–6 are supported. A fresh installation initializes an empty SQL identity (use `bin/identity.php init` or the existing first-admin flow). No post-cutover `identity.json` is created by the application.
 
-## PostgreSQL deployment — content and identity (0.4.1–0.4.2)
+## PostgreSQL deployment — content and identity (0.4.1–0.4.3)
 
 PostgreSQL is an opt-in **active content backend**, not a mirror or search-only database. In this mode every BookStore read and mutation (Reader, Studio, API, page tree, history, review, media metadata, Git/OpenAPI import, CI build/publish, automation and Static Export) uses PostgreSQL. Each workspace has an installation-scoped transaction row; shared locks pin reads/exports, exclusive locks serialize writes and media lifecycle changes. Changed records are inserted/updated/deleted in a single transaction, including history, review state, CI and activity. Existing page revision and review checks remain in force. The `cajeer_book` schema stores individual pages (draft and published snapshots), books, media metadata, revisions, reviews, CI builds/tokens, automation jobs/receipts and other content records in partitioned relational tables. JSON values retain the original PHP key order and snapshot/digest semantics; this is not a whole-workspace JSON document in one SQL row. Existing page quotas and the portable 32 MiB metadata limit remain. The public API and URLs do not change.
 
-**Scope:** PostgreSQL 16 is the deployment/test target. In 0.4.2 both identity and content metadata are SQL-authoritative; immutable media bytes, binding markers and integration keys remain in the protected `BOOK_DATA_DIR` and must be preserved. File-mode installs continue to work without PostgreSQL until explicitly migrated. Full-text indexing, Redis and distributed workers are subsequent releases. Use the preceding upgrade instructions if already on PostgreSQL 0.4.1; the following procedure is for file-backed or fresh installations.
+**Scope:** PostgreSQL 16 is the deployment/test target. In 0.4.2 both identity and content metadata are SQL-authoritative; immutable media bytes, binding markers and integration keys remain in the protected `BOOK_DATA_DIR` and must be preserved. File-mode installs continue to work without PostgreSQL until explicitly migrated. Full-text indexing is available in 0.4.3; Redis and distributed workers are subsequent releases. Use the preceding upgrade instructions if already on PostgreSQL 0.4.1; the following procedure is for file-backed or fresh installations.
 
 ### Migrate a file-backed or fresh native installation
 
