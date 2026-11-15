@@ -1,6 +1,59 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.1 — PostgreSQL Content Storage
+
+PostgreSQL is an opt-in **active content backend**, not a mirror or search-only database. In this mode every BookStore read and mutation (Reader, Studio, API, page tree, history, review, media metadata, Git/OpenAPI import, CI build/publish, automation and Static Export) uses PostgreSQL. Each workspace has an installation-scoped transaction row; shared locks pin reads/exports, exclusive locks serialize writes and media lifecycle changes. Changed records are inserted/updated/deleted in a single transaction, including history, review state, CI and activity. Existing page revision and review checks remain in force. The `cajeer_book` schema stores individual pages (draft and published snapshots), books, media metadata, revisions, reviews, CI builds/tokens, automation jobs/receipts and other content records in partitioned relational tables. JSON values retain the original PHP key order and snapshot/digest semantics; this is not a whole-workspace JSON document in one SQL row. Existing page quotas and the portable 32 MiB metadata limit remain. The public API and URLs do not change.
+
+**Scope:** PostgreSQL 16 is the deployment/test target. Identity, sessions, organization/workspace registry and original immutable media bytes remain in the existing protected `BOOK_DATA_DIR`; they must be preserved and backed up. PostgreSQL stores media metadata and publication references, not binary media. File-mode installs continue to work without PostgreSQL until explicitly migrated. Full-text indexing, identity migration, Redis and distributed workers are subsequent releases; 0.4.1 is still single-node for identity, media and worker coordination.
+
+### Upgrade an existing native installation
+
+1. Install PHP `pdo_pgsql` and the existing locked Composer/Mermaid dependencies. Provision a dedicated PostgreSQL database and a non-superuser role that owns it (or an equivalent role with permission to create/use the `cajeer_book` schema and its objects). Use UTF-8, persistent storage and trusted database TLS (`sslmode=verify-full` plus the correct CA for remote deployments).
+2. **Stop all web processes, workers and standalone writers**. With the original data directory selected and `BOOK_PG_DSN` unset, run the full portable installation backup before enabling PostgreSQL. Verify and retain it outside the data directory. Use `php bin/installation.php check` to audit the source; repair any reported legacy media reference indexes with the documented `verify-data.php --repair-media-references` before migration. For old adopted seed-only installs, use the existing explicit legacy seed materialization command if appropriate.
+3. Configure the following variables for the same restricted OS user that owns the data directory. Generate a new random namespace once per installation and keep it permanently in protected deployment configuration. Do not put secrets in a DSN, source control or logs.
+
+```sh
+export BOOK_DATA_DIR=/var/lib/cajeerbook
+# Run before setting BOOK_PG_DSN; destination must be new and outside BOOK_DATA_DIR.
+php bin/installation.php backup /secure/book-040-backup
+export BOOK_PG_NAMESPACE="$(php -r 'echo bin2hex(random_bytes(16));')"
+export BOOK_PG_DSN='pgsql:host=127.0.0.1;port=5432;dbname=book;connect_timeout=5'
+export BOOK_PG_USER=book
+# Supply BOOK_PG_PASSWORD from your protected deployment configuration.
+php bin/postgres-content.php migrate --offline
+php bin/postgres-content.php check
+```
+
+4. Start web and worker with the same `BOOK_DATA_DIR`, `BOOK_PG_DSN`, `BOOK_PG_USER`, `BOOK_PG_PASSWORD`, `BOOK_PG_NAMESPACE` and existing integration keys. Check `/health/ready`, login, Reader, Studio, a private workspace, media and CI publication. `migrate --offline` also initializes a fresh installation (the normal demo seed unless a portable store is present). It creates no new `books.json` after cutover, including new workspaces.
+
+Migration audits every registered workspace (including archived ones) and the legacy root, verifies media integrity and the portable metadata quota, inserts all content in one SQL transaction, and checks exact round-trip of the source arrays. `postgres.migrating` is a durable migration binding; `postgres.required` is written only after SQL commit. They prevent accidentally attaching another installation and prevent file-mode fallback after migration starts. If migration fails, **keep services stopped**, fix the source or connectivity and rerun with the same namespace and pending marker. If SQL committed but the final marker could not be written, the rerun accepts existing rows only when every record and scope matches exactly. Do not delete markers to switch backends. The pre-cutover JSON files are retained as historical source files; after cutover they are stale and must not be used for reads, writes or backup. A database outage/missing scope or a registry mismatch fails closed. Never downgrade only the application or restore a stale JSON directory after SQL writes. For rollback restore the matched pre-upgrade installation backup, accepting loss of changes made after it, or export a fresh portable backup while PostgreSQL is healthy and restore it offline to a separate location.
+
+### Docker Compose (optional PostgreSQL mode)
+
+The original `compose.yaml` remains file-mode compatible. The `compose.postgres.yaml` overlay adds a private PostgreSQL 16 service and persistent `book-postgres` volume. Its first initialization creates a non-superuser `book` application role owning the dedicated `book` database; the separate admin password is used only by PostgreSQL. For existing installs, first export a full portable backup outside the book volume and stop all writers. Preserve the current `book-data` volume and Compose project name. Set `BOOK_PG_NAMESPACE`, `BOOK_PG_PASSWORD` and a separate `BOOK_PG_ADMIN_PASSWORD` in protected environment/0600 `.env` (generate passwords with a secure random generator). Retain the namespace and passwords across restarts; changing initialization variables does not rotate credentials in an already initialized PostgreSQL volume.
+
+```sh
+docker compose stop book worker
+docker compose -f compose.yaml -f compose.postgres.yaml build book
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --wait postgres
+docker compose -f compose.yaml -f compose.postgres.yaml run --rm --no-deps --user www-data book php bin/postgres-content.php migrate --offline
+docker compose -f compose.yaml -f compose.postgres.yaml up -d --wait book
+# Optional automation worker:
+docker compose -f compose.yaml -f compose.postgres.yaml --profile automation up -d worker
+```
+
+The app and worker share the same `book-data` volume and PostgreSQL configuration. No database port is published. Do not use `down -v` for a real installation. Always use the overlay for app/worker operations after switching.
+
+### Backup, recovery and tests
+
+`php bin/installation.php backup NEW_DIRECTORY` reads the live PostgreSQL content through the workspace snapshot transactions and includes identity, media, history, CI and all registered scopes. The portable TAR/installation formats remain compatible. Stop writers for a complete cross-workspace recovery point; identity and media are not in PostgreSQL. Keep integration encryption keys separately, preserve the database binding marker for database-native backups, and never rely on copying `books.json` or `pg_dump` alone. To restore a portable installation backup, restore to a **new offline directory**, set that directory as `BOOK_DATA_DIR`, use a **new** namespace, and run `postgres-content.php migrate --offline` and `check` before switching traffic. Restored sessions are intentionally invalidated by the existing portable backup format; rotate restored CI/integration credentials as needed. Direct workspace-only TAR restore into a live PostgreSQL installation is refused in this release; use the full portable recovery path. An interrupted workspace creation can leave an unregistered SQL scope/directory because identity still commits to disk separately; readiness and backup refuse registry mismatches rather than silently omit content. Preserve and inspect such data before operator recovery. Do not manually delete SQL rows to repair a live installation.
+
+- File backend regression suite: `env -u BOOK_PG_DSN composer test`.
+- Real PostgreSQL test (disposable database only): set `BOOK_PG_DSN`, `BOOK_PG_USER`, `BOOK_PG_PASSWORD`, then `php tests/postgres-content.php`.
+- Real HTTP CI integration with PostgreSQL: `python3 tests/ci-http.py --postgres`. It runs Markdown/media import, RBAC, review, atomic publication, rollback and static artifact export on actual PostgreSQL.
+- GitHub CI has a dedicated PostgreSQL 16 service job; existing file-mode and Docker release tests remain. `php tests/postgres-policy.php` tests serialization and fail-closed configuration without a DB; it is not a database integration test.
 
 ## 0.4.0 — Developer Documentation Stable
 

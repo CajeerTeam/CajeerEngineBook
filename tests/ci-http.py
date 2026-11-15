@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Real HTTP integration; --policy-only uses prevalidated plain Markdown bundle fixtures."""
-import base64, importlib.util, json, os, re, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile, hashlib
+import base64, importlib.util, json, os, re, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile, hashlib, uuid
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('workspace_http',ROOT/'tests/workspaces-http.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
 Client,post,check,PASSWORD=w.Client,w.post,w.check,w.PASSWORD
 FULL='--policy-only' not in sys.argv
+POSTGRES='--postgres' in sys.argv
 
 def exercise(base,data,env):
     owner,admin,editor,viewer,outsider,guest=[Client(base) for _ in range(6)];owner.login()
@@ -20,7 +21,9 @@ def exercise(base,data,env):
     for name,role in [('manager','admin'),('writer','editor')]:post(owner,org,'role',revision=rev(),user=uid(name),role=role)
     for name in ['Release','Other']:post(owner,'/workspaces','create',organization=oid,name=name,slug=name.lower())
     spaces={ws['name']:ws for ws in identity()['workspaces'].values()};wid=spaces['Release']['id'];prefix='/w/'+oid+'/'+wid;other='/w/'+oid+'/'+spaces['Other']['id'];route=prefix+'/studio/ci';endpoint=prefix+'/api/v1/ci';scope='guide/1';store=data/'workspaces'/oid/wid
-    def db():return json.loads((store/'books.json').read_text())
+    def db():
+        if POSTGRES:return json.loads(php('echo json_encode((new CajeerBook\\BookStore($argv[1],false))->read(), JSON_THROW_ON_ERROR);'))
+        return json.loads((store/'books.json').read_text())
     def api(payload,status=200,token='',path=endpoint,content_type='application/json',client=guest):
         req=urllib.request.Request(base+path,data=json.dumps(payload).encode(),headers={'Content-Type':content_type,**({'Authorization':'Bearer '+token} if token else {})})
         try:r=client.opener.open(req,timeout=20)
@@ -105,6 +108,10 @@ def exercise(base,data,env):
 if __name__=='__main__':
     with tempfile.TemporaryDirectory(prefix='book-ci-http-') as tmp:
         tmp=Path(tmp);data=tmp/'data';env=dict(os.environ,BOOK_DATA_DIR=str(data),BOOK_SECURE_COOKIE='0',BOOK_ADMIN_HASH=subprocess.check_output(['php','-r','echo password_hash($argv[1], PASSWORD_DEFAULT);',PASSWORD],text=True))
+        if POSTGRES:
+            if not env.get('BOOK_PG_DSN'):raise RuntimeError('BOOK_PG_DSN required for PostgreSQL HTTP test')
+            env['BOOK_PG_NAMESPACE']=uuid.uuid4().hex
+            subprocess.run(['php','bin/postgres-content.php','migrate','--offline'],cwd=ROOT,env=env,check=True)
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         with (tmp/'server.log').open('w+') as log:
             server=subprocess.Popen(['php','-S',f'127.0.0.1:{port}','-t','public','public/router.php'],cwd=ROOT,env=env,stdout=log,stderr=log)
@@ -115,4 +122,7 @@ if __name__=='__main__':
                     except OSError:time.sleep(.1)
                 exercise(base,data,env)
             except Exception:log.seek(0);print(log.read());raise
-            finally:server.terminate();server.wait(timeout=5)
+            finally:
+                server.terminate();server.wait(timeout=5)
+                if POSTGRES:
+                    subprocess.run(['php','-r','require "bootstrap.php";$p=CajeerBook\\PostgresContentStore::connect();$q=$p->prepare("DELETE FROM cajeer_book.content_installation WHERE installation=?");$q->execute([getenv("BOOK_PG_NAMESPACE")]);'],cwd=ROOT,env=env,check=True)

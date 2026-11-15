@@ -12,6 +12,6 @@ try{
     if(!$w||$w['legacy'])throw new InvalidArgumentException('Unknown or legacy workspace; use media-backup.php for legacy');
     $dir=Workspaces::directory($data,$w);$archive=DataDirectory::resolve(dirname($argv[3]),$root.'/public').'/'.basename($argv[3]);
     if($cmd==='backup'){$books=new BookStore($dir,false);(new MediaBackup($dir,$books,new MediaStore($dir,$books)))->create($archive);}
-    else{Files::dir(dirname($dir));MediaBackup::restore($archive,$dir);}
+    else{if(getenv('BOOK_PG_DSN')||CajeerBook\PostgresContentStore::marker($data)!==null)throw new RuntimeException('PostgreSQL workspace restore requires full installation restore into a new directory and migration.');Files::dir(dirname($dir));MediaBackup::restore($archive,$dir);}
     echo "OK\n";
 }catch(Throwable $e){fwrite(STDERR,$e->getMessage()."\n");exit(1);}

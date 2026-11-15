@@ -52,19 +52,20 @@ final class InstallationBackup
     public static function materializeLegacySeed(string $root,string $public):void
     {
         $root=DataDirectory::resolve($root,$public);if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
+        if(PostgresContentStore::marker($root)!==null||getenv('BOOK_PG_DSN'))throw new \RuntimeException('Seed materialization is only for legacy file storage.');
         (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root){
             if(!Workspaces::legacy($identity)||file_exists($root.'/books.json')||is_link($root.'/books.json')||glob(Files::path($root,'media').'/*'))throw new \InvalidArgumentException('Not a seed-only adopted installation');
             (new BookStore($root))->materialize();
         });
     }
     /** Check all registered stores, including archived ones; refuse to repair implicitly. */
-    public static function audit(string $root,string $public):array
+    public static function audit(string $root,string $public,bool $portable=false):array
     {
         $root=DataDirectory::resolve($root,$public);if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
-        return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root){
-            Workspaces::assertRegistryDirectories($root,$identity);$out=[];$legacy=new BookStore($root,Workspaces::legacy($identity)===null);
+        return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$portable){
+            Workspaces::assertRegistryDirectories($root,$identity);if(!$portable)PostgresContentStore::assertRegistry($root,$identity);$out=[];$legacy=new BookStore($root,Workspaces::legacy($identity)===null,$portable);
             $out['legacy']=(new StoreAudit($legacy,new MediaStore($root,$legacy)))->run();
-            foreach($identity['workspaces'] as $w){if($w['legacy'])continue;$dir=Workspaces::directory($root,$w);$books=new BookStore($dir,false);$out[$w['id']]=(new StoreAudit($books,new MediaStore($dir,$books)))->run();}
+            foreach($identity['workspaces'] as $w){if($w['legacy'])continue;$dir=Workspaces::directory($root,$w);$books=new BookStore($dir,false,$portable);$out[$w['id']]=(new StoreAudit($books,new MediaStore($dir,$books)))->run();}
             foreach($out as $id=>$r)if($r['reference_mismatches']!==0)throw new \RuntimeException('Media index mismatch in '.$id.'; run verify-data.php with explicit repair before backup');
             return ['identity_schema'=>$identity['schema'],'users'=>count($identity['users']),'organizations'=>count($identity['organizations']),'stores'=>$out];
         });
@@ -76,7 +77,7 @@ final class InstallationBackup
         $stage=self::stage($target);
         try{
             (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage){
-                Workspaces::assertRegistryDirectories($root,$identity);
+                Workspaces::assertRegistryDirectories($root,$identity);PostgresContentStore::assertRegistry($root,$identity);
                 Files::write($stage.'/identity.json',json_encode($identity,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");$manifest=['format'=>1,'created'=>gmdate('c'),'files'=>['identity.json'=>self::entry($stage.'/identity.json')]];
                 $stores=['legacy.tar'=>[$root,Workspaces::legacy($identity)===null]];
                 foreach($identity['workspaces'] as $w)if(!$w['legacy'])$stores[$w['id'].'.tar']=[Workspaces::directory($root,$w),false];
@@ -112,7 +113,7 @@ final class InstallationBackup
             $legacy=$stage.'/.legacy';MediaBackup::restore(self::verifyFile($bundle,'legacy.tar',$files['legacy.tar'],self::MAX_TAR),$legacy);
             foreach(['books.json','media'] as $name)if(file_exists($legacy.'/'.$name)&&!rename($legacy.'/'.$name,$stage.'/'.$name))throw new \RuntimeException('Cannot install legacy content');rmdir($legacy);
             foreach($workspaces as $w){if($w['legacy'])continue;$dir=Workspaces::directory($stage,$w);Files::dir(dirname($dir));$name=$w['id'].'.tar';MediaBackup::restore(self::verifyFile($bundle,$name,$files[$name],self::MAX_TAR),$dir);}
-            self::audit($stage,$public);self::publish($stage,$target);
+            self::audit($stage,$public,true);self::publish($stage,$target);
         }finally{self::clean($stage);}
     }
 }

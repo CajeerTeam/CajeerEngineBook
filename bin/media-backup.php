@@ -11,6 +11,10 @@ try{
     if($argv[1]==='backup'){
         $dir=DataDirectory::resolve($argv[2],dirname(__DIR__).'/public');if(!is_dir($dir)||is_link($dir))throw new InvalidArgumentException('Data directory must exist');
         $books=new BookStore($dir);(new MediaBackup($dir,$books,new MediaStore($dir,$books)))->create(DataDirectory::resolve(dirname($argv[3]),dirname(__DIR__).'/public').'/'.basename($argv[3]));
-    }else MediaBackup::restore($argv[2],DataDirectory::resolve($argv[3],dirname(__DIR__).'/public'));
+    }else{
+        $target=DataDirectory::resolve($argv[3],dirname(__DIR__).'/public');
+        if(($target===CajeerBook\PostgresContentStore::configuredRoot()||str_starts_with($target,CajeerBook\PostgresContentStore::configuredRoot().'/'))&&(getenv('BOOK_PG_DSN')||CajeerBook\PostgresContentStore::marker(CajeerBook\PostgresContentStore::configuredRoot())!==null))throw new RuntimeException('Restore to a new offline directory, then migrate with a new PostgreSQL namespace.');
+        MediaBackup::restore($argv[2],$target);
+    }
     echo "OK\n";
 }catch(Throwable $e){fwrite(STDERR,$e->getMessage()."\n");exit(1);}

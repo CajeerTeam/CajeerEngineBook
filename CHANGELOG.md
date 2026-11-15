@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — PostgreSQL Content Storage
+
+- Optional PostgreSQL 16 content backend used by the existing Reader, Studio, API, review, CI, Git/OpenAPI, automation, media and Static Export workflows. Page records, book registry, media metadata, history, reviews, CI builds/tokens, activity and automation jobs are independently stored in scoped relational rows; JSON values preserve exact snapshot ordering and digest compatibility.
+- Transactional shared/exclusive workspace row locks, incremental record writes, rollback, optimistic revision checks and installation binding. No fallback to stale JSON after migration or an incomplete cutover; database outages fail closed.
+- Offline all-workspace migration of schemas 1–6, including archived workspaces, with full legacy audit, media hash verification and exact round-trip before switching. Existing media bytes and identity schema 4 remain on disk; portable backup/restore includes PostgreSQL content.
+- Optional Compose PostgreSQL deployment with non-superuser application role, persistent database volume and PDO PostgreSQL driver. Real PostgreSQL migration/concurrency/backup tests and full HTTP CI import/review/publish/export gate; legacy mode remains supported.
+
 ## 0.4.0 — Developer Documentation Stable
 
 - Connect CI publication to public static delivery: `ci.py export ID DIGEST NEW.zip` validates a retained published bundle against the current public snapshots and media under the export lock, with explicit release metadata in the archive.

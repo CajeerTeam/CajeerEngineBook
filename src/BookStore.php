@@ -13,11 +13,23 @@ require_once __DIR__.'/OpenApiReference.php';
 require_once __DIR__.'/OpenApiStore.php';
 require_once __DIR__.'/AutomationQueue.php';
 require_once __DIR__.'/CiPublishing.php';
+require_once __DIR__.'/PostgresContentStore.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
     public function setHistoryActor(array $user):void { $this->historyActor=['id'=>$user['id'],'username'=>$user['username']]; }
-    public function __construct(private readonly string $dir, private readonly bool $seed=true) {}
+    private ?PostgresContentStore $postgres=null;
+    public function __construct(private readonly string $dir, private readonly bool $seed=true, private readonly bool $portable=false) {}
+    private function backend():?PostgresContentStore {
+        if($this->portable)return null;
+        return $this->postgres??=PostgresContentStore::forDirectory($this->dir);
+    }
+    /** New workspace creation never falls back to a JSON file in PostgreSQL mode. */
+    public function initialize():void {
+        $db=['schema'=>1,'pages'=>[],'media'=>[],'books'=>[]];Files::dir($this->dir);
+        if($pg=$this->backend()){$pg->initialize($db);return;}
+        self::writeDatabase($this->dir.'/books.json',$db);
+    }
     public static function slug(string $s): bool { return preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$s)===1 && !in_array($s,['.','..'],true); }
     public static function key(string $book,string $version,string $path): string {
         if (!self::slug($book)||!self::slug($version)||strlen($path)>250||!$path) throw new \InvalidArgumentException('Invalid book/version/path');
@@ -25,11 +37,18 @@ final class BookStore {
         return "$book/$version/$path";
     }
     public function read(): array {
+        if($pg=$this->backend())return $pg->transaction(false,function(array $db){self::validateDatabase($db);return $db;});
+        return $this->readFile();
+    }
+    private function readFile():array {
         $file=Files::path($this->dir,'books.json');
         if(is_link($file)) throw new \RuntimeException('Unsafe store');
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
         if(!is_file($file)&&(!$this->seed||glob(Files::path($this->dir,'media').'/*.blob')))throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
+        self::validateDatabase($db);return $db;
+    }
+    public static function validateDatabase(array $db):void {
         if(!in_array($db['schema']??null,[1,2,3,4,5,6],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         try{self::validatePages($db);}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid persisted page tree',0,$e);}
         self::books($db);
@@ -40,7 +59,6 @@ final class BookStore {
         OpenApiStore::validate($db);
         AutomationQueue::validate($db);
         CiPublishing::validate($db);
-        return $db;
     }
     /** Validate the trust boundary before any projection, including public book visibility. */
     private static function validatePages(array $db):void {
@@ -58,11 +76,13 @@ final class BookStore {
     }
     /** Freeze the initial legacy seed before binding the root to an organization. */
     public function materialize():void {
+        if($this->backend()){$this->read();return;}
         Files::dir($this->dir);$lock=Files::path($this->dir,'books.lock');$h=fopen($lock,'c+');if(!$h)throw new \RuntimeException('Lock unavailable');
         try{if(!flock($h,LOCK_EX))throw new \RuntimeException('Lock failed');$db=$this->read();if(!is_file($this->dir.'/books.json'))self::writeDatabase($this->dir.'/books.json',$db);}finally{fclose($h);}
     }
     /** Hold a shared lock while opening immutable blobs or building a consistent backup. */
     public function snapshot(callable $fn): mixed {
+        if($pg=$this->backend())return $pg->transaction(false,function(array $db)use($fn){self::validateDatabase($db);return $fn($db);});
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
@@ -70,23 +90,27 @@ final class BookStore {
         finally { fclose($h); }
     }
     public function change(callable $fn,?string $historyAction=null,string $historyNote='',?string $historySource=null): void {
+        if($pg=$this->backend()){
+            $pg->transaction(true,function(array $db)use($pg,$fn,$historyAction,$historyNote,$historySource){
+                self::validateDatabase($db);$before=$db;$this->mutate($db,$fn,$historyAction,$historyNote,$historySource);
+                self::validateDatabase($db);self::checkSize($db);$pg->write($before,$db);
+            });return;
+        }
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $this->mutate($db,$fn,$historyAction,$historyNote,$historySource); if($this->backend())throw new \RuntimeException('Content backend changed; retry after migration.'); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
+    }
+    private function mutate(array &$db,callable $fn,?string $historyAction,string $historyNote,?string $historySource):void {
+        $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db);
+    }
+    public static function checkSize(array $db):void {
+        if(strlen(json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n")>self::MAX_DB_BYTES)throw new \DomainException('Book data exceeds 32 MiB; remove content or split the installation.');
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
     public static function writeDatabase(string $path,array $db): void {
-        self::validatePages($db);
-        self::books($db);
-        if(isset($db['history']))RevisionHistory::validate($db);
-        ReviewWorkflow::validate($db);
-        ActivityJournal::validate($db);
-        GitHubSync::validate($db);
-        OpenApiStore::validate($db);
-        AutomationQueue::validate($db);
-        CiPublishing::validate($db);
+        self::validateDatabase($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
@@ -107,7 +131,8 @@ final class BookStore {
                 }
             }
             PageTree::validate($db);
-            if(is_file($this->dir.'/books.json')&&filesize($this->dir.'/books.json')>self::MAX_DB_BYTES)throw new \RuntimeException('Legacy store exceeds the portable data limit');
+            if(!$this->backend()&&is_file($this->dir.'/books.json')&&filesize($this->dir.'/books.json')>self::MAX_DB_BYTES)throw new \RuntimeException('Legacy store exceeds the portable data limit');
+            if($this->backend())self::checkSize($db);
             $probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));
             try { Files::write($probe,'ready'); } finally { if(is_file($probe))Files::remove($probe); }
             $media=Files::path($this->dir,'media');

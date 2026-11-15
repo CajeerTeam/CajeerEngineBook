@@ -94,3 +94,44 @@ jobs:
       - name: Remove disposable deployment
         if: always()
         run: docker compose -p book-release-test down -v
+
+  postgres-content:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: book_test
+          POSTGRES_USER: book_test
+          POSTGRES_PASSWORD: book_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U book_test -d book_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      BOOK_PG_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=book_test;connect_timeout=5"
+      BOOK_PG_USER: book_app
+      BOOK_PG_PASSWORD: book_app_test_only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, fileinfo, phar, gd, zip, openssl, pdo_pgsql
+          tools: composer:v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: sh bin/install-mermaid.sh
+      - name: Create non-superuser application role
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U book_test -d book_test -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE book_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_app_test_only'" \
+            -c "ALTER DATABASE book_test OWNER TO book_app"
+      - run: php tests/postgres-content.php
+      - run: python3 tests/ci-http.py --postgres

@@ -19,6 +19,7 @@
     },
     "scripts": {
         "test": [
+            "@php tests/postgres-policy.php",
             "@php tests/static-export.php",
             "python3 tests/static-export-http.py",
             "@php tests/ci-publishing.php",
