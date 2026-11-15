@@ -13,8 +13,9 @@ final class Search
         $filters=[];
         foreach(['book','version'] as $k){$v=$input[$k]??'';if(!is_string($v)||($v!==''&&!BookStore::slug($v)))throw new \InvalidArgumentException('Invalid search filter.');$filters[$k]=$v;}
         $number=static function($v,int $min,int $max):int{if(!is_string($v)||!preg_match('/\A[0-9]{1,5}\z/D',$v)||(int)$v<$min||(int)$v>$max)throw new \InvalidArgumentException('Invalid search pagination.');return (int)$v;};
+        $locale=$input['locale']??'';if($locale!=='')Locale::require($locale);
         $groups=self::groups($q);
-        return ['q'=>$q,'groups'=>$groups,'book'=>$filters['book'],'version'=>$filters['version'],'limit'=>$number($input['limit']??'50',1,50),'offset'=>$number($input['offset']??'0',0,1000)];
+        return ['q'=>$q,'groups'=>$groups,'book'=>$filters['book'],'version'=>$filters['version'],'locale'=>$locale,'limit'=>$number($input['limit']??'50',1,50),'offset'=>$number($input['offset']??'0',0,1000)];
     }
     public static function cut(string $text,int $bytes):string
     {
@@ -43,7 +44,7 @@ final class Search
     public static function projection(array $db):array
     {
         $books=BookStore::books($db);$rows=[];
-        foreach(BookStore::published($db) as $key=>$p){[$b,$v]=explode('/',$key,3);$rows[$key]=['title'=>$p['title'],'section'=>$p['section'],'order'=>$p['order'],'body'=>$p['body'],'book'=>$b,'version'=>$v,'public'=>Visibility::publicBook($books[$b],'public'),'link_base'=>$p['link_base']??null];}
+        foreach(BookStore::published($db) as $key=>$p){[$b,$v]=explode('/',$key,3);$rows[$key]=['title'=>$p['title'],'section'=>$p['section'],'order'=>$p['order'],'body'=>$p['body'],'book'=>$b,'version'=>$v,'locale'=>Locale::language($p),'public'=>Visibility::publicBook($books[$b],'public'),'link_base'=>$p['link_base']??null];}
         return $rows;
     }
     public static function plain(string $key,array $p):string
@@ -52,13 +53,13 @@ final class Search
     }
     public static function portable(array $db,string $visibility,string $role,array $o,bool $navigation):array
     {
-        $pages=Visibility::pages($db,$visibility,$role);$hits=[];
+        $pages=Locale::pages(Visibility::pages($db,$visibility,$role),$o['locale']??'');$hits=[];
         if($o['groups'])foreach($pages as $key=>$p){[$b,$v]=explode('/',$key,3);if(($o['book']!==''&&$b!==$o['book'])||($o['version']!==''&&$v!==$o['version']))continue;
             $body=self::plain($key,$p);$score=0;$first=null;$match=true;
             foreach($o['groups'] as $g){$parts=array_map(fn($w)=>preg_quote($w,'~'),$g['words']);$pattern=$g['phrase']?'(?<![\p{L}\p{N}\p{M}])'.implode('[^\p{L}\p{N}\p{M}]+',$parts).'(?![\p{L}\p{N}\p{M}])':null;
                 foreach($pattern!==null?[$pattern]:array_map(fn($w)=>'(?<![\p{L}\p{N}\p{M}])'.$w.(preg_match('/^.$/us',$w)?'(?![\p{L}\p{N}\p{M}])':''),$parts) as $pat){$re='~'.$pat.'~iu';$found=false;foreach([[$p['title'],8],[$key.' '.$p['section'],4],[$body,1]] as [$field,$weight])if(preg_match($re,$field,$m,PREG_OFFSET_CAPTURE)){$score+=$weight;$found=true;if($weight===1&&$first===null)$first=$m[0][1];}if(!$found){$match=false;break 2;}}
             }
-            if(!$match)continue;$start=$first===null?0:max(0,$first-80);while($start>0&&(ord($body[$start])&0xc0)===0x80)$start--;$snippet=self::cut(substr($body,$start),320);$hits[]=['key'=>$key,'title'=>$p['title'],'snippet'=>($start?'…':'').$snippet.(strlen($body)>$start+strlen($snippet)?'…':''),'score'=>$score];
+            if(!$match)continue;$start=$first===null?0:max(0,$first-80);while($start>0&&(ord($body[$start])&0xc0)===0x80)$start--;$snippet=self::cut(substr($body,$start),320);$hits[]=['key'=>$key,'title'=>$p['title'],'snippet'=>($start?'…':'').$snippet.(strlen($body)>$start+strlen($snippet)?'…':''),'score'=>$score,'locale'=>Locale::language($p)];
         }
         usort($hits,fn($a,$b)=>($b['score']<=>$a['score'])?:strcmp($a['key'],$b['key']));
         return ['hits'=>array_slice($hits,$o['offset'],$o['limit']),'total'=>count($hits),'pages'=>$navigation?$pages:[],'engine'=>'portable','match'=>'fulltext'];

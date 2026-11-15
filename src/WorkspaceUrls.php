@@ -9,7 +9,7 @@ final class WorkspaceUrls
     public static function set(string $prefix):void{if($prefix!==''&&!preg_match('~\A/w/[a-f0-9]{32}/[a-f0-9]{32}\z~D',$prefix))throw new \InvalidArgumentException('Invalid workspace prefix');self::$prefix=$prefix;}
     public static function prefix():string{return self::$prefix;}
     public static function url(string $url):string{
-        if(self::$prefix===''||!preg_match('~\A/(?:studio|docs|media|api/v1|search|playground|sdk|webhooks)(?:/|[?#]|$)~D',$url))return $url;
+        if(self::$prefix===''||!preg_match('~\A/(?:studio|docs|media|api/v1|search|playground|sdk|webhooks|l)(?:/|[?#]|$)~D',$url))return $url;
         return self::$prefix.$url;
     }
     public static function markdown(string $url):string{

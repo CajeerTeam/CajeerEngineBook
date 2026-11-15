@@ -206,7 +206,7 @@ final class PostgresContentStore
             if($redis){
                 // The row lock pins the revision; search-state xmin changes on rebuild as well as publication.
                 $revision=$this->query($pdo,'SELECT revision::text || chr(58) || xmin::text FROM cajeer_book.search_state WHERE installation=? AND scope=?',$this->params())->fetchColumn();
-                $result=$redis->remember('search',[$this->scope,$revision,$options,$navigation],$compute);
+                $result=$redis->remember('search',['0.4.6',$this->scope,$revision,$options,$navigation],$compute);
             }else $result=$compute();
             $pdo->commit();return $result;}
         catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
@@ -222,7 +222,7 @@ final class PostgresContentStore
             try{
                 $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');
                 $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql');if($sql===false)throw new \RuntimeException('Missing PostgreSQL schema.');$pdo->exec($sql);
-                foreach(['search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm'] as $index){
+                foreach(['search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm','search_scope_locale'] as $index){
                     $valid=$pdo->query("SELECT indisvalid FROM pg_index WHERE indexrelid='cajeer_book.".$index."'::regclass")->fetchColumn();
                     if(!in_array($valid,[true,1,'1','t'],true))$pdo->exec('REINDEX INDEX cajeer_book.'.$index);
                 }
@@ -237,8 +237,8 @@ final class PostgresContentStore
             $count=(int)$this->query($pdo,'SELECT count(*) FROM cajeer_book.search_document WHERE installation=? AND scope=?',$this->params())->fetchColumn();
             $expected=(int)$this->query($pdo,"SELECT count(*) FROM cajeer_book.pages WHERE installation=? AND scope=? AND value->>'published' IS NOT NULL",$this->params())->fetchColumn();
             if($count!==$expected)throw new \RuntimeException('Search document count mismatch; reindex required.');
-            $indexes=(int)$pdo->query("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='cajeer_book.search_document'::regclass AND i.indisvalid AND c.relname IN ('search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm')")->fetchColumn();
-            if($indexes!==5)throw new \RuntimeException('Search indexes missing or invalid; reindex required.');
+            $indexes=(int)$pdo->query("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='cajeer_book.search_document'::regclass AND i.indisvalid AND c.relname IN ('search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm','search_scope_locale')")->fetchColumn();
+            if($indexes!==6)throw new \RuntimeException('Search indexes missing or invalid; reindex required.');
             $revision=(int)$this->query($pdo,'SELECT revision FROM cajeer_book.search_state WHERE installation=? AND scope=?',$this->params())->fetchColumn();
             $pdo->commit();return ['engine'=>'postgresql','documents'=>$count,'revision'=>$revision];
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}

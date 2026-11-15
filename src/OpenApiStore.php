@@ -71,7 +71,7 @@ final class OpenApiStore
             $books=BookStore::books($db);if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached.');$books[$book]=['id'=>bin2hex(random_bytes(16)),'slug'=>$book,'title'=>$book];}$db['books']=$books;
             $sourceAuthors=[];foreach($s['revisions'] as $prior)if($prior['sha256']===$sha)$sourceAuthors[]=$prior['actor']['id'];
             foreach($plan['pages'] as $key=>$p){$e=$db['pages'][$key]??['id'=>bin2hex(random_bytes(16)),'revision'=>0,'published'=>null];$e['id']??=PageTree::id($key,$e);
-                if($plan['rows'][$key]['action']!=='unchanged'){$p['updated']=gmdate('c');$e['draft']=$p;$e['revision']++;
+                if($plan['rows'][$key]['action']!=='unchanged'){$p['updated']=gmdate('c');$e['draft']=$p+Locale::metadata($e['draft']??[]);$e['revision']++;
                     foreach(['review_authors'=>false,'review_tree_authors'=>true] as $field=>$tree){$authors=$sourceAuthors;foreach(RevisionHistory::entries($db,$e['id']) as $event)if(self::fingerprint($event['draft'])===self::fingerprint($p))$authors=array_merge($authors,RevisionHistory::historicalContributors($db,$event,$tree));$e[$field]=array_values(array_unique(array_merge($e[$field]??[],$authors)));}
                     $db['pages'][$key]=$e;}
                 $s['pages'][$key]=['id'=>$e['id'],'base'=>self::fingerprint($p),'retired'=>$plan['rows'][$key]['retired']];

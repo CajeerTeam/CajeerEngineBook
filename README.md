@@ -1,6 +1,33 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.6 — Multilingual Documentation
+
+English (`en`) and Russian (`ru`) are supported document languages and interface locales. The Reader, core Studio editor, translation workbench and account/navigation labels have English/Russian catalogs; specialized integration/admin panels and some dynamic editor messages retain English fallback. The language selector in the header remembers the UI preference in a first-party cookie, independently from the selected document language. Content itself is never machine-translated.
+
+### Translate and publish
+
+- Create an original document with its language selected in Studio. Existing documents without language metadata default to English. To retag a published standalone document, open **Studio → Translations**, select the source and use **Change draft language**, then publish the draft. Retagging linked translations or originals with linked translations is blocked. Unpublished standalone pages can be published and then retagged; new pages select language at creation.
+- In **Studio → Translations**, select a published original, choose the other language, supply a distinct path (for example `ru/getting-started`), title, section and translated Markdown. The source is identified by its stable page ID and exact published content digest, not by the path. A language may occur only once in each translation group per book/version. Separate draft/publication snapshots, revision history, review approval and existing workspace permissions apply to every translation.
+- The workbench compares source digests against the current published original. Edit a translation, review the source text and confirm **Mark source reviewed** when appropriate; this changes only the draft and invalidates stale reviews. Publish through the usual workflow. A source draft does not mark a translation stale. An unpublished or deleted original is flagged as unavailable; already-published translations remain independent. Version copying remaps groups to new IDs; duplicating a page makes an independent document.
+- Canonical `/docs/BOOK/VERSION/PATH` URLs remain unchanged, and every published page exposes available authorized alternatives. `/l/ru/docs/guide/1/start` resolves the Russian variant of the referenced document and redirects to its canonical URL. Missing variants return 404 unless `?fallback=1` is explicitly supplied, which redirects to the available requested document. The Reader emits `Content-Language`, HTML language and canonical/alternate links. Links and navigation are scoped to visible published documents only.
+- Search accepts `locale=en|ru` (empty means all). Example: `/api/v1/search?q=token&locale=ru&book=guide&version=1`. The PostgreSQL index stores the published locale and filters before counts/ranking/snippets; selected language uses its stemming configuration plus simple technical-token matching. The API adds `locale` to results and page metadata. The file backend still uses lexical search; static exports contain all selected published languages, relative language links and a locale filter in the offline search.
+- Markdown/Git imports accept scalar front matter `locale: ru` for new standalone documents. Updates retain existing translation metadata and reject conflicting explicit languages; Git export preserves explicit locale in front matter. Create linked groups via Translation Studio, not by guessing filenames. CI builds include language metadata in exact snapshots, and new bundles validate localized links (use actual published or included target variants in CI; implicit fallback is not a substitute for a valid link). Older bundle digests are preserved.
+
+### Upgrade from 0.4.5
+
+Stop all application and worker nodes, create a complete installation backup using 0.4.5, overlay 0.4.6, and keep the existing PostgreSQL namespace and media volume. No content/identity schema bump is needed. PostgreSQL installations must run the additive search schema migration and rebuild before restarting writers:
+
+```sh
+composer install --no-dev
+php bin/search.php reindex --offline
+php bin/search.php check
+```
+
+With Compose, use the same PostgreSQL/Redis/distributed overlays as the installation, rebuild `book` and `worker`, and run `docker compose run --rm --no-deps --user www-data book php bin/search.php reindex --offline`, then the same command with `check`. Restart all nodes on the same version. File-only installations need no SQL migration. Check `/health/ready`. Do not downgrade source code over new multilingual data; restore the matched pre-upgrade backup if rolling back. Existing page IDs, URLs, publication states and identity credentials are retained by the upgrade.
+
+The test suite includes `tests/multilingual.php`, `tests/multilingual-http.py` and PostgreSQL variants in CI. The storage-only mode does not require the Markdown parser and is not a replacement for full rendering, SQL and static ZIP tests.
 
 ## 0.4.5 — Enterprise SSO / OIDC
 

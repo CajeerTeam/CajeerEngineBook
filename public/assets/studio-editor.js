@@ -13,7 +13,7 @@
     const toolbar = $('.editor-toolbar');
     const modes = [...root.querySelectorAll('[data-mode]')];
     const panels = {markdown: $('[data-markdown-panel]'), visual: $('[data-visual-panel]'), preview: $('[data-preview-panel]')};
-    const fieldNames = ['book', 'version', 'path', 'title', 'section', 'order', 'body'];
+    const fieldNames = ['book', 'version', 'path', 'title', 'section', 'order', 'body', 'locale'].filter(name => form.elements[name]);
     const submitButtons = [...form.querySelectorAll('button[name="action"]')];
     const encoder = new TextEncoder();
     let mode = 'markdown', segments = [], active = null, selection = null, draggedBlock = null;
@@ -22,7 +22,9 @@
     let generation = 0;
     const value = name => form.elements[name].value;
     function snapshot() { return JSON.stringify(fieldNames.map(name => form.elements[name].value)); }
-    function announce(message) { status.textContent = message; }
+    const ru = document.documentElement.lang === 'ru';
+    const statusLabels = {'Unsaved changes':'Несохранённые изменения','Draft saved':'Черновик сохранён','Access expired':'Доступ истёк','Publishing…':'Публикация…','Saving draft…':'Сохранение черновика…','Saved snapshot; newer changes pending':'Снимок сохранён; есть новые изменения','Published':'Опубликовано','Revision conflict':'Конфликт ревизий','Save failed':'Ошибка сохранения'};
+    function announce(message) { status.textContent = ru ? (statusLabels[message] || message) : message; }
     function fail(message) { error.textContent = message; error.hidden = false; }
     function clearError() { if (conflicted) return; error.textContent = ''; error.hidden = true; }
     function updateDirty() {
@@ -876,7 +878,7 @@
         if (encoder.encode(note.trim()).length > 500) { fail('Revision note exceeds 500 UTF-8 bytes.'); return; }
         data.set('note', note);
         const sent = snapshot(); const oldRevision = value('revision');
-        pending = true; for (const name of ['book','version','path']) form.elements[name].readOnly = true; lockButtons(); announce(action === 'publish' ? 'Publishing…' : 'Saving draft…');
+        pending = true; if (form.elements.locale) form.elements.locale.disabled = true; for (const name of ['book','version','path']) form.elements[name].readOnly = true; lockButtons(); announce(action === 'publish' ? 'Publishing…' : 'Saving draft…');
         try {
             const result = await request('/studio', data);
             if (typeof result.key !== 'string' || !Number.isSafeInteger(result.revision) || result.revision !== Number(oldRevision) + 1) throw new Error('Unexpected save response. Reload before saving again.');
@@ -893,7 +895,7 @@
         } catch (e) {
             if (e.status === 409) { conflicted = true; announce('Revision conflict'); fail('Another session changed this page. Your edits are retained. Copy your Markdown before reloading; autosave is stopped.'); }
             else { announce(e.status === 401 || e.status === 403 || (document.documentElement.dataset.workspacePrefix && e.status === 404) ? 'Access expired' : 'Save failed'); fail(e.message); }
-        } finally { pending = false; if (Number(value('revision')) === 0 && !conflicted) for (const name of ['book','version','path']) form.elements[name].readOnly = false; lockButtons(); }
+        } finally { pending = false; if (Number(value('revision')) === 0 && !conflicted) { if (form.elements.locale) form.elements.locale.disabled = false; for (const name of ['book','version','path']) form.elements[name].readOnly = false; } lockButtons(); }
     }
     function updatePageActions(result) {
         let list = document.querySelector('.editor-list');

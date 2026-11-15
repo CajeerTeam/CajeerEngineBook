@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6 — Multilingual Documentation
+
+- English/Russian document locales, independent translation drafts and published snapshots, stable source identity, exact source-change tracking, duplicate-language validation, retagging standalone originals, history/review/CI preservation and version-copy remapping.
+- Translation Studio, persisted interface locale, localized core Reader/editor/auth UI, language-filtered navigation, canonical and alternate links, and authorized language aliases with explicit fallback.
+- PostgreSQL locale-filtered GIN search and additive reindex migration, portable search and API locale metadata, offline search filter and language links in Static Export. Markdown/Git front matter locale support; imported edits retain existing groups.
+- Storage and HTTP tests for independent publication, source changes, rename/copy, privacy and language routing, with full renderer/ZIP and PostgreSQL integration in CI.
+
 ## 0.4.5 — Enterprise SSO / OIDC
 
 - Corporate OIDC sign-in: pinned HTTPS issuer discovery, authorization code + PKCE S256, browser-bound one-time state and nonce, RS256 JWKS signature and issuer/audience/time validation. No provider tokens stored.

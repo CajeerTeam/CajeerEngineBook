@@ -35,7 +35,7 @@ final class MarkdownImport
                 if(str_starts_with($v,'"')){try{$v=json_decode($v,true,8,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new \InvalidArgumentException('Invalid quoted front matter value');}if(!is_string($v))throw new \InvalidArgumentException('Invalid scalar');}
                 elseif(str_starts_with($v,"'")){if(!preg_match("/\\A'(?:[^']|'')*'\\z/u",$v))throw new \InvalidArgumentException('Invalid quoted front matter value');$v=str_replace("''","'",substr($v,1,-1));}
                 else{if(preg_match('/\A[!&*\[\]{>|]/',$v)||preg_match('/:\s/',$v))throw new \InvalidArgumentException('Unsupported YAML front matter value');$v=preg_replace('/\s+#.*$/u','',$v);}
-                if(!in_array($key,['title','description','order','slug','section'],true))throw new \InvalidArgumentException('Unsupported front matter key: '.$key);
+                if(!in_array($key,['title','description','order','slug','section','locale'],true))throw new \InvalidArgumentException('Unsupported front matter key: '.$key);
                 if(!preg_match('//u',$v)||preg_match('/[\x00-\x1f\x7f]/',$v))throw new \InvalidArgumentException('Invalid scalar front matter value');
                 $meta[$key]=$v;
             }
@@ -49,14 +49,14 @@ final class MarkdownImport
         $section=$meta['section']??($parts[0]??'Imported');
         if(isset($meta['order'])){if(!preg_match('/\A-?[0-9]{1,4}\z/',$meta['order']))throw new \InvalidArgumentException('Invalid front matter order');$order=(int)$meta['order'];}
         if(trim($title)===''||strlen($title)>200||strlen($section)>100||preg_match('/[\x00-\x1f\x7f]/',$title.$section))throw new \InvalidArgumentException('Invalid imported title or section');
-        return ['path'=>$pagePath,'title'=>$title,'section'=>$section,'order'=>$order,'body'=>$body,'explicit_order'=>isset($meta['order'])];
+        return ['path'=>$pagePath,'title'=>$title,'section'=>$section,'order'=>$order,'body'=>$body,'explicit_order'=>isset($meta['order'])]+(isset($meta['locale'])?['locale'=>Locale::require($meta['locale'])]:[]);
     }
     /** Resolve a local link against the source tree, never the server filesystem. */
     private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings):string{
         $raw=html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8');
         if($raw===''||preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#|\?)~i',$raw))return $url;
          $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return $pages[$canonical].substr($raw,$n);
-        $root=str_starts_with($raw,'/');if($root&&preg_match('~^/(?:docs|media|studio|api|w)(?:/|$)~',$raw))return $url;
+        $root=str_starts_with($raw,'/');if($root&&preg_match('~^/(?:docs|media|studio|api|w|l)(?:/|$)~',$raw))return $url;
         $n=strcspn($raw,'?#');$path=rawurldecode(substr($raw,0,$n));$suffix=substr($raw,$n);$parts=$root||dirname($source)==='.'?[]:explode('/',dirname($source));
         if(str_contains($path,'\\')||preg_match('/[\x00-\x1f\x7f]/',$path)){$warnings[$url]=true;return $url;}
         foreach(explode('/',$path) as $p){if($p===''||$p==='.')continue;if($p==='..'){if(!$parts){$warnings[$url]=true;return $url;}array_pop($parts);}else $parts[]=$p;}
@@ -157,7 +157,7 @@ REGEX;
         }
 
         foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){$d['doc']['body']=self::rewrite($d['doc']['body'],$path,$mapping,$mediaMap,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
-                if($d['action']==='update'){$current=$db['pages'][$d['key']]['draft'];unset($current['updated']);$candidate=$d['doc'];unset($candidate['path'],$candidate['explicit_order']);$current['media']??=[];ksort($current);ksort($candidate);if($current===$candidate)$d['action']='unchanged';}}foreach(array_keys($w) as $url){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many unresolved links; split import');$warnings[]=['source'=>$path,'url'=>$url];}$rows[]=['source'=>$path,'target'=>$d['key'],'action'=>$d['action'],'title'=>$d['doc']['title']];}unset($d);
+                if($d['action']==='update'){$current=$db['pages'][$d['key']]['draft'];if(isset($d['doc']['locale'])&&$d['doc']['locale']!==Locale::language($current))throw new \DomainException('Import language differs from existing document: '.$d['key']);unset($current['updated'],$current['locale'],$current['translation_group'],$current['source_digest']);$candidate=$d['doc'];unset($candidate['path'],$candidate['explicit_order'],$candidate['locale']);$current['media']??=[];ksort($current);ksort($candidate);if($current===$candidate)$d['action']='unchanged';}}foreach(array_keys($w) as $url){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many unresolved links; split import');$warnings[]=['source'=>$path,'url'=>$url];}$rows[]=['source'=>$path,'target'=>$d['key'],'action'=>$d['action'],'title'=>$d['doc']['title']];}unset($d);
         return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes];
     }
     private static function token(array $db,array $plan,string $book,string $version,string $strategy,string $secret,int $time):string{
@@ -185,7 +185,7 @@ REGEX;
             // stable page ID and old public path; ordinary tree publication remains separate.
             foreach($p['moves']??[] as $dest=>$from){$entry=$db['pages'][$from]??null;if(!$entry||isset($db['pages'][$dest])||PageTree::scope($dest)!==PageTree::scope($from)||PageTree::reserved($db,$dest,PageTree::id($from,$entry)))throw new \DomainException('Import move no longer available');$entry['id']=PageTree::id($from,$entry);if($entry['published']!==null)$entry['published_key']=PageTree::publicKey($from,$entry);PageTree::retire($db,$from,$entry['id']);unset($db['pages'][$from]);$db['pages'][$dest]=$entry;}
             foreach($p['docs'] as $d){if(in_array($d['action'],['skip','unchanged'],true))continue;$key=$d['key'];$draft=$d['doc'];unset($draft['path'],$draft['explicit_order']);$draft['updated']=gmdate('c');foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
-                $entry=$db['pages'][$key]??['revision'=>0,'published'=>null,'id'=>bin2hex(random_bytes(16))];$entry['id']??=PageTree::id($key,$entry);$entry['draft']=$draft;$entry['revision']++;$db['pages'][$key]=$entry;
+                $entry=$db['pages'][$key]??['revision'=>0,'published'=>null,'id'=>bin2hex(random_bytes(16))];$entry['id']??=PageTree::id($key,$entry);$metadata=Locale::metadata($entry['draft']??[]);if(isset($entry['draft'])){if(isset($draft['locale'])&&$draft['locale']!==Locale::language($entry['draft']))throw new \DomainException('Import language differs from existing document: '.$key);unset($draft['locale']);}$entry['draft']=$draft+$metadata;$entry['revision']++;$db['pages'][$key]=$entry;
             }
             if($after!==null)$after($db,$p);
             $result=['rows'=>$p['rows'],'warnings'=>$p['warnings'],'media_new'=>$p['media_new'],'media_total'=>$p['media_total']];

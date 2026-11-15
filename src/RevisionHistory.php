@@ -13,7 +13,7 @@ final class RevisionHistory
     }
     public static function current(array $db,string $id):?array{return self::byId($db['pages'])[$id]??null;}
     private static function snapshot(array $p):array{
-        $s=array_intersect_key($p,array_flip(['title','section','order','body','updated','media','link_base','playground']));$s['media']??=[];return $s;
+        $s=array_intersect_key($p,array_flip(['title','section','order','body','updated','media','link_base','playground','locale','translation_group','source_digest']));$s['media']??=[];return $s;
     }
     private static function state(string $key,array $e):array{
         return ['key'=>$key,'public_key'=>PageTree::publicKey($key,$e),'draft'=>self::snapshot($e['draft']),'published'=>$e['published']===null?null:self::snapshot($e['published'])];
@@ -73,6 +73,7 @@ final class RevisionHistory
             $a=$r['actor'];if($a!==null&&(!is_array($a)||!self::hex($a['id']??null)||!is_string($a['username']??null)||!preg_match('/\A[a-z0-9][a-z0-9._-]{0,63}\z/D',$a['username'])))throw new \InvalidArgumentException('Invalid historical author');
             foreach(['draft','published'] as $state){$p=$r[$state]??null;if($p===null&&$state==='published')continue;
                 if(!is_array($p)||!is_string($p['title']??null)||trim($p['title'])===''||strlen($p['title'])>200||!is_string($p['section']??null)||strlen($p['section'])>100||!preg_match('//u',$p['title'].$p['section'])||!is_int($p['order']??null)||!is_string($p['updated']??null)||!is_string($p['body']??null)||strlen($p['body'])>262144||!preg_match('//u',$p['body'])||!is_array($p['media']??null)||!array_is_list($p['media']))throw new \InvalidArgumentException('Invalid historical snapshot');
+                Locale::validateSnapshot($p);
                 $base=$p['link_base']??($state==='published'?$r['public_key']:$r['key']);if(!is_string($base)||!PageTree::validKey($base)||PageTree::scope($base)!==$scope)throw new \InvalidArgumentException('Invalid historical link base');
                 foreach($p['media'] as $mid)if(!self::hex($mid)||!isset($db['media'][$mid]))throw new \InvalidArgumentException('Historical media missing');
                 if(isset($p['playground']))ApiPlayground::validateSnapshot($p);if($parse){$refs=Markdown::mediaReferences($p['body'],$base);$saved=$p['media'];sort($refs);sort($saved);if($refs!==$saved)throw new \InvalidArgumentException('Historical media reference index mismatch');}

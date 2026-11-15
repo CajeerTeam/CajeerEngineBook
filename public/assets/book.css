@@ -180,3 +180,6 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 .playground pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .playground [hidden] { display: none !important; }
 .playground [data-pg-status] { min-height: 1.5em; }
+
+/* Language controls remain keyboard-accessible on narrow Reader/Studio layouts. */
+.locale-switch{display:inline-flex;gap:6px;white-space:nowrap;font-size:13px}.locale-switch a[aria-current=true]{font-weight:700;text-decoration:underline}.top[lang=ru]{gap:12px;flex-wrap:wrap}.top[lang=ru] .search input[name=q]{max-width:220px}.versions[aria-label]{margin-block:8px 18px}.versions[aria-label] a[aria-current=page]{font-weight:700}.editor select,.actions select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-width:100%}

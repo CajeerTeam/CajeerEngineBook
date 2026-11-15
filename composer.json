@@ -28,6 +28,8 @@
             "@php tests/postgres-policy.php",
             "@php tests/postgres-identity-policy.php",
             "@php tests/search-policy.php",
+            "@php tests/multilingual.php",
+            "python3 tests/multilingual-http.py",
             "python3 tests/search-http.py",
             "@php tests/static-export.php",
             "python3 tests/static-export-http.py",

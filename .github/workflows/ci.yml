@@ -27,6 +27,7 @@ jobs:
       - run: npm install --global typescript@5.8.3
       - run: python -m pip install "setuptools>=68" wheel
       - run: composer test
+      - run: node tests/static-search-language.mjs
       - run: python -m pip install playwright==1.57.0
       - run: python -m playwright install --with-deps chromium
       - run: python tests/playground-http.py --browser
@@ -71,6 +72,7 @@ jobs:
         env:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
+          docker compose -p book-release-test exec -T book php tests/multilingual.php
           docker compose -p book-release-test exec -T book php tests/static-export.php
           docker compose -p book-release-test exec -T book php tests/ci-publishing.php
           docker compose -p book-release-test exec -T book php tests/automation.php
@@ -143,6 +145,8 @@ jobs:
       - run: php tests/postgres-content.php
       - run: php tests/postgres-identity.php
       - run: python3 tests/oidc-http.py --postgres
+      - run: php tests/multilingual.php --postgres
+      - run: python3 tests/multilingual-http.py --postgres
       - run: php tests/postgres-search.php
       - run: python3 tests/search-http.py --postgres
       - run: python3 tests/ci-http.py --postgres

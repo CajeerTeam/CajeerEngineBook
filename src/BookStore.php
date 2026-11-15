@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/Locale.php';
 require_once __DIR__.'/RevisionHistory.php';
 require_once __DIR__.'/ReviewWorkflow.php';
 require_once __DIR__.'/ActivityJournal.php';
@@ -81,6 +82,7 @@ final class BookStore {
             }
         }
         PageTree::validate($db);
+        Locale::validate($db);
     }
     /** Freeze the initial legacy seed before binding the root to an organization. */
     public function materialize():void {
@@ -174,7 +176,13 @@ final class BookStore {
             $old['id']??=isset($db['pages'][$key])?PageTree::id($key,$old):bin2hex(random_bytes(16));
             if(PageTree::reserved($db,$key,$old['id']))throw new \DomainException('Page path is reserved');
             $navigationChanged=$old['draft']===null||$old['draft']['title']!==$page['title']||$old['draft']['order']!==$page['order'];
-            $draft=$page;if(isset($old['draft']['link_base']))$draft['link_base']=$old['draft']['link_base'];
+            $draft=$page;
+            if(isset($input['translation_source'])){
+                if($old['revision']!==0||$publish)throw new \DomainException('Translations must be created as new drafts.');
+                $draft+=Locale::attach($db,$key,Locale::require($input['locale']??null),(string)$input['translation_source'],(string)($input['source_digest']??''));
+            }elseif($old['draft']!==null){$draft+=Locale::metadata($old['draft']);}
+            elseif(isset($input['locale'])&&$input['locale']!==''){if(Locale::require($input['locale'])!=='en')$draft['locale']=$input['locale'];}
+            if(isset($old['draft']['link_base']))$draft['link_base']=$old['draft']['link_base'];
             if(isset($old['draft']['playground'])&&$old['draft']['body']===$draft['body'])$draft['playground']=$old['draft']['playground'];
             $draft['media']=Markdown::mediaReferences($draft['body'],$draft['link_base']??$key);
             foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
@@ -185,6 +193,26 @@ final class BookStore {
             $db['pages'][$key]=$old;$db['books']=$books;
             $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null,'id'=>$old['id'],'navigation_changed'=>$navigationChanged];
         },$publish?'publish':'save',RevisionHistory::note((string)($input['note']??''))); return $result;
+    }
+    /** Retag an unlinked document without changing its published language or review state. */
+    public function setPageLocale(string $key,int $revision,string $locale):void {
+        Locale::require($locale);$this->change(function(array &$db)use($key,$revision,$locale){
+            $e=$db['pages'][$key]??null;if(!$e||$e['revision']!==$revision||!Locale::canRetag($db,$key))throw new \DomainException('Page changed or belongs to a translation group.');
+            if(Locale::language($e['draft'])===$locale)return;
+            if($locale==='en')unset($e['draft']['locale']);else $e['draft']['locale']=$locale;
+            $e['draft']['updated']=gmdate('c');$e['revision']++;$db['pages'][$key]=$e;
+        },'save','Document language changed');
+    }
+    /** Confirm a translation draft against the exact published source, never its mutable draft. */
+    public function reviewTranslationSource(string $key,int $revision,string $expected):void {
+        $this->change(function(array &$db)use($key,$revision,$expected){
+            $e=$db['pages'][$key]??null;$group=$e['draft']['translation_group']??null;
+            if(!$e||!$group||$e['revision']!==$revision)throw new \DomainException('Translation changed. Reload before confirming.');
+            $source=Locale::source($db,PageTree::scope($key),$group);
+            if(!$source||!hash_equals(Locale::digest($source),$expected))throw new \DomainException('Published source changed. Reload before confirming.');
+            if($e['draft']['source_digest']===$expected)return;
+            $e['draft']['source_digest']=$expected;$e['draft']['updated']=gmdate('c');$e['revision']++;$db['pages'][$key]=$e;
+        },'save','Translation source reviewed');
     }
     /** Shared publication mutation. Callers authorize the direct or reviewed publication under books.lock. */
     public static function publishSnapshot(array &$db,string $key,array &$entry,?string $review=null):void {
@@ -245,7 +273,9 @@ final class BookStore {
                     $copy[$dest]=['id'=>$id,'draft'=>$page,'published'=>null,'revision'=>1];$ids[PageTree::id($key,$entry)]=$id;
                 }
             }
-            if(!$copy||count($db['pages'])+count($copy)>1000)throw new \DomainException('No published source pages or page limit');$db['pages']+=$copy;
+            if(!$copy||count($db['pages'])+count($copy)>1000)throw new \DomainException('No published source pages or page limit');
+            foreach($copy as &$e)if(isset($e['draft']['translation_group'])){$g=$e['draft']['translation_group'];if(isset($ids[$g]))$e['draft']['translation_group']=$ids[$g];else unset($e['draft']['translation_group'],$e['draft']['source_digest']);}unset($e);
+            $db['pages']+=$copy;
             foreach(['redirects','retired_paths'] as $field)foreach($db[$field]??[] as $alias=>$sourceId){
                 if(!str_starts_with($alias,$prefix)||!isset($ids[$sourceId]))continue;
                 $dest=$target.substr($alias,strlen($prefix));$id=$ids[$sourceId];

@@ -76,13 +76,12 @@ final class PageTree
     }
     public static function rewriteLink(string $url,array $map): string
     {
-        if(!str_starts_with($url,'/docs/')||!$map)return $url;
-        $length=strcspn($url,'?#');$path=substr($url,0,$length);$parts=[];
+        if(!$map)return $url;$prefix='/docs/';if(preg_match('~\A/l/(en|ru)/docs/~D',$url,$locale))$prefix='/l/'.$locale[1].'/docs/';elseif(!str_starts_with($url,$prefix))return $url;
+        $length=strcspn($url,'?#');$path=substr($url,strlen($prefix),$length-strlen($prefix));$parts=[];
         foreach(explode('/',$path) as $part){if($part===''||$part==='.')continue;if($part==='..'){array_pop($parts);continue;}$parts[]=$part;}
-        if(($parts[0]??null)!=='docs')return $url;
-        $key=implode('/',array_slice($parts,1));
+        $key=implode('/',$parts);
         if(!isset($map[$key])||$map[$key]===$key)return $url;
-        return '/docs/'.$map[$key].substr($url,$length);
+        return $prefix.$map[$key].substr($url,$length);
     }
     public static function draftRedirect(array $db,string $key): ?string
     {
@@ -134,7 +133,7 @@ final class PageTree
             $e=$db['pages'][$old];
             if($duplicate){$e['review_authors']=ReviewWorkflow::contributors($db,$old,$e,false);$e['review_tree_authors']=ReviewWorkflow::contributors($db,$old,$e,true);}
             $e['id']=$id;
-            if($duplicate){$e['published']=null;unset($e['published_key']);$e['revision']=1;}
+            if($duplicate){$e['published']=null;unset($e['published_key'],$e['draft']['translation_group'],$e['draft']['source_digest']);$e['revision']=1;}
             else {if($e['published']!==null)$e['published_key']=self::publicKey($old,$e);if($new!==$old)self::retire($db,$old,$id);$e['revision']++;unset($db['pages'][$old]);}
             if($new!==$old)$e['draft']['link_base']??=$old;
             $moved[$new]=$e;

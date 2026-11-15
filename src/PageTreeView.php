@@ -13,9 +13,9 @@ final class PageTreeView
     public static function reader(array $pages,string $current): string
     {
         $nodes=PageTree::nodes($pages);$html='';
-        $visit=function(string $key)use(&$visit,$nodes,$current):string{
+        $visit=function(string $key)use(&$visit,$nodes,$current,$pages):string{
             $n=$nodes[$key];$label=self::e($n['title']);$active=$key===$current;
-            $link=$n['page']?'<a href="'.WorkspaceUrls::url('/docs/').self::e($key).'"'.($active?' class="active" aria-current="page"':'').'>'.$label.'</a>':'<span>'.$label.'</span>';
+            $link=$n['page']?'<a href="'.WorkspaceUrls::url('/docs/').self::e($key).'" lang="'.Locale::language($pages[$key]).'"'.($active?' class="active" aria-current="page"':'').'>'.$label.'</a>':'<span>'.$label.'</span>';
             if(!$n['children'])return '<li>'.$link.'</li>';
             $open=$active||str_starts_with($current,$key.'/')||$current==='';
             $out='<li><details'.($open?' open':'').'><summary>'.$label.'</summary>';
@@ -29,10 +29,10 @@ final class PageTreeView
     }
     public static function list(array $db,string $current): string
     {
-        $pages=PageTree::drafts($db);$nodes=PageTree::nodes($pages);$authors=[];foreach(array_reverse($db['history']??[],true) as $r)if($r['action']!=='baseline'&&!isset($authors[$r['page']]))$authors[$r['page']]=$r['actor']['username']??'System';$html='<div class="editor-list"><p><a href="'.WorkspaceUrls::url('/studio/tree').'">Manage page tree →</a></p>';
+        $pages=PageTree::drafts($db);$nodes=PageTree::nodes($pages);$authors=[];foreach(array_reverse($db['history']??[],true) as $r)if($r['action']!=='baseline'&&!isset($authors[$r['page']]))$authors[$r['page']]=$r['actor']['username']??'System';$html='<div class="editor-list"><p><a href="'.WorkspaceUrls::url('/studio/tree').'">'.self::e(Locale::t('Manage page tree →')).'</a></p>';
         $visit=function($key)use(&$visit,$nodes,$db,$current,$authors):string{
             $n=$nodes[$key];$label=self::e($n['title']);$out='<li>';
-            if($n['page'])$out.='<div data-page-key="'.self::e($key).'"><a href="'.self::edit($key).'"'.($current===$key?' aria-current="page"':'').'>'.$label.'</a> <small>'.($db['pages'][$key]['published']!==null?((array_diff_key($db['pages'][$key]['draft'],['updated'=>true])!==array_diff_key($db['pages'][$key]['published'],['updated'=>true])||PageTree::publicKey($key,$db['pages'][$key])!==$key)?'Published · unpublished changes':'Published'):'Draft').(isset($authors[PageTree::id($key,$db['pages'][$key])])?' · '.self::e($authors[PageTree::id($key,$db['pages'][$key])]):'').'</small></div>';
+            if($n['page'])$out.='<div data-page-key="'.self::e($key).'"><a href="'.self::edit($key).'"'.($current===$key?' aria-current="page"':'').'>'.$label.'</a> <small>'.($db['pages'][$key]['published']!==null?((array_diff_key($db['pages'][$key]['draft'],['updated'=>true])!==array_diff_key($db['pages'][$key]['published'],['updated'=>true])||PageTree::publicKey($key,$db['pages'][$key])!==$key)?Locale::t('Published · unpublished changes'):Locale::t('Published')):Locale::t('Draft')).(isset($authors[PageTree::id($key,$db['pages'][$key])])?' · '.self::e($authors[PageTree::id($key,$db['pages'][$key])]):'').' · '.self::e(Locale::LANGUAGES[Locale::language($db['pages'][$key]['draft'])]).'</small></div>';
             else $out.='<span class="tree-folder">'.$label.'</span>';
             if($n['children']){$out.='<ul>';foreach($n['children'] as $child)$out.=$visit($child);$out.='</ul>';}
             return $out.'</li>';

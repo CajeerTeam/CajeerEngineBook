@@ -107,13 +107,14 @@ final class StaticExport
             $mediaBytes+=$meta['size'];if($mediaBytes>MediaStore::MAX_TOTAL)throw new \DomainException('Export media quota exceeded');
             $ext=strtolower(pathinfo($meta['name'],PATHINFO_EXTENSION));$mediaPaths[$id]='media/'.$id.'.'.$ext;$addFile($mediaPaths[$id],$blob);
         }
-        $resolve=static function(string $from,string $url,bool $image)use($paths,$map,$mediaPaths,&$omitted):?string{
+        $resolve=static function(string $from,string $url,bool $image)use($paths,$map,$mediaPaths,$pages,&$omitted):?string{
             if(!$image&&str_starts_with($url,'#'))return $url;
             if(!$image&&preg_match('~\A(?:https?://|mailto:)~i',$url))return $url;
             $prefix=WorkspaceUrls::prefix();if($prefix!==''&&str_starts_with($url,$prefix.'/'))$url=substr($url,strlen($prefix));
             $url=WorkspaceUrls::normalize($url);$len=strcspn($url,'?#');$path=substr($url,0,$len);$suffix=substr($url,$len);
             $target=null;
-            if(!$image&&str_starts_with($path,'/docs/')){$key=rawurldecode(substr($path,6));$target=$paths[$map[$key]??$key]??null;}
+            if(!$image&&preg_match('~\A/l/(en|ru)/docs/(.+)\z~D',$path,$lm)){$key=rawurldecode($lm[2]);$key=$map[$key]??$key;$variant=Locale::variants($pages,$key)[$lm[1]]??null;$target=$variant!==null?($paths[$variant]??null):null;if($target===null&&preg_match('/(?:^\?|&)fallback=1(?:&|#|$)/',$suffix)&&isset($paths[$key]))$target=$paths[$key];}
+            elseif(!$image&&str_starts_with($path,'/docs/')){$key=rawurldecode(substr($path,6));$target=$paths[$map[$key]??$key]??null;}
             elseif(preg_match('~\A/media/([a-f0-9]{32})\z~D',$path,$m)){
                 $target=$mediaPaths[$m[1]]??null;
                 if($image&&$target!==null&&!preg_match('/\.(?:png|jpe?g|gif|webp)\z/D',$target))$target=null;
@@ -134,23 +135,24 @@ final class StaticExport
                 $r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,$map,exportUrl:$url);
                 if(str_contains($r['html'],'data-book-mermaid="true"'))$diagram=true;
                 $toc='';foreach($r['toc'] as $h)$toc.=self::a('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);
-                $siblings=$scopes[PageTree::scope($key)];$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';
+                $lang=Locale::language($p);$siblings=Locale::pages($scopes[PageTree::scope($key)],$lang);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';
                 if($i>0)$pager.=self::a(self::relative($from,$paths[$keys[$i-1]]),'← '.$siblings[$keys[$i-1]]['title']);
                 if(isset($keys[$i+1]))$pager.=self::a(self::relative($from,$paths[$keys[$i+1]]),$siblings[$keys[$i+1]]['title'].' →');
-                $switch='<div class="versions">Versions: ';[$b,$v,$tail]=explode('/',$key,3);
-                foreach($scopes as $scope=>$group){[$book,$version]=explode('/',$scope);if($book!==$b)continue;$dest=$scope.'/'.$tail;if(!isset($group[$dest]))$dest=array_key_first($group);$switch.=self::a(self::relative($from,$paths[$dest]),$version,$version===$v?'active':'');}
-                $body=$switch.'</div><div class="eyebrow">'.Markdown::e(PageTree::scope($key).' / '.$p['section']).'</div><h1>'.Markdown::e($p['title']).'</h1><article>'.$r['html'].'</article>'.$pager.'</div>';
-                $write($from,self::layout($from,$p['title'],$body,self::navigation($siblings,$paths,$from,$key),$toc,false,$includePrivate));
+                $switch='<div class="versions">'.Markdown::e(Locale::translate($lang,'Versions')).': ';[$b,$v,$tail]=explode('/',$key,3);
+                foreach($scopes as $scope=>$group){[$book,$version]=explode('/',$scope);if($book!==$b)continue;$group=Locale::pages($group,$lang);if(!$group)continue;$dest=$scope.'/'.$tail;if(!isset($group[$dest]))$dest=array_key_first($group);$switch.=self::a(self::relative($from,$paths[$dest]),$version,$version===$v?'active':'');}
+                $label=Markdown::e(Locale::translate($lang,'Language'));$switch.='</div><nav class="versions" aria-label="'.$label.'">'.$label.': ';foreach(Locale::variants($pages,$key) as $code=>$dest)$switch.='<a href="'.Markdown::e(self::relative($from,$paths[$dest])).'" lang="'.$code.'" hreflang="'.$code.'"'.($code===$lang?' class="active" aria-current="page"':'').'>'.Markdown::e(Locale::LANGUAGES[$code]).'</a> ';
+                $body=$switch.'</nav><div class="eyebrow">'.Markdown::e(PageTree::scope($key).' / '.$p['section']).'</div><h1>'.Markdown::e($p['title']).'</h1><article>'.$r['html'].'</article>'.$pager.'</div>';
+                $write($from,self::layout($from,$p['title'],$body,self::navigation($siblings,$paths,$from,$key),$toc,false,$includePrivate,null,$lang));
                 $text=html_entity_decode(strip_tags(preg_replace('/<[^>]+>/',' ',$r['html'])??$r['html']),ENT_QUOTES|ENT_HTML5,'UTF-8');
                 $text=trim(preg_replace('/\s+/u',' ',$text)??$text);
-                $row=['url'=>$from,'title'=>$p['title'],'scope'=>PageTree::scope($key),'path'=>$key,'text'=>$text];
+                $row=['url'=>$from,'title'=>$p['title'],'scope'=>PageTree::scope($key),'path'=>$key,'text'=>$text,'locale'=>$lang];
                 $append(($first?'':',').json_encode($row,JSON_THROW_ON_ERROR|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));$first=false;
             }
             $append("];\n");
         }finally{fclose($index);}
         $addFile('assets/search-index.js',$indexFile);
         // Landing and search remain usable on file:// and subdirectory deployments.
-        $cards='<div class="cards">';foreach($scopes as $scope=>$group){$key=array_key_first($group);[$book,$version]=explode('/',$scope);$cards.='<div class="tile"><div class="eyebrow">'.Markdown::e($version).'</div><h2>'.Markdown::e($books[$book]['title']??$book).'</h2>'.self::a($paths[$key],'Read documentation →').'</div>';}$cards.='</div>';
+        $cards='<div class="cards">';foreach($scopes as $scope=>$group)foreach(Locale::LANGUAGES as $lang=>$label){$localized=Locale::pages($group,$lang);if(!$localized)continue;$key=array_key_first($localized);[$book,$version]=explode('/',$scope);$cards.='<div class="tile" lang="'.$lang.'"><div class="eyebrow">'.Markdown::e($version.' · '.$label).'</div><h2>'.Markdown::e($books[$book]['title']??$book).'</h2>'.self::a($paths[$key],Locale::translate($lang,'Read documentation →')).'</div>';}$cards.='</div>';
         $write('index.html',self::layout('index.html','Documentation','<div class="eyebrow">CAJEERENGINE BOOK / STATIC EXPORT</div><h1>Documentation</h1><p class="lead">Published documentation snapshot.</p>'.$cards,self::navigation($pages,$paths,'index.html',''),'',false,$includePrivate));
         $write('search.html',self::layout('search.html','Search','<h1>Search documentation</h1><p data-search-status role="status" aria-live="polite">Enter a search term.</p><div data-search-results></div><noscript><p>Search requires JavaScript. Browse the documentation using the navigation.</p></noscript>',self::navigation($pages,$paths,'search.html',''),'',true,$includePrivate));
         $redirects=0;foreach($db['redirects']??[] as $old=>$id){$target=$map[$old]??null;if(!isset($paths[$target??''])||isset($paths[$old])||!PageTree::validKey($old))continue;
@@ -184,10 +186,10 @@ final class StaticExport
         return $html;
     }
 
-    private static function layout(string $from,string $title,string $body,string $nav,string $toc,bool $search,bool $private,?string $redirect=null):string
+    private static function layout(string $from,string $title,string $body,string $nav,string $toc,bool $search,bool $private,?string $redirect=null,string $lang='en'):string
     {
         $e=Markdown::e(...);$asset=self::relative($from,'assets/');$home=self::relative($from,'index.html');$searchUrl=self::relative($from,'search.html');
-        return '<!doctype html><html lang="en" data-diagram-frame="'.$e($asset.'diagram-frame.html').'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="'.$e(self::CSP).'"><meta name="robots" content="'.($private?'noindex,nofollow':'index,follow').'">'.($redirect!==null?'<meta http-equiv="refresh" content="0; url='.$e($redirect).'">':'').'<title>'.$e($title).' · CajeerEngine Book</title><link rel="stylesheet" href="'.$e($asset.'book.css').'"><link rel="stylesheet" href="'.$e($asset.'static.css').'"><script defer src="'.$e($asset.'book.js').'"></script><script defer src="'.$e($asset.'diagrams.js').'"></script>'.($search?'<script defer src="'.$e($asset.'search-index.js').'"></script>':'').'<script defer src="'.$e($asset.'static-search.js').'"></script>'.'</head><body><header class="top"><a class="brand" href="'.$e($home).'"><span class="logo">C</span> Cajeer<span>Book</span></a><form class="search" action="'.$e($searchUrl).'" method="get"><input name="q" aria-label="Search documentation" placeholder="Search documentation…" maxlength="200"><button>Search</button></form><button id="theme" type="button" aria-label="Toggle theme">◐</button></header><div class="shell"><aside class="sidebar"><div class="side-label">DOCUMENTATION</div>'.$nav.'</aside><main id="main">'.$body.'</main><aside class="toc">'.($toc!==''?'<div class="side-label">ON THIS PAGE</div>'.$toc:'').'</aside></div><footer class="foot">CajeerEngine Book · Static Export'.($private?' · May contain private documentation':'').'</footer></body></html>';
+        return '<!doctype html><html lang="'.Markdown::e($lang).'" data-diagram-frame="'.$e($asset.'diagram-frame.html').'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="'.$e(self::CSP).'"><meta name="robots" content="'.($private?'noindex,nofollow':'index,follow').'">'.($redirect!==null?'<meta http-equiv="refresh" content="0; url='.$e($redirect).'">':'').'<title>'.$e($title).' · CajeerEngine Book</title><link rel="stylesheet" href="'.$e($asset.'book.css').'"><link rel="stylesheet" href="'.$e($asset.'static.css').'"><script defer src="'.$e($asset.'book.js').'"></script><script defer src="'.$e($asset.'diagrams.js').'"></script>'.($search?'<script defer src="'.$e($asset.'search-index.js').'"></script>':'').'<script defer src="'.$e($asset.'static-search.js').'"></script>'.'</head><body><header class="top"><a class="brand" href="'.$e($home).'"><span class="logo">C</span> Cajeer<span>Book</span></a><form class="search" action="'.$e($searchUrl).'" method="get"><input name="q" aria-label="'.$e(Locale::translate($lang,'Search documentation')).'" placeholder="'.$e(Locale::translate($lang,'Search documentation')).'…" maxlength="200">'.($search?'<select name="locale" aria-label="Language"><option value="">All languages</option><option value="en">English</option><option value="ru">Русский</option></select>':($from!=='index.html'?'<input type="hidden" name="locale" value="'.$lang.'">':'')).'<button>'.$e(Locale::translate($lang,'Search')).'</button></form><button id="theme" type="button" aria-label="'.$e(Locale::translate($lang,'Toggle theme')).'">◐</button></header><div class="shell"><aside class="sidebar"><div class="side-label">'.$e(Locale::translate($lang,'Documentation')).'</div>'.$nav.'</aside><main id="main">'.$body.'</main><aside class="toc">'.($toc!==''?'<div class="side-label">'.$e(Locale::translate($lang,'On this page')).'</div>'.$toc:'').'</aside></div><footer class="foot">CajeerEngine Book · Static Export'.($private?' · May contain private documentation':'').'</footer></body></html>';
     }
 
     private static function diagramFrame(string $library,string $frame):string

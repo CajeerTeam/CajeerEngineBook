@@ -5,7 +5,7 @@ use CajeerEngine\Template\{CajeerTemplateEngine,TemplateSandbox};
 use CajeerEngine\Runtime\ServiceContainer;
 final class App {
     private BookStore $store; private MediaStore $media; private MediaController $mediaController; private CajeerTemplateEngine $view;
-    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $githubPrepared=null; private ?array $openApiPrepared=null; private ?string $openApiError=null; private ?string $githubError=null; private ?array $githubFailure=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore;
+    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $githubPrepared=null; private ?array $openApiPrepared=null; private ?string $openApiError=null; private ?string $githubError=null; private ?array $githubFailure=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore; private string $documentHead='';
     public function __construct(private readonly string $root,private readonly ?\Closure $githubClientFactory=null){
         $this->installationDir=$this->dataDir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
         $c=new ServiceContainer();$c->set('store',fn()=>new BookStore($this->dataDir));$this->store=$c->get('store');
@@ -14,12 +14,14 @@ final class App {
         $t=$root.'/templates';$this->view=new CajeerTemplateEngine(new TemplateSandbox($t),$t);
     }
     private static function e(string $s):string{return Markdown::e($s);}
+    private static function t(string $s):string{return self::e(Locale::t($s));}
     private static function url(string $key):string{return WorkspaceUrls::url('/docs/'.$key);}
     private static function link(string $url,string $label,string $class=''):string{return '<a class="'.self::e($class).'" href="'.self::e(WorkspaceUrls::url($url)).'">'.self::e($label).'</a>';}
     private function page(string $title,string $body,array $pages=[],string $current='',string $toc='',string $query=''):void{
-        $nav=PageTreeView::reader($pages,$current);
-        if($this->workspace)$body='<p class="eyebrow"><a href="/workspaces">Workspaces</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
-        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio','Studio'):'']);
+        $nav=PageTreeView::reader($pages,$current);$document=$current!==''?($pages[$current]??null):null;
+        $lang=$document?Locale::language($document):Locale::ui();$searchLocale=$document?Locale::language($document):(Locale::valid($_GET['locale']??null)?$_GET['locale']:'');
+        if($this->workspace)$body='<p class="eyebrow"><a href="/workspaces">'.self::t('Workspaces').'</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
+        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead]);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
@@ -27,7 +29,10 @@ final class App {
         $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);if(!is_string($path)||!str_starts_with($path,'/')){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
-        WorkspaceUrls::set('');
+        WorkspaceUrls::set('');$this->documentHead='';
+        $ui=$_COOKIE['book_ui']??'en';$ui=Locale::valid($ui)?$ui:'en';
+        if(in_array($method,['GET','HEAD'],true)&&Locale::valid($_GET['ui']??null)){$ui=$_GET['ui'];setcookie('book_ui',$ui,['expires'=>time()+31536000,'path'=>'/','secure'=>getenv('BOOK_SECURE_COOKIE')!=='0','httponly'=>true,'samesite'=>'Lax']);}
+        Locale::setUi($ui);
         try{
             if(!$this->runtimeLimit($path,$method))return;
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
@@ -38,7 +43,7 @@ final class App {
             if(str_starts_with($path,'/w/')){
                 if(!preg_match('~\A/w/([a-f0-9]{32})/([a-f0-9]{32})(/.*)?\z~D',$path,$m)){http_response_code(404);return;}
                 $inner=$m[3]??'/';
-                if(!preg_match('~\A/(?:$|(?:studio|docs|media|api/v1|search|playground|sdk)(?:/|$))~D',$inner)){http_response_code(404);return;}
+                if(!preg_match('~\A/(?:$|(?:studio|docs|media|api/v1|search|playground|sdk|l)(?:/|$))~D',$inner)){http_response_code(404);return;}
                 $publicRead=in_array($method,['GET','HEAD'],true)&&$inner!=='/studio'&&!str_starts_with($inner,'/studio/');
                 $this->identityStore->withWorkspace($this->auth->token(),$m[1],$m[2],function($ctx,$w)use($inner,$method){
                     header('Cache-Control: private, no-store');header('Vary: Cookie');if(!$w||$ctx||Visibility::workspace($w)==='private')header('X-Robots-Tag: noindex, nofollow');
@@ -226,12 +231,12 @@ final class App {
         $r=$this->store->search($this->readerVisibility,$this->studioRole,$o,!$api);
         $hits=$r['hits'];foreach($hits as &$hit)$hit['url']=self::url($hit['key']);unset($hit);
         if($api){header('X-Total-Count: '.$r['total']);header('X-Search-Engine: '.$r['engine']);header('X-Search-Match: '.$r['match']);$this->json($hits);return;}
-        $html='<div class="eyebrow">SEARCH</div><h1>Search documentation</h1><form method="get" action="'.self::e(WorkspaceUrls::url('/search')).'" class="editor"><label>Search <input name="q" maxlength="200" value="'.self::e($o['q']).'"></label><label>Book <input name="book" maxlength="64" value="'.self::e($o['book']).'"></label><label>Version <input name="version" maxlength="64" value="'.self::e($o['version']).'"></label><button class="primary">Search</button></form><p>'.$r['total'].' results</p>'.($r['match']==='similar'?'<p>Similar titles or paths (no full-text matches).</p>':'');
-        foreach($hits as $hit)$html.='<div class="result"><h2>'.self::link($hit['url'],$hit['title']).'</h2><small>'.self::e($hit['key']).'</small><p>'.self::e($hit['snippet']).'</p></div>';
-        $params=['q'=>$o['q'],'book'=>$o['book'],'version'=>$o['version'],'limit'=>$o['limit']];
+        $html='<div class="eyebrow">'.self::t('Search').'</div><h1>'.self::t('Search documentation').'</h1><form method="get" action="'.self::e(WorkspaceUrls::url('/search')).'" class="editor"><label>'.self::t('Search').' <input name="q" maxlength="200" value="'.self::e($o['q']).'"></label><label>'.self::t('Book').' <input name="book" maxlength="64" value="'.self::e($o['book']).'"></label><label>'.self::t('Version').' <input name="version" maxlength="64" value="'.self::e($o['version']).'"></label><label>'.self::t('Language').'<select name="locale">'.Locale::options($o['locale'],true).'</select></label><button class="primary">'.self::t('Search').'</button></form><p>'.(Locale::ui()==='ru'?self::t('Results').': '.$r['total']:$r['total'].' results').'</p>'.($r['match']==='similar'?'<p>'.self::t('Similar titles or paths (no full-text matches).').'</p>':'');
+        foreach($hits as $hit)$html.='<div class="result" lang="'.self::e($hit['locale']).'"><h2>'.self::link($hit['url'],$hit['title']).'</h2><small>'.self::e($hit['key'].' · '.Locale::LANGUAGES[$hit['locale']]).'</small><p>'.self::e($hit['snippet']).'</p></div>';
+        $params=['q'=>$o['q'],'book'=>$o['book'],'version'=>$o['version'],'locale'=>$o['locale'],'limit'=>$o['limit']];
         $url=static fn(int $offset)=>'/search?'.http_build_query($params+['offset'=>$offset],'','&',PHP_QUERY_RFC3986);
-        $html.='<div class="pager">';if($o['offset']>0)$html.=self::link($url(max(0,$o['offset']-$o['limit'])),'← Previous');if($o['offset']+$o['limit']<$r['total'])$html.=self::link($url($o['offset']+$o['limit']),'Next →');$html.='</div>';
-        $this->page('Search',$html,$r['pages'],'','',$o['q']);
+        $html.='<div class="pager">';if($o['offset']>0)$html.=self::link($url(max(0,$o['offset']-$o['limit'])),'← '.Locale::t('Previous'));if($o['offset']+$o['limit']<$r['total'])$html.=self::link($url($o['offset']+$o['limit']),Locale::t('Next').' →');$html.='</div>';
+        $this->page(Locale::t('Search'),$html,$r['pages'],'','',$o['q']);
     }
     private function searchInspector():void
     {
@@ -239,7 +244,7 @@ final class App {
         try{$info=$this->store->searchInfo();}catch(\RuntimeException $e){error_log('Search diagnostics: '.$e->getMessage());http_response_code(503);$this->page('Search Inspector',$html.'<p role="alert">Search index unavailable. Stop writers and run <code>php bin/search.php reindex --offline</code>, then <code>php bin/search.php check</code>.</p>');return;}
         $html.='<p>Engine: '.self::e($info['engine']).' · Published documents: '.$info['documents'].($info['revision']!==null?' · Indexed revision: '.$info['revision']:' · File mode: no persistent index').'</p>';
         try{$o=Search::options($_GET);$audience=$_GET['audience']??'member';if(!in_array($audience,['member','public'],true))throw new \InvalidArgumentException('Invalid search audience.');}catch(\InvalidArgumentException $e){http_response_code(422);$this->page('Search Inspector',$html.'<p>'.self::e($e->getMessage()).'</p>');return;}
-        $html.='<form method="get" action="'.self::e(WorkspaceUrls::url('/studio/search')).'" class="editor"><label>Query<input name="q" maxlength="200" value="'.self::e($o['q']).'"></label><label>Audience<select name="audience"><option value="member"'.($audience==='member'?' selected':'').'>Authorized member</option><option value="public"'.($audience==='public'?' selected':'').'>Anonymous public Reader</option></select></label><label>Book<input name="book" value="'.self::e($o['book']).'"></label><label>Version<input name="version" value="'.self::e($o['version']).'"></label><button class="primary">Inspect query</button></form>';
+        $html.='<form method="get" action="'.self::e(WorkspaceUrls::url('/studio/search')).'" class="editor"><label>Query<input name="q" maxlength="200" value="'.self::e($o['q']).'"></label><label>Audience<select name="audience"><option value="member"'.($audience==='member'?' selected':'').'>Authorized member</option><option value="public"'.($audience==='public'?' selected':'').'>Anonymous public Reader</option></select></label><label>Book<input name="book" value="'.self::e($o['book']).'"></label><label>Version<input name="version" value="'.self::e($o['version']).'"></label><label>'.self::t('Language').'<select name="locale">'.Locale::options($o['locale'],true).'</select></label><button class="primary">Inspect query</button></form>';
         if($o['groups']){$r=$this->store->search($this->readerVisibility,$audience==='public'?'none':$this->studioRole,$o);$html.='<p>'.$r['total'].' results · '.self::e($r['match']).' · showing up to '.$o['limit'].'</p>';foreach($r['hits'] as $h)$html.='<div class="result">'.self::link(self::url($h['key']),$h['title']).' <small>Score: '.self::e((string)$h['score']).'</small><p>'.self::e($h['snippet']).'</p></div>';}
         $this->page('Search Inspector',$html);
     }
@@ -268,6 +273,15 @@ final class App {
             }
             if($path==='/search'||$path==='/api/v1/search'){$this->search($path==='/api/v1/search');return;}
             $db=$this->store->read();$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
+            if(preg_match('~\A/l/(en|ru)/docs/(.+)\z~D',$path,$localized)){
+                $key=$localized[2];if(!isset($pages[$key]))$key=PageTree::redirect($db,$key)??$key;
+                $variants=Locale::variants($pages,$key);$target=$variants[$localized[1]]??null;
+                // Language selection is mutable, so never cache a permanent redirect.
+                if($target===null&&($_GET['fallback']??null)==='1'&&isset($pages[$key]))$target=$key;
+                if($target!==null){header('Location: '.self::url($target),true,302);return;}
+                http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page(Locale::t('Page not found'),'<h1>'.self::t('Page not found').'</h1><p>'.self::t('This page is missing or not published.').'</p>',$pages);return;
+            }
+
             if($path==='/sdk'){
                 $key=is_string($_GET['key']??null)?$_GET['key']:'';$language=is_string($_GET['lang']??null)?$_GET['lang']:'typescript';
                 header('X-Robots-Tag: noindex, nofollow');header('Referrer-Policy: no-referrer');
@@ -289,12 +303,35 @@ final class App {
                 header('Content-Security-Policy: '.ApiPlaygroundView::csp($d));header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');
                 $this->page('API Playground',ApiPlaygroundView::markup($key,$pages[$key],$d,$this->scopedIdentity,$this->studioRole),$pages,$key);return;
             }
-            if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true]),$pages));return;}
-            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true]));return;}
+            if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($p)],$pages));return;}
+            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($pages[$key])] );return;}
 
-            if($path==='/'){$books=BookStore::books($db);$html='<div class="eyebrow">CAJEERENGINE BOOK / DOCUMENTATION</div><h1>Documentation, on your terms.</h1><p class="lead">A self-hosted knowledge base for your products, APIs and teams.</p><div class="cards">';$seen=[];foreach($pages as $key=>$p){[$b,$v]=explode('/',$key);if(isset($seen["$b/$v"]))continue;$seen["$b/$v"]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),'Read documentation →').'</div>';}$this->page('Documentation',$html.'</div>',$pages);return;}
-            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=$this->renderPublished($p,$key,$db,$pages);$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
-            http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);
+            if($path==='/'){
+                $locale=$_GET['locale']??'';if($locale!=='')Locale::require($locale);$visible=Locale::pages($pages,$locale);$books=BookStore::books($db);
+                $html='<div class="eyebrow">CAJEERENGINE BOOK / '.self::t('Documentation').'</div><h1>'.self::t('Documentation, on your terms.').'</h1><p class="lead">'.self::t('A self-hosted knowledge base for your products, APIs and teams.').'</p><form method="get" class="actions"><label>'.self::t('Language').' <select name="locale">'.Locale::options($locale,true).'</select></label><button>'.self::t('Documentation').'</button></form><div class="cards">';$seen=[];
+                foreach($visible as $key=>$p){[$b,$v]=explode('/',$key);$lang=Locale::language($p);$group="$b/$v/$lang";if(isset($seen[$group]))continue;$seen[$group]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v.' · '.Locale::LANGUAGES[$lang]).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),Locale::t('Read documentation →')).'</div>';}
+                $this->page(Locale::t('Documentation'),$html.'</div>',$visible);return;
+            }
+            if(str_starts_with($path,'/docs/')){
+                $key=substr($path,6);
+                if(isset($pages[$key])){
+                    $p=$pages[$key];$lang=Locale::language($p);header('Content-Language: '.$lang);
+                    $r=$this->renderPublished($p,$key,$db,$pages);$toc='<div class="side-label">'.self::t('On this page').'</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);
+                    [$b,$v]=explode('/',$key);$prefix="$b/$v/";$localizedPages=Locale::pages($pages,$lang);$siblings=array_filter($localizedPages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);
+                    $keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');
+                    $versions=[];foreach($localizedPages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;}
+                    $switch='<div class="versions">'.self::t('Versions').': ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($localizedPages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>';
+                    $variants=Locale::variants($pages,$key);$switch.='<nav class="versions" aria-label="'.self::t('Language').'">'.self::t('Language').': ';
+                    $this->documentHead='<link rel="canonical" href="'.self::e(self::url($key)).'">';
+                    foreach($variants as $code=>$dest){$href=self::e(self::url($dest));$switch.='<a href="'.$href.'" lang="'.$code.'" hreflang="'.$code.'"'.($code===$lang?' class="active" aria-current="page"':'').'>'.self::e(Locale::LANGUAGES[$code]).'</a> ';
+                        $this->documentHead.='<link rel="alternate" hreflang="'.$code.'" href="'.$href.'">';}
+                    $switch.='</nav>';
+                    $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article lang="'.$lang.'">'.$r['html'].'</article>'.$pager.'</div>';
+                    $this->page($p['title'],$html,$siblings,$key,$toc);return;
+                }
+                if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}
+            }
+            http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page(Locale::t('Page not found'),'<h1>'.self::t('Page not found').'</h1><p>'.self::t('This page is missing or not published.').'</p>',$pages);
         }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }
     private function redirect(string $path): void {
@@ -312,6 +349,27 @@ final class App {
         if($method==='POST'){
             if(empty($_POST) && ini_parse_quantity((string)ini_get('post_max_size'))>0 && (int)($_SERVER['CONTENT_LENGTH']??0)>ini_parse_quantity((string)ini_get('post_max_size'))){http_response_code(413);echo 'Request exceeds server upload limit';return;}
             if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);echo 'Invalid CSRF token';return;}
+            if($path==='/studio/translations'){
+                $str=static fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';
+                try{
+                    if($str('action')==='create'){
+                        $source=$str('source');if(!PageTree::validKey($source))throw new \InvalidArgumentException('Invalid source page.');[$book,$version]=explode('/',$source,3);
+                        $key=$this->store->save(['book'=>$book,'version'=>$version,'path'=>$str('path'),'title'=>$str('title'),'section'=>$str('section'),'order'=>10,'body'=>$str('body'),'revision'=>0,'locale'=>$str('locale'),'translation_source'=>$str('source_id'),'source_digest'=>$str('source_digest'),'note'=>'Translation created'],false);
+                        header('Location: '.WorkspaceUrls::url('/studio?edit='.rawurlencode($key)),true,303);return;
+                    }
+                    if($str('action')==='set-language'){
+                        if(!preg_match('/\A[1-9][0-9]{0,17}\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision.');
+                        $this->store->setPageLocale($str('key'),(int)$str('revision'),$str('locale'));
+                        header('Location: '.WorkspaceUrls::url('/studio?edit='.rawurlencode($str('key'))),true,303);return;
+                    }
+                    if($str('action')==='review-source'){
+                        if(!preg_match('/\A[1-9][0-9]{0,17}\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision.');
+                        $this->store->reviewTranslationSource($str('key'),(int)$str('revision'),$str('source_digest'));
+                        header('Location: '.WorkspaceUrls::url('/studio/translations?source='.rawurlencode($str('source'))),true,303);return;
+                    }
+                    throw new \InvalidArgumentException('Unknown translation action.');
+                }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$this->page(Locale::t('Translation Studio'),'<p role="alert">'.self::e($e->getMessage()).'</p>'.TranslationView::render($this->store->read(),$csrf,$str('source')));return;}
+            }
             if($path==='/studio/static-export'){
                 $scope=is_string($_POST['scope']??null)?$_POST['scope']:'';
                 $private=($_POST['visibility']??'')==='all';
@@ -433,7 +491,7 @@ final class App {
                 $ajax=($_SERVER['HTTP_X_BOOK_STUDIO']??'')==='editor';
                 try {
                     if(!preg_match('/\A(?:0|[1-9][0-9]{0,17})\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision');
-                    $result=$this->store->saveResult(['book'=>$str('book'),'version'=>$str('version'),'path'=>$str('path'),'title'=>$str('title'),'section'=>$str('section'),'order'=>$str('order'),'body'=>$str('body'),'revision'=>$str('revision'),'note'=>$str('note')],$action==='publish');
+                    $result=$this->store->saveResult(['book'=>$str('book'),'version'=>$str('version'),'path'=>$str('path'),'title'=>$str('title'),'section'=>$str('section'),'order'=>$str('order'),'body'=>$str('body'),'revision'=>$str('revision'),'note'=>$str('note'),'locale'=>$str('locale')],$action==='publish');
                     if($ajax){if($result['navigation_changed'])$result['navigation']=PageTreeView::list($this->store->read(),$result['key']);$this->json($result);return;}
                     header('Location: '.WorkspaceUrls::url('/studio?edit='.rawurlencode($result['key'])),true,303);return;
                 }catch(\DomainException $e){if(!$ajax)throw $e;http_response_code(409);$this->json(['error'=>$e->getMessage()]);return;}
@@ -441,6 +499,7 @@ final class App {
             }
             if($action==='delete'||$action==='unpublish'){if(!preg_match('/\A[1-9][0-9]{0,17}\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision');$this->store->remove($str('key'),(int)$str('revision'),$action==='unpublish');}elseif($action==='copy'){$this->store->copyVersion($str('book'),$str('from'),$str('to'));}else throw new \InvalidArgumentException('Unknown action');header('Location: '.WorkspaceUrls::url('/studio'),true,303);return;
         }
+        if($path==='/studio/translations'){$this->page(Locale::t('Translation Studio'),TranslationView::render($this->store->read(),$csrf,is_string($_GET['source']??null)?$_GET['source']:''));return;}
         if($path==='/studio/openapi'){
             $db=$this->store->read();if(isset($_GET['download'])){$scope=is_string($_GET['spec']??null)?$_GET['spec']:'';$revision=is_string($_GET['download'])?$_GET['download']:'';foreach($db['openapi'][$scope]['revisions']??[] as $r)if((string)$r['revision']===$revision){header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="openapi-source-'.$revision.'.json"');if($method!=='HEAD')echo $r['bundle'];return;}http_response_code(404);return;}
             $this->page('OpenAPI Reference',OpenApiView::render($db,$csrf,$_GET));return;
@@ -464,11 +523,11 @@ final class App {
         if($edit!==''&&!$entry){if($target=PageTree::draftRedirect($db,$edit)){header('Location: '.WorkspaceUrls::url('/studio?edit='.rawurlencode($target)),true,303);return;}http_response_code(404);$this->page('Page not found','<h1>Page not found</h1><a href="'.WorkspaceUrls::url('/studio/tree').'">Open page tree</a>');return;}$p=$entry['draft']??['title'=>'','section'=>'Getting started','order'=>10,'body'=>''];$parts=$entry?explode('/',$edit,3):[$this->workspace?(string)(array_key_first(BookStore::books($db))??''):'handbook','1.0',''];
         if(!$entry&&is_string($_GET['book']??null)&&isset(BookStore::books($db)[$_GET['book']]))$parts[0]=$_GET['book'];
         if(!$entry&&is_string($_GET['new_under']??null))$parts=PageTreeView::newUnder($db,$_GET['new_under'])??$parts;
-        $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::e($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
-        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/import','Import Markdown').self::link('/studio/openapi','OpenAPI Reference').self::link('/studio/git','Git Sync').($admin?self::link('/studio/automation','Webhooks & Automation').self::link('/studio/ci','CI/CD Publishing').self::link('/studio/search','Search Inspector'):'').self::link('/studio/team','Team dashboard').self::link('/studio/books','Books').($admin?self::link('/studio/static-export','Static Export').self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media','Media library').($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree','Page tree').self::link('/studio/history','Revision history').self::link('/studio/reviews','Reviews').'</div>'.PageTreeView::list($db,$edit).'<p>Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>Revision note (optional, manual save/publish)<input name="note" maxlength="500" placeholder="What changed?"></label><div class="actions"><button name="action" value="save">Save draft</button>'.($directPublish?'<button class="primary" name="action" value="publish">Publish</button>':'').'</div></form>';
+        $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::t($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
+        $html='<div class="eyebrow">'.self::t('Studio').'</div><h1>'.self::t('Documentation Studio').'</h1><p>'.self::t('Drafts and published snapshots are separate.').'</p><div class="actions">'.self::link('/studio',Locale::t('New page')).self::link('/studio/translations',Locale::t('Translations')).self::link('/studio/import',Locale::t('Import Markdown')).self::link('/studio/openapi','OpenAPI Reference').self::link('/studio/git','Git Sync').($admin?self::link('/studio/automation','Webhooks & Automation').self::link('/studio/ci','CI/CD Publishing').self::link('/studio/search',Locale::t('Search Inspector')):'').self::link('/studio/team',Locale::t('Team dashboard')).self::link('/studio/books',Locale::t('Books')).($admin?self::link('/studio/static-export',Locale::t('Static Export')).self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media',Locale::t('Media library')).($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree',Locale::t('Page tree')).self::link('/studio/history',Locale::t('Revision history')).self::link('/studio/reviews',Locale::t('Reviews')).'</div>'.PageTreeView::list($db,$edit).'<p>'.self::t('Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.').'</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.self::t($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).'<label>'.self::t('Language').'<select name="locale"'.($entry?' disabled':'').'>'.Locale::options(Locale::language($p)).'</select></label>'.$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>'.self::t('Revision note (optional, manual save/publish)').'<input name="note" maxlength="500" placeholder="'.self::t('What changed?').'"></label><div class="actions"><button name="action" value="save">'.self::t('Save draft').'</button>'.($directPublish?'<button class="primary" name="action" value="publish">'.self::t('Publish').'</button>':'').'</div></form>';
         if(ReviewWorkflow::required($db))$html.='<p class="tree-notice">Review required. Save the draft, then submit its saved revision for approval. '.self::link('/studio/reviews','Open reviews').'</p>';
-        if($entry){$html.='<p>'.self::link('/studio/reviews?kind=page&target='.rawurlencode($edit),'Review saved draft').'</p><p data-page-history>'.self::link('/studio/history?page='.PageTree::id($edit,$entry),'Page history').'</p><div data-saved-preview><h2>Saved draft preview</h2><article>'.Markdown::render($p['body'],$edit,false,true,$p['link_base']??null,PageTree::linkMap($db))['html'].'</article></div>'.($admin?'<form method="post" action="'.WorkspaceUrls::url('/studio').'" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">Unpublish</button><button name="action" value="delete" data-confirm="Delete this page? Retained history remains recoverable.">Delete</button></form>':'');}
-        $html.='<h2>Copy version to drafts</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">Copy published pages</button></form>';$this->page('Studio',$html,BookStore::published($db));
+        if($entry){$html.='<p>'.self::link('/studio/reviews?kind=page&target='.rawurlencode($edit),Locale::t('Review saved draft')).'</p><p data-page-history>'.self::link('/studio/history?page='.PageTree::id($edit,$entry),Locale::t('Page history')).'</p><div data-saved-preview><h2>'.self::t('Saved draft preview').'</h2><article>'.Markdown::render($p['body'],$edit,false,true,$p['link_base']??null,PageTree::linkMap($db))['html'].'</article></div>'.($admin?'<form method="post" action="'.WorkspaceUrls::url('/studio').'" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">'.self::t('Unpublish').'</button><button name="action" value="delete" data-confirm="Delete this page? Retained history remains recoverable.">'.self::t('Delete').'</button></form>':'');}
+        $html.='<h2>'.self::t('Copy version to drafts').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">'.self::t('Copy published pages').'</button></form>';$this->page(Locale::t('Studio'),$html,BookStore::published($db));
     }
     private function booksMarkup(string $csrf,string $error=''):string{
         $db=$this->store->read();$h='<h1>Books</h1><p><a href="'.WorkspaceUrls::url('/studio').'">Studio</a> · <a href="/workspaces">Workspaces</a></p>'.($error!==''?'<p role="alert">'.self::e($error).'</p>':'');

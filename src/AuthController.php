@@ -18,9 +18,9 @@ final class AuthController
     }
     public function token():string{return self::readCookie('session');}
     public function current():?array{return $this->store->current($this->token());}
-    private static function field(string $name,string $label,string $type='text',string $value='',string $autocomplete='off'):string{return '<label>'.self::e($label).'<input required name="'.$name.'" type="'.$type.'" value="'.self::e($value).'" autocomplete="'.$autocomplete.'" maxlength="'.($type==='password'?1024:254).'"></label>';}
+    private static function field(string $name,string $label,string $type='text',string $value='',string $autocomplete='off'):string{return '<label>'.self::e(Locale::t($label)).'<input required name="'.$name.'" type="'.$type.'" value="'.self::e($value).'" autocomplete="'.$autocomplete.'" maxlength="'.($type==='password'?1024:254).'"></label>';}
     private static function hidden(string $csrf):string{return '<input type="hidden" name="csrf" value="'.self::e($csrf).'">';}
-    private static function form(string $path,string $csrf,string $body,string $button,string $action=''):string{return '<form class="editor" method="post" action="'.$path.'">'.self::hidden($csrf).($action!==''?'<input type="hidden" name="action" value="'.self::e($action).'">':'').$body.'<button class="primary" type="submit">'.self::e($button).'</button></form>';}
+    private static function form(string $path,string $csrf,string $body,string $button,string $action=''):string{return '<form class="editor" method="post" action="'.$path.'">'.self::hidden($csrf).($action!==''?'<input type="hidden" name="action" value="'.self::e($action).'">':'').$body.'<button class="primary" type="submit">'.self::e(Locale::t($button)).'</button></form>';}
     private static function redirect(string $path):void{header('Location: '.$path,true,303);}
     private static function ip():string{$s=$_SERVER['REMOTE_ADDR']??'';return is_string($s)&&filter_var($s,FILTER_VALIDATE_IP)?$s:'unknown';}
     private static function post(string $name):string{return is_string($_POST[$name]??null)?$_POST[$name]:'';}
@@ -33,13 +33,13 @@ final class AuthController
     }
     private function oidc(string $path,string $method,callable $page):void{
         header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
-        if($path==='/auth/oidc/complete'){if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}$page('Sign-in complete','<h1>Corporate sign-in complete</h1><p><a href="/workspaces">Continue to your workspaces</a></p>');return;}
+        if($path==='/auth/oidc/complete'){if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}$page('Sign-in complete','<h1>'.self::e(Locale::t('Corporate sign-in complete')).'</h1><p><a href="/workspaces">'.self::e(Locale::t('Continue to your workspaces')).'</a></p>');return;}
         try{
             $c=Oidc::config();if(!$c){http_response_code(404);$page('SSO unavailable','<h1>SSO is not configured</h1>');return;}
             if(!self::secure())throw new \RuntimeException('SSO requires secure cookies.');
             if($path==='/auth/oidc/start'){
                 if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}
-                if($this->current()||!self::csrf(self::readCookie('preauth'))){http_response_code(403);$page('Invalid request','<h1>Invalid sign-in request</h1><a href="/login">Sign in</a>');return;}
+                if($this->current()||!self::csrf(self::readCookie('preauth'))){http_response_code(403);$page('Invalid request','<h1>Invalid sign-in request</h1><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');return;}
                 $browser=bin2hex(random_bytes(32));$flow=$this->store->beginOidc($c,$browser,self::ip());
                 if($flow['status']!=='ok'){http_response_code(429);header('Retry-After: 900');$page('Too many requests','<h1>Try again later</h1>');return;}
                 $url=Oidc::authorization($c,Oidc::discovery($c),$flow);self::oidcCookie($browser,time()+300);self::redirect($url);return;
@@ -51,7 +51,7 @@ final class AuthController
             $code=is_string($_GET['code']??null)?$_GET['code']:'';$claims=Oidc::exchange($c,$flow,$code);
             $r=$this->store->federatedLogin($c,$claims);if($r['status']!=='ok')throw new \DomainException('SSO access denied.');
             self::issue($r);self::redirect('/auth/oidc/complete');
-        }catch(\Throwable){http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">Sign in</a>');}
+        }catch(\Throwable){http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');}
     }
     private static function oidcStatus():string{
         try{$c=Oidc::config();return '<h2>Enterprise SSO</h2><p>'.($c?self::e($c['label'].' · '.$c['issuer']).' · '.count($c['groups']).' group mappings':'Not configured').'</p><p>Local login: '.(Oidc::required()?'installation owner only':'enabled for local accounts').'. Configuration is managed by the deployment operator.</p>';}catch(\Throwable){return '<h2>Enterprise SSO</h2><p>Invalid deployment configuration.</p>';}
@@ -84,11 +84,11 @@ final class AuthController
             if($csrf===''){$csrf=bin2hex(random_bytes(32));self::cookie('preauth',$csrf,time()+1800);}
             if($path==='/login'){
                 $setup=!$this->store->initialized()&&!getenv('BOOK_ADMIN_HASH')?'<p>Installation not initialized. Run the operator CLI <code>bin/identity.php init</code>.</p>':'';
-                $page('Sign in','<div class="auth-panel"><h1>Sign in</h1>'.self::notice($error).(isset($_GET['reset'])?'<p>Password reset complete. Sign in with your new password.</p>':'').(isset($_GET['joined'])?'<p>Invitation accepted. Sign in with your new account.</p>':'').$setup.self::oidcForm($csrf).(Oidc::required()?'<p>Corporate sign-in is required for non-owner accounts. Local sign-in is reserved for the installation owner.</p>':'').self::form('/login',$csrf,self::field('username','Username','text','','username').self::field('password','Password','password','','current-password'),'Sign in').'<p><a href="/account/reset">Recover access</a></p></div>');
-            }else $page('Recover access','<div class="auth-panel"><h1>Recover access</h1><p>Ask the installation operator for a one-time recovery token. It expires after 30 minutes.</p>'.self::notice($error).self::form('/account/reset',$csrf,self::field('token','Recovery token','password','','off').self::field('password','New password','password','','new-password').self::field('confirm','Confirm password','password','','new-password'),'Reset password').'<p><a href="/login">Sign in</a></p></div>');
+                $page('Sign in','<div class="auth-panel"><h1>'.self::e(Locale::t('Sign in')).'</h1>'.self::notice($error).(isset($_GET['reset'])?'<p>Password reset complete. Sign in with your new password.</p>':'').(isset($_GET['joined'])?'<p>Invitation accepted. Sign in with your new account.</p>':'').$setup.self::oidcForm($csrf).(Oidc::required()?'<p>Corporate sign-in is required for non-owner accounts. Local sign-in is reserved for the installation owner.</p>':'').self::form('/login',$csrf,self::field('username','Username','text','','username').self::field('password','Password','password','','current-password'),'Sign in').'<p><a href="/account/reset">'.self::e(Locale::t('Recover access')).'</a></p></div>');
+            }else $page('Recover access','<div class="auth-panel"><h1>'.self::e(Locale::t('Recover access')).'</h1><p>Ask the installation operator for a one-time recovery token. It expires after 30 minutes.</p>'.self::notice($error).self::form('/account/reset',$csrf,self::field('token','Recovery token','password','','off').self::field('password','New password','password','','new-password').self::field('confirm','Confirm password','password','','new-password'),'Reset password').'<p><a href="/login">'.self::e(Locale::t('Sign in')).'</a></p></div>');
             return;
         }
-        if(!$ctx){http_response_code(401);$page('Sign in required','<h1>Sign in required</h1><p><a href="/login">Sign in</a></p>');return;}
+        if(!$ctx){http_response_code(401);$page('Sign in required','<h1>'.self::e(Locale::t('Sign in required')).'</h1><p><a href="/login">'.self::e(Locale::t('Sign in')).'</a></p>');return;}
         $user=$ctx['user'];$csrf=$ctx['session']['csrf'];
         if($path==='/account/users'&&!$user['owner']){http_response_code(403);$page('Forbidden','<h1>Owner permission required</h1>');return;}
         if($path==='/logout'&&$method!=='POST'){http_response_code(405);header('Allow: POST');return;}
@@ -114,7 +114,7 @@ final class AuthController
                 if($error===''){self::redirect($path.'?updated=1');return;}
             }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$error=$e->getMessage();}
         }
-        $html='<div class="auth-panel"><h1>'.($path==='/account/users'?'User management':'Your account').'</h1>'.self::notice($error).(isset($_GET['updated'])?'<p>Changes saved.</p>':'').'<p><a href="/account">Account</a> · <a href="/organizations">Organizations</a>'.($user['owner']?' · <a href="/studio">Studio</a> · <a href="/account/users">Users</a>':'').'</p>';
+        $html='<div class="auth-panel"><h1>'.self::e(Locale::t($path==='/account/users'?'User management':'Your account')).'</h1>'.self::notice($error).(isset($_GET['updated'])?'<p>Changes saved.</p>':'').'<p><a href="/account">'.self::e(Locale::t('Account')).'</a> · <a href="/organizations">'.self::e(Locale::t('Organizations')).'</a>'.($user['owner']?' · <a href="/studio">'.self::e(Locale::t('Studio')).'</a> · <a href="/account/users">Users</a>':'').'</p>';
         if($path==='/account/users'){
             $html.=self::oidcStatus().'<h2>Create user</h2>'.self::form($path,$csrf,self::field('username','Username','text','','username').self::field('name','Display name').self::field('email','Email','email').self::field('password','Initial password (12–72 bytes)','password','','new-password'),'Create account','create').'<h2>Accounts</h2>';
             foreach($this->store->users($token) as $u){$html.='<div class="account-row"><strong>'.self::e($u['name']).'</strong><p>'.self::e($u['username'].' · '.$u['email']).' · '.($u['owner']?'Installation owner':(($u['enabled']?'Active':'Disabled').(!empty($u['federated'])?' · SSO':''))).'</p>';if(!$u['owner'])$html.=self::form($path,$csrf,'<input type="hidden" name="id" value="'.$u['id'].'">',$u['enabled']?'Disable account':'Enable account',$u['enabled']?'disable':'enable');$html.='</div>';}

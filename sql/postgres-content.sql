@@ -91,3 +91,7 @@ BEGIN
     EXECUTE format('CREATE INDEX IF NOT EXISTS search_path_trgm ON cajeer_book.search_document USING gin(page_key %I.gin_trgm_ops)',ext_schema);
 END;
 $search_indexes$;
+
+-- 0.4.6: published document language is part of the transactional search projection.
+ALTER TABLE cajeer_book.search_document ADD COLUMN IF NOT EXISTS locale text NOT NULL DEFAULT 'en' CHECK (locale IN ('en','ru'));
+CREATE INDEX IF NOT EXISTS search_scope_locale ON cajeer_book.search_document (installation,scope,locale);
