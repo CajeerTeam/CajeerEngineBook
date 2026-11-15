@@ -24,6 +24,8 @@
     "scripts": {
         "test": [
             "@php tests/enterprise-policy.php",
+            "python3 tests/release-gate-policy.py",
+            "@php tests/upgrade-050.php",
             "python3 tests/enterprise-load.py",
             "@php tests/recovery.php",
             "@php tests/audit-policy.php",

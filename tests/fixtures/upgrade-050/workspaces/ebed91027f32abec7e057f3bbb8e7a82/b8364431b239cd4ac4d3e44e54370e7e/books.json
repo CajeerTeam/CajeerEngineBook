@@ -1,0 +1,162 @@
+{
+    "schema": 1,
+    "pages": {
+        "guide/1/start": {
+            "id": "6356fd1195096e8c5342ad245d1266e5",
+            "revision": 1,
+            "draft": {
+                "title": "Upgrade guide",
+                "section": "Guide",
+                "order": 10,
+                "body": "Upgrade baseline 050\n\n[Attachment](/media/eff94b0487c478cb597eb067b3e3cd1f)\n\nUnpublished upgrade secret",
+                "updated": "2026-11-15T20:07:44+00:00",
+                "media": [
+                    "eff94b0487c478cb597eb067b3e3cd1f"
+                ]
+            },
+            "published": {
+                "title": "Upgrade guide",
+                "section": "Guide",
+                "order": 10,
+                "body": "Upgrade baseline 050\n\n[Attachment](/media/eff94b0487c478cb597eb067b3e3cd1f)",
+                "updated": "2026-11-15T20:07:44+00:00",
+                "media": [
+                    "eff94b0487c478cb597eb067b3e3cd1f"
+                ]
+            },
+            "published_key": "guide/1/start",
+            "review_authors": [],
+            "review_tree_authors": []
+        }
+    },
+    "media": {
+        "eff94b0487c478cb597eb067b3e3cd1f": {
+            "name": "fixture.txt",
+            "mime": "text/plain",
+            "size": 27,
+            "sha256": "db5021b08af4390f781b75cac385adfd7c9b761744e0824614e787c2e3cc587f",
+            "width": null,
+            "height": null,
+            "id": "eff94b0487c478cb597eb067b3e3cd1f",
+            "folder": "",
+            "created": "2026-11-15T20:07:44+00:00",
+            "updated": "2026-11-15T20:07:44+00:00",
+            "revision": 1
+        }
+    },
+    "books": {
+        "guide": {
+            "slug": "guide",
+            "id": "0dfc7899294fba2b84a1b28748a171f4",
+            "title": "Upgrade Guide",
+            "visibility": "private",
+            "visibility_revision": 2
+        }
+    },
+    "activity": {
+        "c54e9da858ac157d2a68d69ad0d1cf31": {
+            "id": "c54e9da858ac157d2a68d69ad0d1cf31",
+            "at": "2026-11-15T20:07:44+00:00",
+            "actor": {
+                "id": "0ba6fbe771003f83e10ad19260e847cf",
+                "username": "owner"
+            },
+            "type": "book.create",
+            "subject": "guide",
+            "target": "0dfc7899294fba2b84a1b28748a171f4",
+            "organization": "",
+            "workspace": "",
+            "recipients": [],
+            "read": [],
+            "detail": ""
+        },
+        "b63e593364a3bdaa47279701e40b4719": {
+            "id": "b63e593364a3bdaa47279701e40b4719",
+            "at": "2026-11-15T20:07:44+00:00",
+            "actor": {
+                "id": "0ba6fbe771003f83e10ad19260e847cf",
+                "username": "owner"
+            },
+            "type": "book.visibility",
+            "subject": "guide",
+            "target": "0dfc7899294fba2b84a1b28748a171f4",
+            "organization": "",
+            "workspace": "",
+            "recipients": [],
+            "read": [],
+            "detail": "private"
+        },
+        "577c264fa466859f6811351cfb79a5f5": {
+            "id": "577c264fa466859f6811351cfb79a5f5",
+            "at": "2026-11-15T20:07:44+00:00",
+            "actor": {
+                "id": "0ba6fbe771003f83e10ad19260e847cf",
+                "username": "owner"
+            },
+            "type": "media.upload",
+            "subject": "fixture.txt",
+            "target": "eff94b0487c478cb597eb067b3e3cd1f",
+            "organization": "",
+            "workspace": "",
+            "recipients": [],
+            "read": [],
+            "detail": ""
+        },
+        "0b25ece19b148facec11be81b87ea3bd": {
+            "id": "0b25ece19b148facec11be81b87ea3bd",
+            "at": "2026-11-15T20:07:44+00:00",
+            "actor": {
+                "id": "0ba6fbe771003f83e10ad19260e847cf",
+                "username": "owner"
+            },
+            "type": "page.publish",
+            "subject": "guide/1/start",
+            "target": "6356fd1195096e8c5342ad245d1266e5",
+            "organization": "",
+            "workspace": "",
+            "recipients": [],
+            "read": [],
+            "detail": "1 page(s)"
+        }
+    },
+    "history": {
+        "f51c3dd3872697505c59e1fb88a3e434": {
+            "id": "f51c3dd3872697505c59e1fb88a3e434",
+            "page": "6356fd1195096e8c5342ad245d1266e5",
+            "revision": 1,
+            "action": "publish",
+            "at": "2026-11-15T20:07:44+00:00",
+            "actor": {
+                "id": "0ba6fbe771003f83e10ad19260e847cf",
+                "username": "owner"
+            },
+            "deleted": false,
+            "note": "",
+            "source_revision": null,
+            "key": "guide/1/start",
+            "public_key": "guide/1/start",
+            "draft": {
+                "title": "Upgrade guide",
+                "section": "Guide",
+                "order": 10,
+                "body": "Upgrade baseline 050\n\n[Attachment](/media/eff94b0487c478cb597eb067b3e3cd1f)\n\nUnpublished upgrade secret",
+                "updated": "2026-11-15T20:07:44+00:00",
+                "media": [
+                    "eff94b0487c478cb597eb067b3e3cd1f"
+                ]
+            },
+            "published": {
+                "title": "Upgrade guide",
+                "section": "Guide",
+                "order": 10,
+                "body": "Upgrade baseline 050\n\n[Attachment](/media/eff94b0487c478cb597eb067b3e3cd1f)",
+                "updated": "2026-11-15T20:07:44+00:00",
+                "media": [
+                    "eff94b0487c478cb597eb067b3e3cd1f"
+                ]
+            },
+            "review_authors": [],
+            "review_tree_authors": []
+        }
+    }
+}

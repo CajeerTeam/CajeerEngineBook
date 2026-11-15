@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 export BOOK_PRIMARY_HOST=book.example.com BOOK_ACME_EMAIL=ci@example.com
 export BOOK_PG_NAMESPACE="$(openssl rand -hex 16)" BOOK_PG_PASSWORD="$(openssl rand -hex 24)" BOOK_PG_ADMIN_PASSWORD="$(openssl rand -hex 24)"
 export BOOK_REDIS_PASSWORD="$(openssl rand -hex 32)" BOOK_DOMAIN_EDGE_SECRET="$(openssl rand -hex 32)"
-export COMPOSE_PROJECT_NAME=book-domain-test
+export COMPOSE_PROJECT_NAME="${BOOK_GATE_PROJECT:-book-domain-$(openssl rand -hex 6)}"
 export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml:compose.domains.yaml:compose.backup.yaml:compose.enterprise.yaml:tests/compose.domains-test.yaml
 export BOOK_TEST_DNS_DIR="$(mktemp -d)" BOOK_TEST_CADDYFILE
 BOOK_TEST_CADDYFILE="$BOOK_TEST_DNS_DIR/Caddyfile"; chmod 755 "$BOOK_TEST_DNS_DIR"
@@ -16,21 +16,24 @@ printf '{}' > "$BOOK_TEST_DNS_DIR/records.json"
 export BOOK_BACKUP_KEY_PATH="$BOOK_TEST_DNS_DIR/backup.key"
 export BOOK_BACKUP_S3_URI=s3://book-enterprise-test/fixture
 export BOOK_BACKUP_DRILL_PG_DSN='pgsql:host=postgres;port=5432;dbname=book_drill;connect_timeout=5'
-export BOOK_BACKUP_DRILL_PG_USER=book BOOK_BACKUP_DRILL_PG_PASSWORD="$BOOK_PG_PASSWORD"
+export BOOK_BACKUP_DRILL_PG_USER=book_drill BOOK_BACKUP_DRILL_PG_PASSWORD="$(openssl rand -hex 24)"
 (umask 077; openssl rand -hex 32 > "$BOOK_BACKUP_KEY_PATH")
 mkdir "$BOOK_TEST_DNS_DIR/remote"
 # The production backup container runs as UID 33; the test directory is isolated.
-sudo chown 33:33 "$BOOK_BACKUP_KEY_PATH" "$BOOK_TEST_DNS_DIR/remote"
-chmod 700 "$BOOK_TEST_DNS_DIR/remote" 2>/dev/null || sudo chmod 700 "$BOOK_TEST_DNS_DIR/remote"
+as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+as_root chown 33:33 "$BOOK_BACKUP_KEY_PATH" "$BOOK_TEST_DNS_DIR/remote"
+chmod 700 "$BOOK_TEST_DNS_DIR/remote" 2>/dev/null || as_root chmod 700 "$BOOK_TEST_DNS_DIR/remote"
 sed '/^        on_demand$/a\        issuer internal' deploy/book-Caddyfile > "$BOOK_TEST_CADDYFILE"
-cleanup() { rc=$?; if [ "$rc" -ne 0 ]; then docker compose logs --no-color || true; fi; docker compose --profile backup down -v --remove-orphans || true; sudo rm -rf "$BOOK_TEST_DNS_DIR"; exit "$rc"; }
+cleanup() { rc=$?; if [ "$rc" -ne 0 ]; then docker compose logs --no-color || true; fi; docker compose --profile backup down -v --remove-orphans || rc=1; as_root rm -rf "$BOOK_TEST_DNS_DIR" || rc=1; exit "$rc"; }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # Validate the actual production configuration, not only the local-CA variant.
 docker run --rm -e BOOK_ACME_EMAIL -e BOOK_DOMAIN_EDGE_SECRET -v "$PWD/deploy/book-Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 docker compose config --quiet
 docker compose --profile backup build book backup
 docker compose up -d --wait postgres redis dns-fixture
-docker compose exec -T postgres psql -U book_admin -d book -v ON_ERROR_STOP=1 -c "CREATE DATABASE book_drill OWNER book"
+docker compose exec -T postgres psql -U book_admin -d book -v ON_ERROR_STOP=1 -c "CREATE ROLE book_drill LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$BOOK_BACKUP_DRILL_PG_PASSWORD'" -c "CREATE DATABASE book_drill OWNER book_drill" -c "REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC"
 docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php migrate --offline
 docker compose up -d --wait --scale book=2 book proxy
 state="$(docker compose exec -T -u www-data book php tests/domains-edge-seed.php)"
@@ -78,9 +81,9 @@ docker compose exec -T backup php bin/recovery.php restore "$backup_id" /tmp/ent
 docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN= -e BOOK_PG_NAMESPACE= backup php tests/enterprise-restored.php "$org" "$id" "$token"
 # The operator can switch to a new PostgreSQL namespace after remote-only restore.
 restore_ns="$(openssl rand -hex 16)"
-docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_NAMESPACE="$restore_ns" backup php bin/postgres-content.php migrate --offline
-docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_NAMESPACE="$restore_ns" backup php tests/enterprise-restored.php "$org" "$id" "$token"
-docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_NAMESPACE="$restore_ns" backup php bin/audit.php check
+docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_USER="$BOOK_BACKUP_DRILL_PG_USER" -e BOOK_PG_PASSWORD="$BOOK_BACKUP_DRILL_PG_PASSWORD" -e BOOK_PG_NAMESPACE="$restore_ns" backup php bin/postgres-content.php migrate --offline
+docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_USER="$BOOK_BACKUP_DRILL_PG_USER" -e BOOK_PG_PASSWORD="$BOOK_BACKUP_DRILL_PG_PASSWORD" -e BOOK_PG_NAMESPACE="$restore_ns" backup php tests/enterprise-restored.php "$org" "$id" "$token"
+docker compose exec -T -e BOOK_DATA_DIR=/tmp/enterprise-restored -e BOOK_PG_DSN="$BOOK_BACKUP_DRILL_PG_DSN" -e BOOK_PG_USER="$BOOK_BACKUP_DRILL_PG_USER" -e BOOK_PG_PASSWORD="$BOOK_BACKUP_DRILL_PG_PASSWORD" -e BOOK_PG_NAMESPACE="$restore_ns" backup php bin/audit.php check
 echo 'PASS integrated TLS publication, search, scoped audit, verified scheduler, remote-only recovery and new PostgreSQL namespace'
 
 code="$(https book.example.com -sS -o /dev/null -w '%{http_code}' -H "Cookie: __Host-book_session=$token" --data-urlencode "csrf=$csrf" --data-urlencode "id=$id" --data-urlencode 'host=docs.example.net' --data-urlencode 'action=disable' --data-urlencode 'revision=4' https://book.example.com/domains)"

@@ -5,6 +5,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
@@ -15,115 +16,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: sh bin/install-mermaid.sh
-      - run: composer validate --strict
-      - run: composer install --no-interaction --prefer-dist --no-progress
-      - run: composer audit --locked
-      - run: find src core data public tests bin -name '*.php' -print0 | xargs -0 -n1 php -l
-      - run: php -l bootstrap.php
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: npm install --global typescript@5.8.3
-      - run: python -m pip install "setuptools>=68" wheel
-      - run: composer test
-      - name: Real S3 HTTPS recovery gate
-        run: bash tests/recovery-s3.sh
-      - run: node tests/static-search-language.mjs
-      - run: python -m pip install playwright==1.57.0
+      - run: python -m pip install playwright==1.57.0 'setuptools>=68' wheel
       - run: python -m playwright install --with-deps chromium
-      - run: python tests/playground-http.py --browser
-      - run: python tests/import-browser.py
-      - run: python tests/identity-browser.py
-      - run: python tests/organizations-browser.py
-      - run: python tests/workspaces-browser.py
-      - run: python tests/permissions-browser.py
-      - run: python tests/reviews-browser.py
-      - run: python tests/team-browser.py
-      - run: python tests/editor-network-browser.py
-      - run: python tests/editor-browser.py
-      - run: python tests/media-browser.py
-      - run: python tests/images-browser.py
-      - run: python tests/page-tree-browser.py
-      - run: python tests/rich-blocks-browser.py
-      - run: python tests/interactive-browser.py --reader-only
-      - run: python tests/interactive-browser.py
-      - run: python tests/mermaid-browser.py
-      - run: python tests/static-export-browser.py
-      - run: python tests/ci-http.py --browser
-      - run: python tests/installation-http.py --browser
-
-  docker-release:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: none
-      - name: Build and run disposable Compose deployment
-        run: |
-          export BOOK_ADMIN_HASH="$(php -r 'echo password_hash("release-test-only-password", PASSWORD_DEFAULT);')"
-          export BOOK_SECURE_COOKIE=0
-          docker compose -p book-release-test up -d --build --wait --wait-timeout 120
-      - name: Run integration gate inside the image and over Apache HTTP
-        env:
-          BOOK_TEST_URL: http://127.0.0.1:8080
-        run: |
-          docker compose -p book-release-test exec -T book php tests/multilingual.php
-          docker compose -p book-release-test exec -T book php tests/static-export.php
-          docker compose -p book-release-test exec -T book php tests/ci-publishing.php
-          docker compose -p book-release-test exec -T book php tests/automation.php
-          docker compose -p book-release-test exec -T book php tests/sdk.php
-          docker compose -p book-release-test exec -T book php tests/playground.php
-          docker compose -p book-release-test exec -T book php tests/openapi.php
-          docker compose -p book-release-test exec -T book php tests/github.php
-          docker compose -p book-release-test exec -T book php tests/gitlab.php
-          docker compose -p book-release-test exec -T book php tests/import.php
-          docker compose -p book-release-test exec -T book php tests/release.php
-          docker compose -p book-release-test exec -T book php tests/installation.php
-          python3 tests/release-http.py
-          python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json"
-          docker compose -p book-release-test exec -T -u www-data book php bin/worker.php --once
-          docker compose -p book-release-test restart book
-          python3 tests/release-http.py --check-persisted
-          python3 tests/team-release-http.py --state "$RUNNER_TEMP/team-release.json" --check-persisted
-      - name: Show logs on failure
-        if: failure()
-        run: docker compose -p book-release-test logs --no-color
-      - name: Remove disposable deployment
+      - run: python3 tests/release-gate.py --suite native --report-dir "$RUNNER_TEMP/book-gate-native"
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: docker compose -p book-release-test down -v
-
+        with:
+          name: release-gate-native
+          path: ${{ runner.temp }}/book-gate-native
+          if-no-files-found: warn
   postgres-content:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-bookworm
-        env:
-          POSTGRES_DB: book_test
-          POSTGRES_USER: book_test
-          POSTGRES_PASSWORD: book_test_only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U book_test -d book_test"
-          --health-interval 5s --health-timeout 5s --health-retries 20
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s --health-timeout 3s --health-retries 20
-    env:
-      BOOK_PG_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=book_test;connect_timeout=5"
-      BOOK_PG_USER: book_app
-      BOOK_PG_PASSWORD: book_app_test_only
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
@@ -137,51 +45,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: composer install --no-interaction --prefer-dist --no-progress
-      - run: sh bin/install-mermaid.sh
-      - name: Create non-superuser application role
-        run: |
-          docker exec ${{ job.services.postgres.id }} psql -U book_test -d book_test -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE book_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_app_test_only'" \
-            -c "ALTER DATABASE book_test OWNER TO book_app"
-          docker exec ${{ job.services.postgres.id }} psql -U book_test -d book_test -v ON_ERROR_STOP=1 \
-            -c "CREATE DATABASE book_drill OWNER book_app"
-      - run: php tests/postgres-content.php
-      - run: php tests/postgres-identity.php
-      - run: php tests/postgres-audit.php
-      - name: PostgreSQL recovery drill against separate database
-        env:
-          BOOK_BACKUP_DRILL_PG_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=book_drill;connect_timeout=5"
-          BOOK_BACKUP_DRILL_PG_USER: book_app
-          BOOK_BACKUP_DRILL_PG_PASSWORD: book_app_test_only
-        run: php tests/recovery.php --postgres
-      - run: php tests/domains.php --postgres
-      - run: python3 tests/domains-http.py --postgres --full
-      - run: python3 tests/oidc-http.py --postgres
-      - run: php tests/multilingual.php --postgres
-      - run: python3 tests/multilingual-http.py --postgres
-      - run: php tests/postgres-search.php
-      - run: python3 tests/search-http.py --postgres
-      - run: python3 tests/ci-http.py --postgres
-
-      - name: Real Redis runtime and two-node HTTP gate
-        env:
-          BOOK_REDIS_HOST: 127.0.0.1
-          BOOK_REDIS_PORT: '6379'
-        run: |
-          php tests/redis-runtime.php
-          python3 tests/redis-http.py
-
-  distributed-release:
-    needs: [test, postgres-content]
+      - run: python3 tests/release-gate.py --suite postgres --report-dir "$RUNNER_TEMP/book-gate-postgres"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-gate-postgres
+          path: ${{ runner.temp }}/book-gate-postgres
+          if-no-files-found: warn
+  docker-release:
+    needs: test
     runs-on: ubuntu-latest
-    env:
-      BOOK_PG_NAMESPACE: '1234567890abcdef1234567890abcdef'
-      BOOK_PG_PASSWORD: book_app_distributed_test_only
-      BOOK_PG_ADMIN_PASSWORD: book_admin_distributed_test_only
-      BOOK_REDIS_PASSWORD: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-      BOOK_SECURE_COOKIE: '0'
-      BOOK_TEST_URL: http://127.0.0.1:8080
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -191,49 +65,53 @@ jobs:
         with:
           php-version: '8.4'
           tools: none
-      - name: Build, migrate and scale actual PostgreSQL/Redis/Apache deployment
-        run: |
-          export BOOK_ADMIN_HASH="$(php -r 'echo password_hash("release-test-only-password", PASSWORD_DEFAULT);')"
-          export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml
-          export COMPOSE_PROJECT_NAME=book-distributed-test
-          docker compose config --quiet
-          docker compose --profile automation build book worker
-          docker compose up -d --wait postgres redis
-          docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php migrate --offline
-          docker compose run --rm --no-deps --user www-data book php bin/runtime.php check
-          docker compose --profile automation up -d --wait --wait-timeout 180 --scale book=2 --scale worker=2
-          curl --fail --retry 10 --retry-connrefused http://127.0.0.1:8080/health/ready
-          python3 tests/release-http.py
-          python3 tests/enterprise-load.py --url "$BOOK_TEST_URL" | tee "$RUNNER_TEMP/enterprise-load.json"
-          docker compose exec -T --index 1 book php bin/runtime.php status
-          docker compose exec -T --index 2 book php bin/runtime.php status
-          docker compose restart book
-          python3 tests/release-http.py --check-persisted
-          # Redis restart drops ephemeral data; the SQL publication and both app instances survive.
-          docker compose restart redis
-          python3 tests/release-http.py --check-persisted
-      - name: Preserve load measurements
+      - run: python3 tests/release-gate.py --suite docker --report-dir "$RUNNER_TEMP/book-gate-docker"
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: enterprise-load
-          path: ${{ runner.temp }}/enterprise-load.json
-          if-no-files-found: ignore
-      - name: Show distributed logs on failure
-        if: failure()
-        run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation logs --no-color
-      - name: Remove disposable distributed deployment
-        if: always()
-        run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation down -v
-
-  domains-edge:
+          name: release-gate-docker
+          path: ${{ runner.temp }}/book-gate-docker
+          if-no-files-found: warn
+  distributed-release:
+    needs: [test, postgres-content]
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Enterprise TLS, publication, audit and recovery gate
-        run: sh tests/domains-edge.sh
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: none
+      - run: python3 tests/release-gate.py --suite distributed --report-dir "$RUNNER_TEMP/book-gate-distributed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-gate-distributed
+          path: ${{ runner.temp }}/book-gate-distributed
+          if-no-files-found: warn
+  domains-edge:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: none
+      - run: python3 tests/release-gate.py --suite domains --report-dir "$RUNNER_TEMP/book-gate-domains"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-gate-domains
+          path: ${{ runner.temp }}/book-gate-domains
+          if-no-files-found: warn
   enterprise-release:
     needs: [test, docker-release, postgres-content, distributed-release, domains-edge]
     if: ${{ always() }}
@@ -245,7 +123,8 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, json, sys
-          results = json.loads(os.environ["GATE_RESULTS"])
-          print(json.dumps({k: v["result"] for k, v in results.items()}, indent=2))
-          sys.exit(0 if all(v["result"] == "success" for v in results.values()) else 1)
+          results = json.loads(os.environ['GATE_RESULTS'])
+          expected = {'test','docker-release','postgres-content','distributed-release','domains-edge'}
+          print(json.dumps({k:v['result'] for k,v in results.items()}, indent=2))
+          sys.exit(0 if set(results)==expected and all(v['result']=='success' for v in results.values()) else 1)
           PY

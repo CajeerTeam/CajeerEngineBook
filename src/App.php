@@ -34,6 +34,15 @@ final class App {
         if(in_array($method,['GET','HEAD'],true)&&Locale::valid($_GET['ui']??null)){$ui=$_GET['ui'];setcookie('book_ui',$ui,['expires'=>time()+31536000,'path'=>'/','secure'=>getenv('BOOK_SECURE_COOKIE')!=='0','httponly'=>true,'samesite'=>'Lax']);}
         Locale::setUi($ui);
         try{
+            // A deployment with invalid security settings must not serve ordinary traffic.
+            // Liveness remains independent of readiness/configuration.
+            if($path!=='/health/live'){
+                try{ReleaseHealth::configuration();}
+                catch(\Throwable $e){
+                    if($path!=='/health/ready')throw $e;
+                    error_log('Readiness configuration: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);return;
+                }
+            }
             if($this->domainGate($path,$method))return;
             if(!$this->runtimeLimit($path,$method))return;
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
