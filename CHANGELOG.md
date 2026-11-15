@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4 — Redis & Distributed Runtime
+
+- Optional authenticated Redis 7 runtime for PostgreSQL deployments: HMAC-bound, installation-scoped caches of public Markdown renders and search responses, revision-based invalidation and bounded TTL; identity and private content remain SQL-authoritative.
+- Atomic Lua ingress rate limits shared by web nodes for authentication, Reader search, API, CI and webhooks; existing durable SQL authentication limits remain enforced. Redis outage falls back to authoritative rendering and SQL authentication, rejects rate-limited API/CI/webhook/search requests and marks readiness unavailable.
+- PostgreSQL per-workspace advisory worker locks, durable SQL queue reconciliation, existing fenced leases/retry/dead-letter; Redis Streams consumer-group wakeups emitted after commit, with no job loss on stream deletion or Redis restart.
+- `bin/runtime.php check|status`, runtime metrics, Redis Compose overlay, two-or-more-node Compose deployment behind a trusted Nginx proxy and shared media volume. Real Redis/PostgreSQL, multi-node HTTP and Compose release gates.
+
 ## 0.4.3 — Full-Text Search
 
 - Transactionally maintained PostgreSQL published-document index with weighted GIN vectors, English/Russian stemming, phrase/prefix matching, relevance, safe snippets and indexed `pg_trgm` title/path typo fallback.

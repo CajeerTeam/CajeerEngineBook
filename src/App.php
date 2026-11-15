@@ -29,6 +29,7 @@ final class App {
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
         WorkspaceUrls::set('');
         try{
+            if(!$this->runtimeLimit($path,$method))return;
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/webhooks/(github|gitlab)\z~D',$path,$hook)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->receiveWebhook($hook);return;}
             if($method==='POST'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/playground\z~D',$path,$playground)){$this->playgroundProxy($playground);return;}
@@ -60,6 +61,36 @@ final class App {
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             });
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+    }
+    /** Shared ingress limits supplement (never replace) durable identity throttling. */
+    private function runtimeLimit(string $path,string $method):bool{
+        if(!RedisRuntime::enabled())return true;
+        $inner=preg_replace('~\\A/w/[a-f0-9]{32}/[a-f0-9]{32}(?=/)~D','',$path);
+        $policy=match(true){
+            $method==='POST'&&$path==='/login'=>['login',30,900,true],
+            $method==='POST'&&$path==='/account/reset'=>['reset',30,900,true],
+            $method==='POST'&&$path==='/account'&&($_POST['action']??null)==='password'=>['password',30,900,true],
+            $inner==='/api/v1/ci'=>['ci',120,60,false],
+            str_starts_with($inner,'/webhooks/')=>['webhook',300,60,false],
+            str_starts_with($inner,'/api/v1/')=>['api',300,60,false],
+            $inner==='/search'=>['search',120,60,false],
+            default=>null};
+        if(!$policy)return true;
+        [$bucket,$max,$window,$durable]=$policy;
+        try{$r=RedisRuntime::forRoot($this->installationDir)->limit($bucket,RedisRuntime::clientIp(),$max,$window);}
+        catch(\Throwable $e){if($durable)return true;http_response_code(503);header('Retry-After: 2');$this->json(['error'=>'Rate limiter unavailable']);return false;}
+        if($r['allowed'])return true;
+        http_response_code(429);header('Retry-After: '.$r['retry']);
+        if($durable||$bucket==='search')$this->page('Too many requests','<h1>Too many requests</h1><p>Try again after '.(int)$r['retry'].' seconds.</p>');
+        else $this->json(['error'=>'Too many requests']);return false;
+    }
+    private function renderPublished(array $p,string $key,array $db,array $pages):array{
+        $links=Visibility::links($db,$pages);$base=$p['link_base']??null;
+        $render=fn()=>Markdown::render($p['body'],$key,false,false,$base,$links);
+        if($this->readerVisibility!=='public'||Permissions::allows($this->studioRole,'read'))return $render();
+        $redis=RedisRuntime::forRoot($this->installationDir);
+        // Exact published inputs, including visible redirects and URL scope, invalidate naturally.
+        return $redis?$redis->remember('markdown',[WorkspaceUrls::prefix(),$key,$p['body'],$base,$links],$render):$render();
     }
     private function ciApi(array $route):void{
         header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');header('Vary: Authorization');
@@ -229,7 +260,7 @@ final class App {
             if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method,fn($db,$id)=>Visibility::media($db,$id,$this->readerVisibility,$this->studioRole));return;}
             if($path==='/health/live'){$this->json(['status'=>'ok']);return;}
             if($path==='/health/ready'){
-                try { $this->identityStore->checkReady(); $this->identityStore->checkWorkspaceStores($this->installationDir); ReleaseHealth::check($this->root); $this->json(['status'=>'ok']); }
+                try { $this->identityStore->checkReady(); $this->identityStore->checkWorkspaceStores($this->installationDir); ReleaseHealth::check($this->root); RedisRuntime::forRoot($this->installationDir)?->check(); $this->json(['status'=>'ok']); }
                 catch(\Throwable $e){error_log('Readiness: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);}
                 return;
             }
@@ -260,7 +291,7 @@ final class App {
             if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true]));return;}
 
             if($path==='/'){$books=BookStore::books($db);$html='<div class="eyebrow">CAJEERENGINE BOOK / DOCUMENTATION</div><h1>Documentation, on your terms.</h1><p class="lead">A self-hosted knowledge base for your products, APIs and teams.</p><div class="cards">';$seen=[];foreach($pages as $key=>$p){[$b,$v]=explode('/',$key);if(isset($seen["$b/$v"]))continue;$seen["$b/$v"]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),'Read documentation →').'</div>';}$this->page('Documentation',$html.'</div>',$pages);return;}
-            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,Visibility::links($db,$pages));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
+            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=$this->renderPublished($p,$key,$db,$pages);$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
             http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);
         }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }

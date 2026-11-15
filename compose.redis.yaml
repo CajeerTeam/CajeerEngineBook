@@ -1,0 +1,35 @@
+# Use with compose.yaml and compose.postgres.yaml. Redis is not published to the host.
+x-redis-env: &redis-env
+  BOOK_REDIS_HOST: redis
+  BOOK_REDIS_PASSWORD: ${BOOK_REDIS_PASSWORD:?Generate a separate Redis password (openssl rand -hex 32)}
+services:
+  redis:
+    image: redis:7.4-alpine
+    user: redis
+    environment:
+      BOOK_REDIS_PASSWORD: ${BOOK_REDIS_PASSWORD:?Set BOOK_REDIS_PASSWORD}
+    command:
+      - sh
+      - -ec
+      - |
+        case "$$BOOK_REDIS_PASSWORD" in *[!a-f0-9]*|'') echo 'Redis password must be 64 lowercase hex characters' >&2; exit 1;; esac
+        test "$${#BOOK_REDIS_PASSWORD}" -eq 64
+        umask 077
+        printf 'bind 0.0.0.0\nprotected-mode yes\nport 6379\nrequirepass %s\nmaxmemory 128mb\nmaxmemory-policy noeviction\nsave ""\nappendonly no\n' "$$BOOK_REDIS_PASSWORD" > /tmp/book-redis.conf
+        exec redis-server /tmp/book-redis.conf
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH=$$BOOK_REDIS_PASSWORD redis-cli ping | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  book:
+    environment: *redis-env
+    depends_on:
+      redis:
+        condition: service_healthy
+  worker:
+    environment: *redis-env
+    depends_on:
+      redis:
+        condition: service_healthy

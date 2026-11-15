@@ -109,6 +109,13 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U book_test -d book_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       BOOK_PG_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=book_test;connect_timeout=5"
       BOOK_PG_USER: book_app
@@ -118,7 +125,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: mbstring, fileinfo, phar, gd, zip, openssl, pdo_pgsql
+          extensions: mbstring, fileinfo, phar, gd, zip, openssl, pdo_pgsql, redis
           tools: composer:v2
       - uses: actions/setup-node@v4
         with:
@@ -138,3 +145,57 @@ jobs:
       - run: php tests/postgres-search.php
       - run: python3 tests/search-http.py --postgres
       - run: python3 tests/ci-http.py --postgres
+
+      - name: Real Redis runtime and two-node HTTP gate
+        env:
+          BOOK_REDIS_HOST: 127.0.0.1
+          BOOK_REDIS_PORT: '6379'
+        run: |
+          php tests/redis-runtime.php
+          python3 tests/redis-http.py
+
+  distributed-release:
+    needs: [test, postgres-content]
+    runs-on: ubuntu-latest
+    env:
+      BOOK_PG_NAMESPACE: '1234567890abcdef1234567890abcdef'
+      BOOK_PG_PASSWORD: book_app_distributed_test_only
+      BOOK_PG_ADMIN_PASSWORD: book_admin_distributed_test_only
+      BOOK_REDIS_PASSWORD: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      BOOK_SECURE_COOKIE: '0'
+      BOOK_TEST_URL: http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: none
+      - name: Build, migrate and scale actual PostgreSQL/Redis/Apache deployment
+        run: |
+          export BOOK_ADMIN_HASH="$(php -r 'echo password_hash("release-test-only-password", PASSWORD_DEFAULT);')"
+          export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml
+          export COMPOSE_PROJECT_NAME=book-distributed-test
+          docker compose config --quiet
+          docker compose --profile automation build book worker
+          docker compose up -d --wait postgres redis
+          docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php migrate --offline
+          docker compose run --rm --no-deps --user www-data book php bin/runtime.php check
+          docker compose --profile automation up -d --wait --wait-timeout 180 --scale book=2 --scale worker=2
+          curl --fail --retry 10 --retry-connrefused http://127.0.0.1:8080/health/ready
+          python3 tests/release-http.py
+          docker compose exec -T --index 1 book php bin/runtime.php status
+          docker compose exec -T --index 2 book php bin/runtime.php status
+          docker compose restart book
+          python3 tests/release-http.py --check-persisted
+          # Redis restart drops ephemeral data; the SQL publication and both app instances survive.
+          docker compose restart redis
+          python3 tests/release-http.py --check-persisted
+      - name: Show distributed logs on failure
+        if: failure()
+        run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation logs --no-color
+      - name: Remove disposable distributed deployment
+        if: always()
+        run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation down -v

@@ -6,6 +6,7 @@ use CajeerEngine\Update\OperationFiles as Files;
 use PDO;
 require_once __DIR__.'/PostgresSearch.php';
 require_once __DIR__.'/Search.php';
+require_once __DIR__.'/RedisRuntime.php';
 
 /** PostgreSQL content storage. Immutable media bytes remain on disk; identity shares the installation binding. */
 final class PostgresContentStore
@@ -15,6 +16,7 @@ final class PostgresContentStore
     private const IDENTITY_MARKER='postgres.identity.required';
     private const CHILDREN=['ci'=>['tokens','builds'],'automation'=>['jobs','receipts']];
     private ?PDO $connection=null;
+    private bool $wake=false;
     public function __construct(private readonly string $namespace,private readonly string $scope,private readonly string $binding) {}
 
     private static function rootOf(string $dir):string
@@ -113,10 +115,12 @@ final class PostgresContentStore
     /** A single row lock pins all sections/records and the media lifecycle for the workspace. */
     public function transaction(bool $write,callable $fn):mixed
     {
-        $pdo=$this->db();$pdo->beginTransaction();
+        $pdo=$this->db();$pdo->beginTransaction();$this->wake=false;
         try{
             $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
-            $this->lock($pdo,$write);$result=$fn($this->load($pdo));$pdo->commit();return $result;
+            $this->lock($pdo,$write);$result=$fn($this->load($pdo));$pdo->commit();
+            if($this->wake)RedisRuntime::forBinding($this->namespace,$this->binding)?->notify($this->scope);
+            return $result;
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
     }
     private function load(PDO $pdo):array
@@ -196,7 +200,15 @@ final class PostgresContentStore
     public function search(string $visibility,string $role,array $options,bool $navigation):array
     {
         $pdo=$this->db();$pdo->beginTransaction();
-        try{$this->lock($pdo,false);$result=PostgresSearch::find($pdo,$this->params(),$visibility,$role,$options,$navigation);$pdo->commit();return $result;}
+        try{$this->lock($pdo,false);PostgresSearch::assertReady($pdo,$this->params());
+            $compute=fn()=>PostgresSearch::find($pdo,$this->params(),$visibility,$role,$options,$navigation);
+            $redis=$visibility==='public'&&!Permissions::allows($role,'read')?RedisRuntime::forBinding($this->namespace,$this->binding):null;
+            if($redis){
+                // The row lock pins the revision; search-state xmin changes on rebuild as well as publication.
+                $revision=$this->query($pdo,'SELECT revision::text || chr(58) || xmin::text FROM cajeer_book.search_state WHERE installation=? AND scope=?',$this->params())->fetchColumn();
+                $result=$redis->remember('search',[$this->scope,$revision,$options,$navigation],$compute);
+            }else $result=$compute();
+            $pdo->commit();return $result;}
         catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
     }
     public function checkSearch():void{$this->searchInfo();}
@@ -248,7 +260,10 @@ final class PostgresContentStore
     public function write(array $before,array $after):void
     {
         $pdo=$this->db();if(!$pdo->inTransaction())throw new \LogicException('Content write outside transaction.');
-        if($before!==$after)$this->persist($pdo,$before,$after);
+        if($before!==$after){$this->persist($pdo,$before,$after);
+            foreach($after['automation']['jobs']??[] as $id=>$job){$old=$before['automation']['jobs'][$id]??null;
+                if($job['state']==='queued'&&(($old['state']??null)!=='queued'||($old['due']??null)!==$job['due'])){$this->wake=true;break;}}
+        }
     }
     private function insert(PDO $pdo,array $data,bool $verifyExisting):void
     {

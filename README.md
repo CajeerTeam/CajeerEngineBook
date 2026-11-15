@@ -1,6 +1,84 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.4 — Redis & Distributed Runtime
+
+PostgreSQL remains the only authoritative store for documents, identity, roles, sessions, automation jobs and publication state. Redis 7 (PHP `ext-redis` 6.1 or newer) is optional, and **requires an already migrated PostgreSQL installation**. File mode and PostgreSQL without Redis continue to work. Redis stores public rendered Markdown/search results, temporary ingress counters, bounded Streams wakeup notifications and operational metrics; no session token, password, private document, Git/webhook secret, job payload or permission decision is stored in Redis. All web nodes check the live SQL identity/RBAC and visibility before returning protected content. Public cache entries use the installation binding, exact rendering inputs or locked search revision (including search-state transaction ID), HMAC integrity and a 240–360 second TTL; changes naturally select a different key. Old public cache values expire and are never served to a now unauthorized request. Authenticated/member search and rendering bypass Redis cache.
+
+### Upgrade from PostgreSQL 0.4.3
+
+Stop all app and worker processes (including 0.4.3 workers; old installation-wide file locks do not coordinate with new PostgreSQL advisory locks). Use the old code to create a verified installation backup (`php bin/installation.php backup /secure/book-043-backup`). Overlay the 0.4.4 files, keep the same PostgreSQL database, namespace, data directory and credentials, and rebuild the app image. **No new database migration is required for a healthy 0.4.3 database**: the durable queue already exists in the `automation_jobs` partition. Run `php bin/postgres-content.php check` and `php bin/search.php check`. New/file-backed deployments must run the PostgreSQL migration described below before enabling Redis. Do not mix 0.4.3 and 0.4.4 workers during a rolling upgrade.
+
+For the standard single-host Compose deployment, add a unique secret to the protected `.env` (`openssl rand -hex 32`):
+
+```dotenv
+BOOK_REDIS_PASSWORD=<64 lowercase hexadecimal characters>
+```
+
+Use all three overlays (existing PostgreSQL settings are still required):
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml --profile automation build book worker
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml up -d --wait postgres redis
+# Only for fresh/file-backed installs: run postgres-content.php migrate --offline in book first.
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml run --rm --no-deps --user www-data book php bin/runtime.php check
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml --profile automation up -d --wait book worker
+```
+
+For **two app instances and two workers**, use Docker Compose v2.24.4+ (the fourth overlay removes the app's host port, adds a shared edge network and Nginx DNS load balancing):
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation up -d --build --wait --scale book=2 --scale worker=2
+curl -f http://127.0.0.1:8080/health/ready
+docker compose -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml exec -T --index 1 book php bin/runtime.php status
+```
+
+When switching an existing single-node Compose deployment to the fourth overlay, stop/remove the old app container first to release port 8080. Both PHP replicas mount the same protected `book-data` volume; the Nginx edge publishes only `127.0.0.1:8080`. `deploy/book-remoteip.conf` trusts exactly the edge proxy IP `172.30.44.10`; Nginx overwrites the internal client-address header and drops untrusted forwarding headers. If the subnet conflicts with your network, change the subnet, fixed proxy IP and Apache trust entry together. The sample is an internal HTTP edge, not a public TLS terminator. Use a trusted HTTPS ingress and `BOOK_SECURE_COOKIE=1` in production (local HTTP testing requires `BOOK_SECURE_COOKIE=0`). Configure trusted real-IP handling at any additional proxy; otherwise the limiter intentionally sees the proxy address. Do not expose the app or Redis ports to the public network.
+
+### External Redis and multi-host deployment
+
+Use PHP 8.4 with PDO PostgreSQL and `ext-redis`. On each app/worker node set the same `BOOK_PG_*`, `BOOK_DATA_DIR`, automation/Git encryption keys and other installation settings. Redis settings:
+
+| Variable | Meaning |
+|---|---|
+| `BOOK_REDIS_HOST` | DNS hostname or IPv4 address; unset disables Redis |
+| `BOOK_REDIS_PORT` | TCP port (default 6379) |
+| `BOOK_REDIS_PASSWORD` | Redis secret; mandatory in production |
+| `BOOK_REDIS_USER` | Optional ACL username (otherwise default user) |
+| `BOOK_REDIS_TLS=1` | TLS with certificate and hostname verification |
+| `BOOK_REDIS_CA` | Optional trusted CA file for TLS |
+
+Use a dedicated Redis primary (not Redis Cluster or Sentinel discovery in this release). For external production Redis require authentication, restrict network access, TLS across untrusted networks, and an ACL limited to the installation key prefix `book:044:<sha256(namespace:binding)>:*` and the commands used by `RedisRuntime.php` (cache GET/SET/DEL/EXPIRE, PING, EVAL with INCR/TTL/EXPIRE, XADD/XGROUP/XREADGROUP/XINFO/XLEN, HGETALL/HINCRBY/HSET and ZADD/ZREMRANGEBYSCORE/ZCOUNT). The bundled Redis has a 128 MiB memory limit, `noeviction` and no persistence; adjust the memory budget to measured load. Do not use an eviction policy that can evict rate counters. A full Redis will fail closed for rate-limited ingress until memory is available; monitor it. Redis restart resets temporary API counters and metrics; SQL authentication counters and durable jobs are retained. No Redis data is required in backup/restore. After a physical PostgreSQL PITR into the **same** namespace/binding, clear the installation Redis namespace before starting writers/readers (prevents reuse of cache revision/transaction identifiers). Portable restore to a new namespace/binding already isolates caches.
+
+For multiple physical hosts, **mount the same durable POSIX filesystem** at the same `BOOK_DATA_DIR` on every app/worker (shared media blobs, binding markers, import signing key and auxiliary Git cache). The filesystem must support atomic rename, exclusive creation, locking, and consistent metadata visibility across hosts. A Docker named volume is shared only on one Docker host. Do not use separate local media volumes or replica copies of binding/secret files. Keep a single PostgreSQL primary, one Redis service, a trusted TLS load balancer and consistent time synchronization. The SQL identity lock remains installation-wide; this is horizontal correctness and distributed worker execution, not a claim of linear throughput scaling or an object-storage backend.
+
+### Runtime behavior, limits and failure handling
+
+The public Reader caches Markdown HTML/TOC, and PostgreSQL search caches only public authorized query results (including visible navigation where requested). No HTTP/browser cache policy changes: existing `no-store` responses are retained. Each cache item is capped at 512 KiB; larger results are computed normally. Redis is never used to grant access. All session revocation and role changes are visible to the next request on any node.
+
+Shared fixed-window ingress limits (per canonical `REMOTE_ADDR`, across all workspace routes and instances):
+
+| Route | Limit |
+|---|---|
+| Login, password recovery, password change | 30 requests / 900 s per category |
+| CI API | 120 / 60 s |
+| Webhooks | 300 / 60 s |
+| Other `/api/v1/*` | 300 / 60 s |
+| Reader `/search` | 120 / 60 s |
+
+The Lua increment/expiry is atomic; denied requests return HTTP 429 and `Retry-After`. SQL account/IP authentication throttles are unchanged and still apply. With Redis unavailable, public document rendering falls back to PostgreSQL, login/recovery/password changes still use SQL rate limits, rate-limited API/CI/webhook/search ingress returns 503 with `Retry-After`, readiness is 503, and liveness remains available. Redis connection/read timeouts are bounded; no automatic stale-file or private-cache fallback. A Redis outage does not stop SQL job processing.
+
+Automation changes create durable jobs in the existing `BookStore::change` SQL transaction, including the transactional outbox. New or rescheduled queued jobs send an installation-scoped Redis Stream message **only after commit**. Workers use a consumer group to distribute workspace hints (`NOACK` because the SQL queue, not the Redis notification, owns delivery), then reconcile due/expired jobs in SQL at least every two seconds when idle. A per-workspace PostgreSQL session advisory lock prevents two workers from processing the same scope concurrently; separate workspaces can run network calls in parallel. Unexpired SQL leases are not reaped by another worker, and expired jobs are reclaimed with a fresh fencing token. Retry delays, dead-letter, signature/deduplication and authorization checks use the existing durable job state. Webhook delivery is **at least once**, not exactly once: a crash after the receiver accepts a request may cause a repeat with the same `X-Cajeer-Delivery` ID; receivers must deduplicate. The stream is capped at approximately 2048 entries and can be dropped/recreated without dropping SQL jobs. Use direct/session-mode PostgreSQL connections for workers (transaction-pooling proxies cannot retain session advisory locks).
+
+```sh
+php bin/runtime.php check
+php bin/runtime.php status
+```
+
+The status reports SQL job counts by state, Redis stream length, cache hit/miss, rate denial, notification and processed-job counters, last worker tick and workers seen in the last 60 seconds (long-running work may not be counted as recently idle). `check` probes actual Redis cache, rate Lua and Stream group permissions plus SQL identity binding. `/health/ready` includes the Redis probe if enabled. The existing Studio Automation view remains the durable retry/dead-letter interface.
+
+CI includes `tests/redis-policy.php` (disabled/degraded policy), `tests/redis-runtime.php` (real Redis/PostgreSQL, consumer group, fenced leases, two worker processes and failure recovery), `tests/redis-http.py` (two independent PHP HTTP nodes, shared media, revocation, publication/privacy invalidation, distributed limits and Redis outage), and the distributed Docker release gate. The existing content/identity quotas remain unchanged; measure throughput and p95 on your workload before asserting a production capacity target.
 
 ## 0.4.3 — Full-Text Search
 
@@ -53,7 +131,7 @@ If the installation is still file-backed, use the PostgreSQL deployment procedur
 
 PostgreSQL is an opt-in **active content backend**, not a mirror or search-only database. In this mode every BookStore read and mutation (Reader, Studio, API, page tree, history, review, media metadata, Git/OpenAPI import, CI build/publish, automation and Static Export) uses PostgreSQL. Each workspace has an installation-scoped transaction row; shared locks pin reads/exports, exclusive locks serialize writes and media lifecycle changes. Changed records are inserted/updated/deleted in a single transaction, including history, review state, CI and activity. Existing page revision and review checks remain in force. The `cajeer_book` schema stores individual pages (draft and published snapshots), books, media metadata, revisions, reviews, CI builds/tokens, automation jobs/receipts and other content records in partitioned relational tables. JSON values retain the original PHP key order and snapshot/digest semantics; this is not a whole-workspace JSON document in one SQL row. Existing page quotas and the portable 32 MiB metadata limit remain. The public API and URLs do not change.
 
-**Scope:** PostgreSQL 16 is the deployment/test target. In 0.4.2 both identity and content metadata are SQL-authoritative; immutable media bytes, binding markers and integration keys remain in the protected `BOOK_DATA_DIR` and must be preserved. File-mode installs continue to work without PostgreSQL until explicitly migrated. Full-text indexing is available in 0.4.3; Redis and distributed workers are subsequent releases. Use the preceding upgrade instructions if already on PostgreSQL 0.4.1; the following procedure is for file-backed or fresh installations.
+**Scope:** PostgreSQL 16 is the deployment/test target. In 0.4.2 both identity and content metadata are SQL-authoritative; immutable media bytes, binding markers and integration keys remain in the protected `BOOK_DATA_DIR` and must be preserved. File-mode installs continue to work without PostgreSQL until explicitly migrated. Full-text indexing is available in 0.4.3; Redis and distributed workers are available in 0.4.4. Use the preceding upgrade instructions if already on PostgreSQL 0.4.1; the following procedure is for file-backed or fresh installations.
 
 ### Migrate a file-backed or fresh native installation
 

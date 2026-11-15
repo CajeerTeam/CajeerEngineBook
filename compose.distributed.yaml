@@ -1,0 +1,28 @@
+# Use with compose.yaml, compose.postgres.yaml and compose.redis.yaml.
+# Compose v2.24.4+; scale book and worker independently. Shared named volume is single-host.
+services:
+  book:
+    ports: !reset []
+    networks:
+      - default
+      - book-edge
+    volumes:
+      - ./deploy/book-remoteip.conf:/etc/apache2/conf-enabled/book-remoteip.conf:ro
+  proxy:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      book-edge:
+        ipv4_address: 172.30.44.10
+    volumes:
+      - ./deploy/book-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      book:
+        condition: service_healthy
+    restart: unless-stopped
+networks:
+  book-edge:
+    ipam:
+      config:
+        - subnet: 172.30.44.0/24

@@ -13,12 +13,16 @@
         "php": ">=8.4.1 <9.0",
         "symfony/yaml": "^7.4.23"
     },
+    "suggest": {
+        "ext-redis": "Required for the optional PostgreSQL distributed Redis runtime (0.4.4)."
+    },
     "config": {
         "allow-plugins": false,
         "sort-packages": true
     },
     "scripts": {
         "test": [
+            "@php tests/redis-policy.php",
             "@php tests/postgres-policy.php",
             "@php tests/postgres-identity-policy.php",
             "@php tests/search-policy.php",
