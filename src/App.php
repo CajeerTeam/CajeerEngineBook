@@ -29,12 +29,13 @@ final class App {
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
         WorkspaceUrls::set('');
         try{
+            if($method==='POST'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/playground\z~D',$path,$playground)){$this->playgroundProxy($playground);return;}
             if($method==='POST'&&($_POST['action']??null)==='git-preview'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/openapi\z~D',$path,$git)){$this->githubPull($git,true);return;}
             if($method==='POST'&&in_array($_POST['action']??null,['preview','apply'],true)&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/github\z~D',$path,$git)){$this->githubPull($git);return;}
             if(str_starts_with($path,'/w/')){
                 if(!preg_match('~\A/w/([a-f0-9]{32})/([a-f0-9]{32})(/.*)?\z~D',$path,$m)){http_response_code(404);return;}
                 $inner=$m[3]??'/';
-                if(!preg_match('~\A/(?:$|(?:studio|docs|media|api/v1|search)(?:/|$))~D',$inner)){http_response_code(404);return;}
+                if(!preg_match('~\A/(?:$|(?:studio|docs|media|api/v1|search|playground)(?:/|$))~D',$inner)){http_response_code(404);return;}
                 $publicRead=in_array($method,['GET','HEAD'],true)&&$inner!=='/studio'&&!str_starts_with($inner,'/studio/');
                 $this->identityStore->withWorkspace($this->auth->token(),$m[1],$m[2],function($ctx,$w)use($inner,$method){
                     header('Cache-Control: private, no-store');header('Vary: Cookie');if(!$w||$ctx||Visibility::workspace($w)==='private')header('X-Robots-Tag: noindex, nofollow');
@@ -57,6 +58,39 @@ final class App {
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             });
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+    }
+    /** Capture a visible published definition under the identity lock, execute externally, then reauthorize the response. */
+    private function playgroundProxy(array $route):void {
+        header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');header('Referrer-Policy: no-referrer');
+        $fail=function(int $status,string $message){http_response_code($status);$this->json(['error'=>$message]);return null;};
+        $key=is_string($_POST['key']??null)?$_POST['key']:'';$binding=is_string($_POST['binding']??null)?$_POST['binding']:'';$csrf=is_string($_POST['csrf']??null)?$_POST['csrf']:'';$raw=is_string($_POST['payload']??null)?$_POST['payload']:'';
+        if(strlen($key)>380||!preg_match('/\A[a-f0-9]{64}\z/D',$binding)||strlen($raw)>524288){$fail(400,'Invalid Playground request.');return;}
+        try{$input=json_decode($raw,true,12,JSON_THROW_ON_ERROR);}catch(\JsonException){$fail(400,'Invalid Playground payload.');return;}
+        if(!is_array($input)){$fail(400,'Invalid Playground payload.');return;}
+        $with=function(callable $fn)use($route){
+            if(!empty($route[1]))return $this->identityStore->withWorkspace($this->auth->token(),$route[1],$route[2],function($ctx,$w)use($fn){return $fn($ctx,$w['role']??'none',$w?Visibility::workspace($w):'private',$w?Workspaces::directory($this->installationDir,$w):null);});
+            return $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($fn){return $fn($ctx,$role,$w?Visibility::workspace($w):'public',$visible?$this->installationDir:null);});
+        };
+        $authorize=function($ctx,$role,$visibility,$dir)use($key,$binding,$csrf,$fail){
+            if(!$ctx)return $fail(401,'Sign in to use managed proxy.');
+            if(!$dir||!Permissions::allows($role,'read'))return $fail(404,'Operation not available.');
+            if(!hash_equals($ctx['session']['csrf'],$csrf))return $fail(403,'Invalid CSRF token.');
+            $store=new BookStore($dir,false);$db=$store->read();$pages=Visibility::pages($db,$visibility,$role);$d=ApiPlayground::published($db,$pages,$key);
+            if(!$d)return $fail(404,'Published Playground operation not available.');
+            if(!hash_equals(ApiPlaygroundView::binding($key,$pages[$key],$d),$binding))return $fail(409,'Published operation changed. Reload Playground.');
+            return ['definition'=>$d,'user'=>$ctx['user']['id']];
+        };
+        try{
+            $capture=$with($authorize);if(!$capture)return;
+            if(!in_array($capture['definition']['method'],['GET','HEAD','OPTIONS'],true)&&($input['confirm']??null)!==true){$fail(422,'Confirm that this request may modify API data.');return;}
+            $request=ApiPlayground::request($capture['definition'],$input,ApiPlayground::origins('BOOK_PLAYGROUND_PROXY_ORIGINS'),true);
+            if(!ApiPlaygroundTransport::limit($this->installationDir,$capture['user'])){$fail(429,'Playground rate limit reached.');return;}
+            $result=ApiPlaygroundTransport::send($request);
+            // A revoked user cannot retrieve a response after an in-flight external operation.
+            $current=$with($authorize);if(!$current)return;if($current['user']!==$capture['user']){$fail(403,'Session changed.');return;}
+            $this->json($result);
+        }catch(\InvalidArgumentException $e){$fail(422,$e->getMessage());}
+        catch(\Throwable){$fail(502,'API request failed or timed out. Check the approved server and TLS configuration.');}
     }
     /** Two-phase pull: capture authorization, fetch immutable Git data outside the identity lock,
      * then reauthorize and apply under the same lock as all Studio mutations. */
@@ -119,11 +153,17 @@ final class App {
                 return;
             }
             $db=$this->store->read();$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
-            if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true]),$pages));return;}
-            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true]));return;}
+            if($path==='/playground'){
+                $key=is_string($_GET['key']??null)?$_GET['key']:'';$d=ApiPlayground::published($db,$pages,$key);
+                if(!$d){http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Playground unavailable','<h1>Playground unavailable</h1><p>Choose a supported published API operation.</p>',$pages);return;}
+                header('Content-Security-Policy: '.ApiPlaygroundView::csp($d));header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');
+                $this->page('API Playground',ApiPlaygroundView::markup($key,$pages[$key],$d,$this->scopedIdentity,$this->studioRole),$pages,$key);return;
+            }
+            if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true]),$pages));return;}
+            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true]));return;}
             if($path==='/search'||$path==='/api/v1/search'){$q=is_string($_GET['q']??null)?trim(substr($_GET['q'],0,200)):'';$hits=[];foreach($pages as $key=>$p){if($q!==''&&preg_match('/'.preg_quote($q,'/').'/iu',$p['title'].' '.$p['body']))$hits[]=['key'=>$key,'title'=>$p['title'],'url'=>self::url($key)];if(count($hits)>=50)break;}if($path==='/api/v1/search'){$this->json($hits);return;}$html='<div class="eyebrow">SEARCH</div><h1>Search documentation</h1><p>'.count($hits).' results</p>';foreach($hits as $hit)$html.='<div class="result">'.self::link($hit['url'],$hit['title']).'</div>';$this->page('Search',$html,$pages,'','',$q);return;}
             if($path==='/'){$books=BookStore::books($db);$html='<div class="eyebrow">CAJEERENGINE BOOK / DOCUMENTATION</div><h1>Documentation, on your terms.</h1><p class="lead">A self-hosted knowledge base for your products, APIs and teams.</p><div class="cards">';$seen=[];foreach($pages as $key=>$p){[$b,$v]=explode('/',$key);if(isset($seen["$b/$v"]))continue;$seen["$b/$v"]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),'Read documentation →').'</div>';}$this->page('Documentation',$html.'</div>',$pages);return;}
-            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,Visibility::links($db,$pages));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1><article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
+            if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,Visibility::links($db,$pages));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').'</p>':'').'<article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
             http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);
         }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }

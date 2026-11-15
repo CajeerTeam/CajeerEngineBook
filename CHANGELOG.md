@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.5 — API Playground
+
+- Add interactive requests from published OpenAPI operations: HTTPS server selection, scalar parameters, JSON/form/text bodies, Bearer/Basic/API Key, real browser CORS fetch and optional authenticated server proxy. Display status, headers, duration, text/JSON or binary Base64; download/copy response and generate redacted cURL.
+- Bind executable definitions to reviewed page snapshots, retain in history and backup, resolve old publications only when their retained source is unambiguous. No draft specification can change a published target.
+- Explicit operator origin allowlists (disabled by default), pinned public IPv4 TLS proxy, no redirects, bounded time/response, CSRF, rate limits and reauthorization after network execution. Never persist request credentials or responses.
+- Add storage, HTTP, actual TLS wire and browser integration tests; no new runtime dependencies or schema migration.
+
 ## 0.3.4 — OpenAPI Reference
 
 - Import OpenAPI 3.0/3.1 JSON and YAML from pasted source, uploaded files, directory, ZIP or connected GitHub/GitLab at a verified immutable commit. Bounded local multi-file JSON Pointer resolution, recursive schema handling and no remote reference fetching.

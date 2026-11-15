@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/ApiPlayground.php';
 
 /** Render an OpenAPI source into ordinary editable, reviewable Markdown pages. */
 final class OpenApiReference
@@ -41,7 +42,7 @@ final class OpenApiReference
     private static function security(mixed $v,object $schemes):array{
         $list=self::list($v,'security');foreach($list as $req){self::map($req,'security requirement');foreach(get_object_vars($req) as $name=>$scopes){if(!property_exists($schemes,(string)$name))throw new \InvalidArgumentException('Unknown security scheme: '.$name);foreach(self::list($scopes,'security scopes') as $s)if(!is_string($s))throw new \InvalidArgumentException('Invalid security scope.');}}return $list;
     }
-    public static function render(OpenApiDocument $source,string $book,string $version,string $slug):array{
+    public static function render(OpenApiDocument $source,string $book,string $version,string $slug,bool $legacyPlayground=false):array{
         if(!BookStore::slug($slug))throw new \InvalidArgumentException('Invalid reference slug.');$prefix=BookStore::key($book,$version,'reference/'.$slug);$d=$source->document();$info=$d->info;
         $components=$d->components??(object)[];$schemes=$source->object($components->securitySchemes??(object)[],'security schemes');$schemas=self::map($components->schemas??(object)[],'schemas');
         foreach(get_object_vars($schemes) as $name=>$scheme){if(!is_object($scheme)||!in_array($scheme->type??null,['apiKey','http','oauth2','openIdConnect','mutualTLS'],true)||($scheme->type==='apiKey'&&(!is_string($scheme->name??null)||!in_array($scheme->in??null,['query','header','cookie'],true)))||($scheme->type==='http'&&!is_string($scheme->scheme??null))||($scheme->type==='oauth2'&&!is_object($scheme->flows??null))||($scheme->type==='openIdConnect'&&!is_string($scheme->openIdConnectUrl??null)))throw new \InvalidArgumentException('Invalid security scheme: '.$name);}
@@ -75,7 +76,11 @@ final class OpenApiReference
                 if(!$params)$body.="\nNo parameters.\n";else foreach($params as $p){$body.="\n### ".self::text($p->name.' ('.$p->in.')')."\n\n".(($p->required??false)?'Required.':'Optional.')."\n\n".self::text($p->description??'')."\n".self::code($p);}
                 if($request!==null)$body.="\n## Request body\n".self::code($request);
                 $body.="\n## Responses\n";foreach(get_object_vars($responses) as $status=>$response){$body.="\n### HTTP ".self::text((string)$status)."\n\n".self::text($response->description)."\n".self::code($response);}
-                $add($key,$title,'API / '.($tags[0]??'Operations'),$body);$operations[$key]=['label'=>$label,'tags'=>$tags,'summary'=>$op->summary??''];
+                // The reviewer must see changes to the scheme definitions, not just a model digest.
+                if(!$legacyPlayground&&$security){$used=new \stdClass();foreach($security as $alternative)foreach(get_object_vars($alternative) as $name=>$scopes)$used->{$name}=$schemes->{$name};if(get_object_vars($used))$body.="\n## Security scheme definitions\n".self::code($used);}
+                $definition=ApiPlayground::definition($method,$path,$params,$effectiveServers,$security,$schemes,$request);
+                if($definition!==null&&!$legacyPlayground)$body.="\n".ApiPlayground::marker($definition)."\n";
+                $add($key,$title,'API / '.($tags[0]??'Operations'),$body);if($definition!==null)$pages[$key]['playground']=$definition;$operations[$key]=['label'=>$label,'tags'=>$tags,'summary'=>$op->summary??''];
             }
         }
         $schemaMap=get_object_vars($schemas);ksort($schemaMap,SORT_STRING);

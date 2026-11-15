@@ -19,6 +19,9 @@
     },
     "scripts": {
         "test": [
+            "@php tests/playground.php",
+            "python3 tests/playground-https.py",
+            "python3 tests/playground-http.py",
             "@php tests/openapi.php",
             "python3 tests/openapi-http.py",
             "@php tests/gitlab.php",

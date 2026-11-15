@@ -47,6 +47,7 @@ final class BookStore {
                 $p=$entry[$state]??null;if($state==='published'&&$p===null)continue;
                 if(!is_array($p)||!is_string($p['title']??null)||trim($p['title'])===''||strlen($p['title'])>200||!is_string($p['section']??null)||strlen($p['section'])>100||!is_int($p['order']??null)||!is_string($p['body']??null)||strlen($p['body'])>262144||!preg_match('//u',$p['title'].$p['section'].$p['body'])||!is_string($p['updated']??null)||!is_array($p['media']??[]))throw new \RuntimeException('Invalid page snapshot');
                 foreach($p['media']??[] as $id)if(!is_string($id)||!preg_match('/\A[a-f0-9]{32}\z/D',$id))throw new \RuntimeException('Invalid page media reference');
+                ApiPlayground::validateSnapshot($p);
             }
         }
         PageTree::validate($db);
@@ -134,6 +135,7 @@ final class BookStore {
             if(PageTree::reserved($db,$key,$old['id']))throw new \DomainException('Page path is reserved');
             $navigationChanged=$old['draft']===null||$old['draft']['title']!==$page['title']||$old['draft']['order']!==$page['order'];
             $draft=$page;if(isset($old['draft']['link_base']))$draft['link_base']=$old['draft']['link_base'];
+            if(isset($old['draft']['playground'])&&$old['draft']['body']===$draft['body'])$draft['playground']=$old['draft']['playground'];
             $draft['media']=Markdown::mediaReferences($draft['body'],$draft['link_base']??$key);
             foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
             $old['draft']=$draft;

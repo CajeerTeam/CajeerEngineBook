@@ -1,6 +1,35 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.5 — API Playground
+
+Open a published OpenAPI operation in Reader and choose **API Playground**. An operation must have a supported request definition and an enabled HTTPS server. Select the server, enter parameters, authentication and a request body where applicable, then Send. Non-read-only methods require explicit confirmation. The result shows HTTP status, duration, readable headers and text/JSON or Base64 for binary data. Copy/download the response or generate a cURL example (authentication and custom header values redacted). Clear removes local request fields and results. No tokens, bodies or API responses are persisted by Book; avoid putting secrets into ordinary path/query parameters.
+
+### Enable API servers
+
+Both modes are disabled by default. Set exact comma-separated HTTPS origins in deployment configuration (no paths, wildcards or credentials). The OpenAPI server's base path is retained; server variables use their specified defaults. For example:
+
+```sh
+export BOOK_PLAYGROUND_ORIGINS=https://api.example.org
+# Optional: enable managed server proxy to the same approved origin
+export BOOK_PLAYGROUND_PROXY_ORIGINS=https://api.example.org
+docker compose up -d --build
+```
+
+Browser mode performs a real fetch with CORS, omitted ambient credentials, no redirects and no referrer. Configure the API's CORS policy to allow the documentation origin, methods and required headers. It supports only browser-permitted headers; cookie parameters/authentication require the managed proxy. A public operation can be used anonymously in browser mode, subject to Reader visibility and the target API's own authorization. Private APIs accessed from the browser are subject to its network policies.
+
+Managed proxy is separately opt-in, requires an authenticated user with current workspace read access and CSRF, and is restricted to the separately configured proxy origin allowlist and exact published operation. It resolves the approved DNS hostname to global IPv4 addresses only, connects to a validated IP with TLS hostname/SNI verification, refuses redirects, and never forwards the Book session cookie. No private/loopback/link-local targets or arbitrary destination URLs. The proxy uses bounded HTTP/1.1 parsing, 5-second connect and 15-second network deadlines (DNS resolution is governed by the OS), a 256 KiB request and 1 MiB response limit, 12 requests/minute per user and 60/minute per installation. Browser fetch has a 15-second abort deadline and 1 MiB response cap. Current access and publication binding are checked before and after proxy execution; revocation cannot undo an external side effect already performed. Use non-production API environments for mutation tests. Target API permissions remain separate from Book roles.
+
+### Publication and supported formats
+
+OpenAPI imports now store a bounded executable definition in each supported operation's draft snapshot, with a content binding. Publishing/review retains that exact definition, including server, method, parameters and authentication alternatives. Unpublished source updates cannot change a published operation. Historical restore and backups preserve the snapshot. For 0.3.4 publications, the system can recover the definition only from an exact, unambiguous retained source history; otherwise reimport and publish the updated reference using normal approval. Editing generated Markdown manually disables execution for that changed snapshot until a valid generated snapshot is restored or regenerated. No new schema or dependencies; keep a pre-upgrade backup for rollback.
+
+Supported methods GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS; scalar string/integer/number/boolean path/query/header/cookie parameters and supported default serialization; Bearer, Basic and API Key alternatives (including combinations); application/json, structured +json, application/x-www-form-urlencoded and text/plain bodies. Unsupported complex parameter serialization, relative HTTP servers, OAuth/OIDC flows, multipart and other body types remain readable Reference operations but are not executed through Playground. The API server is responsible for application-level validation and authorization; this is not a full JSON Schema validator. No general-purpose proxy, persisted request collection or automatic retry.
+
+### Tests
+
+Run `php tests/playground.php`, `python3 tests/playground-https.py`, `python3 tests/playground-http.py` and `python3 tests/playground-http.py --browser` (Playwright/Chromium). The TLS test exercises actual PHP HTTP framing and JS fetch against a controlled local HTTPS API; the production proxy separately rejects loopback. The HTTP tests use real Book sessions, publication, RBAC and privacy. `--policy-only` permits storage/HTTP checks without CommonMark; the complete suite is in `composer test` and CI. The transient private `playground-rate.json` is not part of backups; it contains counters, not credentials.
 
 ## 0.3.4 — OpenAPI Reference
 

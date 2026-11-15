@@ -41,7 +41,8 @@ final class OpenApiStore
         foreach($pages as $key=>$p){$entry=$db['pages'][$key]??null;$m=$mapped[$key]??null;$retired=!isset($model['pages'][$key]);$hash=self::fingerprint($p);$action='create';$why='';
             if($m){
                 if(!$entry||PageTree::id($key,$entry)!==$m['id']){$action='conflict';$why='Generated page was moved, deleted or replaced.';}
-                elseif(self::fingerprint($entry['draft'])===$hash)$action='unchanged';
+                elseif(self::fingerprint($entry['draft'])===$hash&&($entry['draft']['playground']??null)===($p['playground']??null))$action='unchanged';
+                elseif(self::fingerprint($entry['draft'])===$hash)$action='update';
                 elseif(self::fingerprint($entry['draft'])!==$m['base']){$action='conflict';$why='Local draft was edited. Restore the generated draft or import into a new version.';}
                 else $action=$retired?'removed':'update';
             }elseif($entry||PageTree::reserved($db,$key,'')){$action='conflict';$why='Target path already belongs to another page.';}

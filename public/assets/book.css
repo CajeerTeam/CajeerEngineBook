@@ -168,3 +168,15 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 .team-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));align-items:end;gap:.6rem;margin:1rem 0}
 .team-filters label{min-width:0;display:flex;flex-direction:column;gap:.3rem}.team-filters input,.team-filters select{width:100%;box-sizing:border-box}
 @media(max-width:600px){.team-event{flex-wrap:wrap}.team-filters{grid-template-columns:1fr}}
+
+/* API Playground: actual request controls and inert response text. */
+.playground { max-width: 900px; display: grid; gap: 1rem; }
+.playground fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 1rem; display: grid; gap: .8rem; }
+.playground fieldset legend { font-weight: 650; padding: 0 .5rem; }
+.playground label { display: grid; gap: .35rem; }
+.playground [data-pg-parameters], .playground [data-pg-auth], .playground [data-pg-body] { display: grid; gap: .8rem; }
+.playground .pg-confirm { display: flex; align-items: center; gap: .6rem; }
+.playground .pg-confirm input { width: auto; }
+.playground pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.playground [hidden] { display: none !important; }
+.playground [data-pg-status] { min-height: 1.5em; }
