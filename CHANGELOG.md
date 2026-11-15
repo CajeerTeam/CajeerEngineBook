@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.8 — CI/CD Publishing
+
+- Scoped expiring hashed CI tokens, bearer API and Python CLI; protected GitHub Actions/GitLab CI examples.
+- Checked immutable whole-version bundles, exact Git source matching, human independent approval, stale detection and atomic idempotent publication.
+- Studio build history, exact preview/diff, cancellation/pruning, restore published release to drafts, transactional build events and media retention.
+- Schema 6, backup/audit compatibility, PHP and HTTP integration tests.
+
 ## 0.3.7 — Webhooks & Automation
 
 - Verify GitHub HMAC and GitLab secret-token webhooks, repository/project and branch, push and merged PR/MR; deduplicate raw bodies and delivery IDs.

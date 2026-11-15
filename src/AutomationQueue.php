@@ -6,7 +6,7 @@ namespace CajeerBook;
 final class AutomationQueue
 {
     public const MAX_JOBS=512, MAX_PENDING=448, MAX_RECEIPTS=2048, MAX_ATTEMPTS=5, LEASE=900, RECEIPT_TTL=604800;
-    public const EVENTS=['document.changed','document.published','review.requested','review.approved','git.sync.completed','git.sync.failed','openapi.updated'];
+    public const EVENTS=['document.changed','document.published','review.requested','review.approved','git.sync.completed','git.sync.failed','openapi.updated','build.ready','build.approved','build.published'];
     private const STATES=['queued','running','succeeded','dead','cancelled'];
     private static function id(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{32}\z/D',$v)===1;}
     private static function hash(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{64}\z/D',$v)===1;}
@@ -32,7 +32,7 @@ final class AutomationQueue
     }
     public static function validate(array $db):void{
         $a=$db['automation']??null;if($a===null){if(($db['schema']??null)===5)throw new \RuntimeException('Automation store missing.');return;}
-        if(($db['schema']??null)!==5||!is_array($a)||array_diff(array_keys($a),['config','jobs','receipts'])||!array_key_exists('config',$a)||!is_array($a['jobs']??null)||count($a['jobs'])>self::MAX_JOBS||!is_array($a['receipts']??null)||count($a['receipts'])>self::MAX_RECEIPTS)throw new \RuntimeException('Invalid automation store.');
+        if(!in_array($db['schema']??null,[5,6],true)||!is_array($a)||array_diff(array_keys($a),['config','jobs','receipts'])||!array_key_exists('config',$a)||!is_array($a['jobs']??null)||count($a['jobs'])>self::MAX_JOBS||!is_array($a['receipts']??null)||count($a['receipts'])>self::MAX_RECEIPTS)throw new \RuntimeException('Invalid automation store.');
         $c=$a['config'];if($c!==null){
             if(!is_array($c)||array_diff(array_keys($c),['id','actor','git','url','events','in_secret','out_secret'])||!self::id($c['id']??null)||!self::id($c['actor']??null)||!is_string($c['git']??null)||($c['git']!==''&&!self::id($c['git']))||!is_string($c['url']??null)||!is_array($c['events']??null)||!array_is_list($c['events'])||count($c['events'])>count(self::EVENTS)||count(array_filter($c['events'],'is_string'))!==count($c['events'])||count(array_unique($c['events']))!==count($c['events'])||array_diff($c['events'],self::EVENTS))throw new \RuntimeException('Invalid automation configuration.');
             foreach(['in','out'] as $kind){$s=$c[$kind.'_secret']??null;$bytes=is_string($s)?base64_decode($s,true):false;if(!is_string($s)||($s!==''&&($bytes===false||strlen($bytes)<60||strlen($bytes)>156)))throw new \RuntimeException('Invalid automation credential.');}
@@ -122,6 +122,7 @@ final class AutomationQueue
         foreach($db['reviews']??[] as $id=>$r){$old=$before['reviews'][$id]['status']??null;if($old!==$r['status']){if($r['status']==='in_review')$events[]='review.requested';if($r['status']==='approved')$events[]='review.approved';}}
         if(($before['openapi']??[])!==($db['openapi']??[]))$events[]='openapi.updated';
         $old=$before['github']??null;$new=$db['github']??null;if($new&&$old&&$old['runs']!==$new['runs']){$r=end($new['runs']);if(($r['type']??'')==='sync')$events[]='git.sync.completed';if(($r['type']??'')==='error')$events[]='git.sync.failed';}
+        foreach($db['ci']['builds']??[] as $id=>$b){$old=$before['ci']['builds'][$id]['status']??null;if($old!==$b['status']&&in_array($b['status'],['ready','approved','published'],true))$events[]='build.'.$b['status'];}
         foreach(array_unique($events) as $event)self::enqueueEvent($db,$event);
     }
     public static function claim(array &$db,int $now,bool $recover=false):?array{

@@ -105,7 +105,7 @@ final class MediaStore
                 if(in_array($id,$p['media']??[],true) || (!$publishedOnly && str_contains($p['body'],'/media/'.$id))) $refs[]=$key.':'.$state;
             }
         }
-        if(!$publishedOnly)$refs=array_merge($refs,RevisionHistory::mediaReferences($db,$id),ReviewWorkflow::mediaIndex($db)[$id]??[]);
+        if(!$publishedOnly)$refs=array_merge($refs,RevisionHistory::mediaReferences($db,$id),ReviewWorkflow::mediaIndex($db)[$id]??[],CiPublishing::mediaIndex($db)[$id]??[]);
         return $refs;
     }
     /** One pass for the paginated library, rather than scanning the entire database for each card. */
@@ -121,7 +121,7 @@ final class MediaStore
                 foreach(array_unique(array_merge($ids,$matches[1])) as $id)$all[$id][]=$label;
             }
         }
-        foreach(array_merge_recursive(RevisionHistory::mediaIndex($db),ReviewWorkflow::mediaIndex($db)) as $id=>$labels)$all[$id]=array_merge($all[$id]??[],$labels);
+        foreach(array_merge_recursive(RevisionHistory::mediaIndex($db),ReviewWorkflow::mediaIndex($db),CiPublishing::mediaIndex($db)) as $id=>$labels)$all[$id]=array_merge($all[$id]??[],$labels);
         return ['all'=>$all,'published'=>$published];
     }
     public function update(string $id,int $revision,string $name,string $folder): void

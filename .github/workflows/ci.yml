@@ -69,6 +69,7 @@ jobs:
         env:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
+          docker compose -p book-release-test exec -T book php tests/ci-publishing.php
           docker compose -p book-release-test exec -T book php tests/automation.php
           docker compose -p book-release-test exec -T book php tests/sdk.php
           docker compose -p book-release-test exec -T book php tests/playground.php

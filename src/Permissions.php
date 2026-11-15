@@ -41,7 +41,7 @@ final class Permissions
     public static function studio(string $role,string $path,string $method,string $action):bool {
         if(!self::allows($role,'edit'))return false;
         if(in_array($method,['GET','HEAD'],true)){
-            if($path==='/studio/automation')return self::allows($role,'manage');
+            if(in_array($path,['/studio/automation','/studio/ci'],true))return self::allows($role,'manage');
             if(in_array($path,['/studio/export','/studio/media/backup'],true))return self::allows($role,'export');
             return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
         }
@@ -57,6 +57,7 @@ final class Permissions
             '/studio/import'=>in_array($action,['preview','apply'],true)?'edit':'',
             '/studio/history'=>$action==='restore'?'edit':'',
             '/studio/team'=>$action==='read'?'edit':'',
+            '/studio/ci'=>in_array($action,['issue','revoke','build','approve','publish','cancel','prune','rollback'],true)?'manage':'',
             '/studio/automation'=>in_array($action,['configure','retry'],true)?'manage':'',
             '/studio/reviews'=>match($action){'submit','comment','cancel'=>'edit','approve','changes','reject','publish'=>'publish','policy','prune'=>'ownership',default=>''},default=>'',
         };

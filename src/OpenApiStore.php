@@ -13,7 +13,7 @@ final class OpenApiStore
     private static function idValid(mixed $s):bool{return is_string($s)&&preg_match('/\A[a-f0-9]{32}\z/D',$s)===1;}
     private static function scope(string $book,string $version,string $slug):string{return BookStore::key($book,$version,'reference/'.$slug);}
     public static function validate(array $db):void{
-        $all=$db['openapi']??[];if(!is_array($all)||count($all)>self::MAX_SPECS||($all&&!in_array($db['schema']??null,[4,5],true)))throw new \RuntimeException('Invalid OpenAPI store.');
+        $all=$db['openapi']??[];if(!is_array($all)||count($all)>self::MAX_SPECS||($all&&!in_array($db['schema']??null,[4,5,6],true)))throw new \RuntimeException('Invalid OpenAPI store.');
         $bytes=0;$ids=[];
         foreach($all as $scope=>$s){
             if(!is_array($s)||!is_string($s['book']??null)||!is_string($s['version']??null)||!is_string($s['slug']??null)||!BookStore::slug($s['slug'])||self::scope($s['book'],$s['version'],$s['slug'])!==$scope||!self::idValid($s['id']??null)||isset($ids[$s['id']])||!is_int($s['revision']??null)||$s['revision']<1||!is_array($s['pages']??null)||count($s['pages'])>OpenApiReference::MAX_PAGES||!is_array($s['revisions']??null)||!array_is_list($s['revisions'])||!$s['revisions']||count($s['revisions'])>self::MAX_REVISIONS)throw new \RuntimeException('Invalid OpenAPI source record.');

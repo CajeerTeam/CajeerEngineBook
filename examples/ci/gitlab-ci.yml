@@ -1,0 +1,28 @@
+# Copy into .gitlab-ci.yml; include bin/ci.py from CajeerEngine Book.
+# Configure protected/masked BOOK_CI_TOKEN and BOOK_CI_PUBLISH_TOKEN, BOOK_CI_URL.
+# Configure Git push webhook + worker. Studio approval is separate from the manual job.
+image: python:3.12-slim
+stages: [build, deploy]
+build_docs:
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - python3 bin/ci.py wait-sync --commit "$CI_COMMIT_SHA" > state.json
+    - expected=$(python3 -c 'import json; print(json.load(open("state.json"))["fingerprint"])')
+    - python3 bin/ci.py build --request "$CI_PIPELINE_ID-$CI_JOB_ID" --expected "$expected" --commit "$CI_COMMIT_SHA" > build.json
+  artifacts:
+    paths: [build.json]
+    expire_in: 7 days
+publish_docs:
+  stage: deploy
+  needs: [build_docs]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  environment: documentation-production
+  script:
+    - export BOOK_CI_TOKEN="$BOOK_CI_PUBLISH_TOKEN"
+    - id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
+    - digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
+    - python3 bin/ci.py publish "$id" "$digest"

@@ -33,6 +33,10 @@ final class ImportFiles
         $size=filesize($source);if($size===false)throw new \InvalidArgumentException('Cannot read source');
         $dest=$this->reserve($name,$size);Files::copy($source,$dest);$this->files[$name]=$dest;
     }
+    /** CI uploads are decoded into random private staging files, never archive paths. */
+    public function addBytes(string $name,string $bytes):void{
+        $dest=$this->reserve($name,strlen($bytes));Files::write($dest,$bytes);$this->files[$name]=$dest;
+    }
     public function zip(string $source):void{
         if(!class_exists(\ZipArchive::class))throw new \RuntimeException('PHP zip extension is required');
         if(is_link($source)||!is_file($source)||filesize($source)>self::MAX_ARCHIVE)throw new \InvalidArgumentException('ZIP exceeds 20 MiB');

@@ -54,7 +54,7 @@ final class MediaBackup
             $tar=new \PharData($archive);
             if(!$tar->offsetExists('books.json')||$tar['books.json']->isDir()||$tar['books.json']->isLink()||$tar['books.json']->getSize()>self::MAX_DB)throw new \InvalidArgumentException('Invalid books.json');
             $db=json_decode($tar['books.json']->getContent(),true,512,JSON_THROW_ON_ERROR);
-            if(!is_array($db)||!in_array($db['schema']??null,[1,2,3,4,5],true)||!is_array($db['pages']??null)||count($db['pages'])>1000||!is_array($db['media']??[])||count($db['media']??[])>MediaStore::MAX_FILES)throw new \InvalidArgumentException('Invalid backup database');
+            if(!is_array($db)||!in_array($db['schema']??null,[1,2,3,4,5,6],true)||!is_array($db['pages']??null)||count($db['pages'])>1000||!is_array($db['media']??[])||count($db['media']??[])>MediaStore::MAX_FILES)throw new \InvalidArgumentException('Invalid backup database');
             BookStore::books($db);$items=$db['media']??[];$total=0;
             foreach($items as $id=>$item){
                 if(!is_string($id)||!MediaStore::validId($id)||!is_array($item)||($item['id']??null)!==$id||!is_string($item['name']??null)||!is_string($item['folder']??null)||!is_int($item['size']??null)||$item['size']<1||$item['size']>MediaStore::MAX_FILE||!is_int($item['revision']??null)||$item['revision']<1||!is_string($item['created']??null)||!is_string($item['updated']??null))throw new \InvalidArgumentException('Invalid media metadata');
@@ -87,6 +87,7 @@ final class MediaBackup
             ReviewWorkflow::validate($db,true);
             ActivityJournal::validate($db);
             OpenApiStore::audit($db);
+            CiPublishing::audit($db);
             ReviewWorkflow::refresh($db);
             BookStore::writeDatabase($stage.'/books.json',$db);unset($tar);
             if(file_exists($target)||is_link($target)||!rename($stage,$target))throw new \RuntimeException('Cannot publish restored directory');

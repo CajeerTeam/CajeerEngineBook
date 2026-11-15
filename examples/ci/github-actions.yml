@@ -1,0 +1,45 @@
+# Copy into .github/workflows/docs.yml in the docs repository.
+# Include bin/ci.py from CajeerEngine Book in that repository.
+# BOOK_CI_URL is a repository variable, BOOK_CI_TOKEN a protected secret.
+# Configure Git push webhooks + worker before enabling this pipeline.
+name: Documentation release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BOOK_CI_URL: ${{ vars.BOOK_CI_URL }}
+      BOOK_CI_TOKEN: ${{ secrets.BOOK_CI_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for Git import and build exact version
+        run: |
+          python3 bin/ci.py wait-sync --commit "$GITHUB_SHA" > state.json
+          expected=$(python3 -c 'import json; print(json.load(open("state.json"))["fingerprint"])')
+          python3 bin/ci.py build --request "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --expected "$expected" --commit "$GITHUB_SHA" > build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documentation-build
+          path: build.json
+  publish:
+    needs: build
+    # Configure environment approval, then independently approve the exact build in Book Studio.
+    environment: documentation-production
+    runs-on: ubuntu-latest
+    env:
+      BOOK_CI_URL: ${{ vars.BOOK_CI_URL }}
+      BOOK_CI_TOKEN: ${{ secrets.BOOK_CI_PUBLISH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: documentation-build
+      - name: Publish approved bundle
+        run: |
+          id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
+          digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
+          python3 bin/ci.py publish "$id" "$digest"

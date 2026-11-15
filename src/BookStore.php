@@ -12,6 +12,7 @@ require_once __DIR__.'/OpenApiDocument.php';
 require_once __DIR__.'/OpenApiReference.php';
 require_once __DIR__.'/OpenApiStore.php';
 require_once __DIR__.'/AutomationQueue.php';
+require_once __DIR__.'/CiPublishing.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
@@ -29,7 +30,7 @@ final class BookStore {
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
         if(!is_file($file)&&(!$this->seed||glob(Files::path($this->dir,'media').'/*.blob')))throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
-        if(!in_array($db['schema']??null,[1,2,3,4,5],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        if(!in_array($db['schema']??null,[1,2,3,4,5,6],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         try{self::validatePages($db);}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid persisted page tree',0,$e);}
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);
@@ -38,6 +39,7 @@ final class BookStore {
         GitHubSync::validate($db);
         OpenApiStore::validate($db);
         AutomationQueue::validate($db);
+        CiPublishing::validate($db);
         return $db;
     }
     /** Validate the trust boundary before any projection, including public book visibility. */
@@ -71,7 +73,7 @@ final class BookStore {
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
-        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db); self::writeDatabase($this->dir.'/books.json',$db); }
+        try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
     /** Keep all new snapshots within the portable backup limit, before any rename. */
@@ -84,6 +86,7 @@ final class BookStore {
         GitHubSync::validate($db);
         OpenApiStore::validate($db);
         AutomationQueue::validate($db);
+        CiPublishing::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
@@ -152,10 +155,20 @@ final class BookStore {
     /** Shared publication mutation. Callers authorize the direct or reviewed publication under books.lock. */
     public static function publishSnapshot(array &$db,string $key,array &$entry,?string $review=null):void {
         ReviewWorkflow::guard($db,'page',$key,$review);
-        $publicKey=$entry['published']!==null?PageTree::publicKey($key,$entry):$key;$snapshot=$review===null?$entry['draft']:ReviewWorkflow::get($db,$review)['snapshot']['draft'];$snapshot['media']??=[];
+        self::applyPublication($db,$key,$entry,$review===null?$entry['draft']:ReviewWorkflow::get($db,$review)['snapshot']['draft']);
+    }
+    private static function applyPublication(array &$db,string $key,array &$entry,array $snapshot):void {
+        $publicKey=$entry['published']!==null?PageTree::publicKey($key,$entry):$key;$snapshot['media']??=[];
         if($entry['published']===null&&isset($entry['published_key'])&&$entry['published_key']!==$key)PageTree::remember($db,$entry['published_key'],$entry['id']);
         if($entry['published']!==null){$snapshot['order']=$entry['published']['order'];if($publicKey!==$key)$snapshot['link_base']??=$key;}
         $entry['published']=$snapshot;$entry['published_key']=$publicKey;
+    }
+    /** Atomically publish the entire independently authorized CI bundle. */
+    public static function publishBundle(array &$db,array $actor,array $users,string $id,string $digest,MediaStore $media):array {
+        $b=CiPublishing::authorizePublish($db,$actor,$users,$id,$digest);if($b['status']==='published')return $b;
+        CiPublishing::verify($db,$b['pages'],$b['links'],$media);
+        foreach($b['pages'] as $key=>$p){$e=$db['pages'][$key];$e['id']??=PageTree::id($key,$e);self::applyPublication($db,$key,$e,$p['draft']);$e['revision']++;$db['pages'][$key]=$e;}
+        $b['status']='published';$b['published_by']=['id'=>$actor['id'],'username'=>$actor['username']];$b['published_at']=time();$db['ci']['builds'][$id]=$b;ActivityJournal::record($db,$actor,'ci.publish',$b['scope'],$id);return $b;
     }
     /** All review state transitions share the page/history transaction. */
     public function review(array $actor,array $users,string $action,array $fields):string {

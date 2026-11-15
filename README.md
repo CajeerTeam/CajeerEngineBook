@@ -1,6 +1,30 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.8 — CI/CD Publishing
+
+Studio → **CI/CD Publishing** supports checked, immutable releases of an entire book version. Owner/Admin creates a scoped service token (1–90 days, build-only or build + publish); copy the secret once. Only its SHA-256 hash is persisted. Revocation, expiry, issuer role and workspace state are checked on every API call. Use separate build and deployment credentials and protect the deployment environment. Never put credentials in source or artifacts.
+
+Set `BOOK_CI_URL=https://book.example.org/w/ORG/WORKSPACE/api/v1/ci` (legacy: `/api/v1/ci`) and `BOOK_CI_TOKEN` in protected environment variables. Copy `bin/ci.py` into the documentation repository. The Python 3 client uses HTTPS, no redirects, and outputs JSON. Example GitHub Actions and GitLab CI pipelines are in `examples/ci/`. Configure Git webhooks and the existing automation worker before using the Git pipeline.
+
+```sh
+python3 bin/ci.py state > state.json
+expected=$(python3 -c 'import json; print(json.load(open("state.json"))["fingerprint"])')
+python3 bin/ci.py build --request release-1 --expected "$expected" > build.json
+# If review is required, a different authorized human approves this exact build in Studio.
+id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
+digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
+python3 bin/ci.py publish "$id" "$digest"
+```
+
+For Git releases, use `wait-sync --commit SHA` to wait for the cursor, then build with `--commit SHA` and the returned fingerprint. Git-labelled builds require every page in the book/version to match its synchronized source; untracked pages and local changes are rejected. For mixed manual/generated content build without `--commit`. Alternatively `import DIRECTORY --expected FINGERPRINT` imports Markdown and attachments into drafts; `--allow-update` explicitly permits overwriting existing drafts. Absent files are not deleted. Use the returned fingerprint for the build. `status ID` retrieves current release state. Idempotency keys bind the requester, source and expected fingerprint; repeat publication of the same digest does not advance revisions again.
+
+Builds validate Markdown rendering, OpenAPI storage integrity, internal documentation/media links and binary media hashes. External URLs and anchor existence are not checked. The exact draft and previous publication snapshots, source commit, policy and hashes are retained. Studio shows the captured source and diff. Mandatory review requires a human Admin/Owner independent of the requester and known draft contributors. CI cannot approve. Any scope change, publication-policy change or changed Git mapping invalidates an outstanding build; the publisher and approver must still have current rights. Publishing commits all pages in one transaction, including history and outbox events. Existing public paths/order remain governed by the separate tree workflow. No implicit deletion or unpublish. Restore a published release as drafts (same page IDs/paths required), then build and approve again. Rollback does not bypass review.
+
+Builds execute synchronously under existing authorization and BookStore locks; Git fetch remains in the automation worker. Limits: 200 pages, 4 MiB snapshot, 20 retained builds, 20 credentials, 8 MiB CI metadata per workspace, subject to overall BookStore limits. CLI import accepts 200 files/8 MiB and a 12 MiB JSON request. Prune terminal builds in Studio to free space. Build events `build.ready`, `build.approved`, `build.published` can be delivered through the existing signed outbox. Retained build snapshots protect referenced media from deletion.
+
+Back up the complete installation before upgrading. BookStore schema 6 is activated by CI configuration/builds; schemas 1–5 continue to work. Backups include bundles and hashed credentials; restoring an old backup may restore previously revoked credentials, so revoke/rotate them after restore. Older releases cannot open schema 6; rollback requires the pre-upgrade backup. No new runtime dependencies. Test `php tests/ci-publishing.php` and `python3 tests/ci-http.py`; `--policy-only` checks storage/auth/publication with prepared validated fixtures without CommonMark. Full tests validate and import real Markdown and restore TAR.
 
 ## 0.3.7 — Webhooks & Automation
 
