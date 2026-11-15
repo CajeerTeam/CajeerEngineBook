@@ -1,44 +1,56 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/GitLabClient.php';
 
 /** Workspace-owned integration. Cursor and draft changes commit together. */
 final class GitHubSync
 {
     public function __construct(private readonly BookStore $store,private readonly MarkdownImport $importer,private readonly ?\Closure $clientFactory=null,private readonly ?string $cacheDir=null){}
     private static function key():string{
-        $key=getenv('BOOK_GITHUB_KEY')?:'';if(!preg_match('/\A[a-fA-F0-9]{64}\z/D',$key))throw new \DomainException('Set BOOK_GITHUB_KEY to a private 32-byte hex key on the server before storing a GitHub token.');return hex2bin($key);
+        $key=getenv('BOOK_GITHUB_KEY')?:'';if(!preg_match('/\A[a-fA-F0-9]{64}\z/D',$key))throw new \DomainException('Set BOOK_GITHUB_KEY to a private 32-byte hex key on the server before storing a Git access token.');return hex2bin($key);
     }
-    private static function aad(array $c):string{return 'cajeerbook-github-v1:'.$c['id'].':'.$c['repo'];}
+    public static function provider(array $c):string{return $c['provider']??'github';}
+    public static function label(array $c):string{return self::provider($c)==='gitlab'?'GitLab':'GitHub';}
+    public static function proposalLabel(array $c):string{return self::provider($c)==='gitlab'?'Merge Request':'Pull Request';}
+    private static function aad(array $c):string{return self::provider($c)==='gitlab'?'cajeerbook-gitlab-v1:'.$c['id'].':'.$c['origin'].':'.$c['repo'].':'.$c['project_id']:'cajeerbook-github-v1:'.$c['id'].':'.$c['repo'];}
     private static function encrypt(string $token,array $c):string{
-        if($token==='')return '';if(!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid GitHub token format.');
+        if($token==='')return '';if(!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid Git access token format.');
         $iv=random_bytes(12);$tag='';$cipher=openssl_encrypt($token,'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,$iv,$tag,self::aad($c));if($cipher===false)throw new \RuntimeException('Credential encryption failed.');return base64_encode($iv.$tag.$cipher);
     }
     private static function decrypt(array $c):string{
-        if($c['credential']==='')return '';$raw=base64_decode($c['credential'],true);$plain=openssl_decrypt(substr($raw,28),'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,substr($raw,0,12),substr($raw,12,16),self::aad($c));if($plain===false)throw new \DomainException('GitHub credential cannot be decrypted. Restore the master key or rotate the token.');return $plain;
+        if($c['credential']==='')return '';$raw=base64_decode($c['credential'],true);$plain=openssl_decrypt(substr($raw,28),'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,substr($raw,0,12),substr($raw,12,16),self::aad($c));if($plain===false)throw new \DomainException('Git credential cannot be decrypted. Restore the master key or rotate the token.');return $plain;
     }
-    private function client(array $c):GitHubClient{$token=self::decrypt($c);return $this->clientFactory===null?new GitHubClient($token):($this->clientFactory)($token);}
+    private function makeClient(array $c,string $token):GitProvider{
+        $provider=self::provider($c);if($provider==='gitlab')GitLabClient::allowedOrigin($c['origin']);
+        return $this->clientFactory!==null?($this->clientFactory)($token,$c):($provider==='gitlab'?new GitLabClient($c['origin'],$token):new GitHubClient($token));
+    }
+    private function client(array $c):GitProvider{
+        $client=$this->makeClient($c,self::decrypt($c));
+        if(self::provider($c)==='gitlab'){if(!$client instanceof GitLabClient)throw new \LogicException('GitLab client required.');$client->identify($c['repo'],$c['project_id']);}return $client;
+    }
     public static function validate(array $db):void{
         if(!array_key_exists('github',$db))return;$c=$db['github'];
-        if(!is_array($c)||!is_string($c['id']??null)||!preg_match('/\A[a-f0-9]{32}\z/D',$c['id'])||!is_int($c['revision']??null)||$c['revision']<1||!is_string($c['credential']??null)||strlen($c['credential'])>800||!is_bool($c['push']??null)||!is_array($c['pages']??null)||count($c['pages'])>200||!is_array($c['assets']??null)||count($c['assets'])>200||!is_array($c['runs']??null)||count($c['runs'])>30)throw new \RuntimeException('Invalid GitHub integration record.');
-        try{GitHubClient::repository($c['repo']);GitHubClient::branch($c['branch']);BookStore::key($c['book'],$c['version'],'index');if($c['root']!=='')ImportFiles::path($c['root']);if($c['commit']!=='')GitHubClient::sha($c['commit']);if($c['credential']!==''){$bytes=base64_decode($c['credential'],true);if($bytes===false||strlen($bytes)<38||strlen($bytes)>540)throw new \InvalidArgumentException('Invalid credential envelope');}
+        if(!is_array($c)||!is_string($c['id']??null)||!preg_match('/\A[a-f0-9]{32}\z/D',$c['id'])||!is_int($c['revision']??null)||$c['revision']<1||!is_string($c['credential']??null)||strlen($c['credential'])>800||!is_bool($c['push']??null)||!is_array($c['pages']??null)||count($c['pages'])>200||!is_array($c['assets']??null)||count($c['assets'])>200||!is_array($c['runs']??null)||count($c['runs'])>30)throw new \RuntimeException('Invalid Git integration record.');
+        try{if((array_key_exists('provider',$c)&&!is_string($c['provider']))||!in_array(self::provider($c),['github','gitlab'],true))throw new \InvalidArgumentException('Unknown Git provider');if(self::provider($c)==='gitlab'){if(($db['schema']??null)!==3||!is_int($c['project_id']??null)||$c['project_id']<1)throw new \InvalidArgumentException('GitLab requires schema 3 and a stable project ID');GitLabClient::repository($c['repo']);if(GitLabClient::origin($c['origin'])!==$c['origin']||strlen($c['origin'].'/'.$c['repo'])>440)throw new \InvalidArgumentException('Invalid GitLab origin');}else{GitHubClient::repository($c['repo']);if(isset($c['origin'])&&$c['origin']!=='https://github.com')throw new \InvalidArgumentException('Invalid GitHub origin');}GitHubClient::branch($c['branch']);BookStore::key($c['book'],$c['version'],'index');if($c['root']!=='')ImportFiles::path($c['root']);if($c['commit']!=='')GitHubClient::sha($c['commit']);if($c['credential']!==''){$bytes=base64_decode($c['credential'],true);if($bytes===false||strlen($bytes)<38||strlen($bytes)>540)throw new \InvalidArgumentException('Invalid credential envelope');}
             $ids=[];foreach($c['pages'] as $path=>$p){ImportFiles::path((string)$path);if(!preg_match('/\.(md|markdown)$/i',(string)$path)||!is_array($p)||!is_string($p['id']??null)||!preg_match('/\A[a-f0-9]{32}\z/D',$p['id'])||isset($ids[$p['id']])||!is_string($p['key']??null)||!PageTree::validKey($p['key'])||!str_starts_with($p['key'],$c['book'].'/'.$c['version'].'/')||!self::hashValid($p['base']??null))throw new \InvalidArgumentException('Invalid tracked page');$ids[$p['id']]=true;GitHubClient::sha($p['sha']??null);}
             foreach($c['assets'] as $path=>$sha){ImportFiles::path((string)$path);if(!self::hashValid($sha))throw new \InvalidArgumentException('Invalid asset hash');}
             foreach($c['runs'] as $r)if(!is_array($r)||!is_string($r['at']??null)||!is_string($r['actor']??null)||strlen($r['actor'])>100||!in_array($r['type']??null,['sync','proposal','error'],true)||!is_string($r['detail']??null)||strlen($r['detail'])>500)throw new \InvalidArgumentException('Invalid sync run');
-        }catch(\Throwable $e){throw new \RuntimeException('Invalid GitHub integration state.',0,$e);}
+        }catch(\Throwable $e){throw new \RuntimeException('Invalid Git integration state.',0,$e);}
     }
     private static function hashValid(mixed $s):bool{return is_string($s)&&preg_match('/\A[a-f0-9]{64}\z/D',$s)===1;}
     public function configure(array $input):void{
-        if(isset($this->store->read()['github']))throw new \DomainException('Disconnect the existing integration first.');$repo=GitHubClient::repository(trim($input['repo']));$branch=GitHubClient::branch(trim($input['branch']));$root=trim($input['root'],'/');if($root!=='')ImportFiles::path($root);$book=$input['book'];$version=$input['version'];BookStore::key($book,$version,'index');
-        $c=['id'=>bin2hex(random_bytes(16)),'revision'=>1,'repo'=>$repo,'branch'=>$branch,'root'=>$root,'book'=>$book,'version'=>$version,'push'=>$input['push']==='1','credential'=>'','commit'=>'','pages'=>[],'assets'=>[],'runs'=>[]];$c['credential']=self::encrypt($input['token'],$c);
-        if($c['push']&&$c['credential']==='')throw new \InvalidArgumentException('A token is required for Pull Requests.');
-        // Verify the configured branch before persisting credentials.
-        $this->client($c)->head($repo,$branch);
-        $this->store->change(function(&$db)use($c){if(isset($db['github']))throw new \DomainException('Disconnect the existing integration first.');$db['github']=$c;});
+        if(isset($this->store->read()['github']))throw new \DomainException('Disconnect the existing integration first.');$provider=$input['provider']??'github';if($provider==='')$provider='github';if(!in_array($provider,['github','gitlab'],true))throw new \InvalidArgumentException('Unknown Git provider.');$repo=$provider==='gitlab'?GitLabClient::repository(trim($input['repo'])):GitHubClient::repository(trim($input['repo']));$origin=$provider==='gitlab'?GitLabClient::allowedOrigin(($input['origin']??'')?:'https://gitlab.com'):'https://github.com';if($provider==='gitlab'&&strlen($origin.'/'.$repo)>440)throw new \InvalidArgumentException('GitLab project URL is too long.');$branch=GitHubClient::branch(trim($input['branch']));$root=trim($input['root'],'/');if($root!=='')ImportFiles::path($root);$book=$input['book'];$version=$input['version'];BookStore::key($book,$version,'index');
+        $c=['provider'=>$provider,'origin'=>$origin,'id'=>bin2hex(random_bytes(16)),'revision'=>1,'repo'=>$repo,'branch'=>$branch,'root'=>$root,'book'=>$book,'version'=>$version,'push'=>$input['push']==='1','credential'=>'','commit'=>'','pages'=>[],'assets'=>[],'runs'=>[]];if($c['push']&&$input['token']==='')throw new \InvalidArgumentException('A token is required for change proposals.');
+        // Validate the key before network I/O; resolve GitLab project identity before sealing credentials.
+        if($input['token']!=='')self::key();$client=$this->makeClient($c,$input['token']);
+        if($provider==='gitlab'){if(!$client instanceof GitLabClient)throw new \LogicException('GitLab client required.');$c['project_id']=$client->identify($repo);}
+        $c['credential']=self::encrypt($input['token'],$c);$client->head($repo,$branch);
+        $this->store->change(function(&$db)use($c){if(isset($db['github']))throw new \DomainException('Disconnect the existing integration first.');if(self::provider($c)==='gitlab')$db['schema']=3;$db['github']=$c;});
     }
-    private static function current(array $db):array{if(!isset($db['github']))throw new \DomainException('Connect a GitHub repository first.');return $db['github'];}
+    private static function current(array $db):array{if(!isset($db['github']))throw new \DomainException('Connect a Git repository first.');return $db['github'];}
     public function rotate(string $token,int $expected,bool $push):void{
-        $c=self::current($this->store->read());if($c['revision']!==$expected)throw new \DomainException('Integration changed. Reload.');$c['credential']=self::encrypt($token,$c);$c['push']=$push;if($push&&$token==='')throw new \InvalidArgumentException('A token is required for Pull Requests.');$this->client($c)->head($c['repo'],$c['branch']);
+        $c=self::current($this->store->read());if($c['revision']!==$expected)throw new \DomainException('Integration changed. Reload.');$c['credential']=self::encrypt($token,$c);$c['push']=$push;if($push&&$token==='')throw new \InvalidArgumentException('A token is required for change proposals.');$this->client($c)->head($c['repo'],$c['branch']);
         $this->store->change(function(&$db)use($c,$expected){if(self::current($db)['revision']!==$expected||$db['github']['id']!==$c['id'])throw new \DomainException('Integration changed. Reload.');$c['revision']++;$db['github']=$c;});
     }
     public function disconnect(int $expected):void{$this->store->change(function(&$db)use($expected){if(self::current($db)['revision']!==$expected)throw new \DomainException('Integration changed. Reload.');unset($db['github']);});}
@@ -89,7 +101,7 @@ final class GitHubSync
     /** Network-only phase. The HTTP controller captures the authorized snapshot and releases identity lock. */
     public function download(array $db,string $secret,?string $token=null,string $sha='',string $resolution='safe'):array{
         $c=self::current($db);if($token!==null)self::verifyPreview($db,$c,$secret,$token,$sha,$resolution);
-        $client=$this->client($c);$head=$client->head($c['repo'],$c['branch']);if($token!==null&&$head!==$sha)throw new \DomainException('GitHub branch changed. Preview again.');
+        $client=$this->client($c);$head=$client->head($c['repo'],$c['branch']);if($token!==null&&$head!==$sha)throw new \DomainException('Remote branch changed. Preview again.');
         $remote=$client->fetch($c['repo'],$head,$c['root'],$this->cacheDir);return ['id'=>$c['id'],'revision'=>$c['revision'],'commit'=>$head,'remote'=>$remote];
     }
     private static function checkDownload(array $c,array $prepared):void{if($prepared['id']!==$c['id']||$prepared['revision']!==$c['revision'])throw new \DomainException('Integration changed during download. Preview again.');}
@@ -100,7 +112,7 @@ final class GitHubSync
     }
     public function apply(string $secret,string $token,string $sha,string $resolution,string $actor,?array $prepared=null,array $decisions=[]):array{
         $db=$this->store->read();$c=self::current($db);$time=self::verifyPreview($db,$c,$secret,$token,$sha,$resolution);
-        $prepared??=$this->download($db,$secret,$token,$sha,$resolution);self::checkDownload($c,$prepared);if($prepared['commit']!==$sha)throw new \DomainException('GitHub branch changed. Preview again.');$remote=$prepared['remote'];
+        $prepared??=$this->download($db,$secret,$token,$sha,$resolution);self::checkDownload($c,$prepared);if($prepared['commit']!==$sha)throw new \DomainException('Remote branch changed. Preview again.');$remote=$prepared['remote'];
         $report=[];
         $this->importer->commit($c['book'],function($db)use($c,$remote,$sha,$token,$secret,$time,$resolution,$decisions,&$report){
             if(!hash_equals(self::seal($db,self::current($db),$sha,$secret,$time),$token))throw new \DomainException('Workspace changed. Preview again.');$p=$this->plan($db,$c,$remote);
@@ -115,12 +127,12 @@ final class GitHubSync
             foreach($p['docs'] as $path=>$d){$row=$p['rows'][$path];$key=$d['key'];$entry=$db['pages'][$key];$next['pages'][$path]=['key'=>$key,'id'=>PageTree::id($key,$entry),'sha'=>$row['sha'],'base'=>$row['remote']];}
             foreach($p['hashes'] as $path=>$hash)if(!isset($p['docs'][$path]))$next['assets'][$path]=$hash;
             self::log($next,'sync',$actor,$sha.($remote['author']!==''?' · Git author: '.$remote['author']:'').' · '.count($p['docs']).' files · '.$resolution.' · '.count(array_filter($p['rows'],fn($r)=>$r['state']==='removed')).' removed sources retained locally');$db['github']=$next;
-        },'GitHub sync '.$sha);return $report;
+        },self::label($c).' sync '.$sha);return $report;
     }
     /** Persist only safe provider diagnostics after the controller reauthorizes the original connection. */
     public function failure(string $id,int $revision,string $actor,string $operation,string $message):void{
         $this->store->change(function(&$db)use($id,$revision,$actor,$operation,$message){$c=$db['github']??null;if(!$c||$c['id']!==$id||$c['revision']!==$revision)return;
-            if(!in_array($operation,['preview','apply','propose','rotate'],true)||strlen($message)>400||!preg_match('//u',$message)||preg_match('/[\x00-\x1f\x7f]/',$message))$message='GitHub operation failed.';
+            if(!in_array($operation,['preview','apply','propose','rotate'],true)||strlen($message)>400||!preg_match('//u',$message)||preg_match('/[\x00-\x1f\x7f]/',$message))$message='Git operation failed.';
             self::log($c,'error',$actor,$operation.' · '.$message);$c['revision']++;$db['github']=$c;
         });
     }
@@ -132,7 +144,7 @@ final class GitHubSync
     public static function exportBody(array $db,array $c,string $source,array $draft,string $key):string{
         $map=[];foreach($c['pages'] as $path=>$p)$map['/docs/'.$p['key']]=self::relative($source,$path);
         foreach($c['assets'] as $path=>$sha)foreach($db['media']??[] as $id=>$item)if($item['sha256']===$sha)$map['/media/'.$id]??=self::relative($source,$path);
-        foreach($draft['media']??[] as $id)if(!isset($map['/media/'.$id]))throw new \DomainException('A local attachment is not tracked in GitHub. Add it to the repository and sync before proposing this page.');
+        foreach($draft['media']??[] as $id)if(!isset($map['/media/'.$id]))throw new \DomainException('A local attachment is not tracked in the repository. Add it to the repository and sync before proposing this page.');
         $warnings=[];$body=MarkdownImport::rewrite($draft['body'],$source,$map,[],$warnings);$leaf=basename($key);$front="---\n";foreach(['title'=>$draft['title'],'section'=>$draft['section'],'slug'=>$leaf,'order'=>(string)$draft['order']] as $k=>$v){if(preg_match('/[\x00-\x1f\x7f]/',$v))throw new \DomainException('Document metadata cannot be exported safely.');$front.=$k.': '.json_encode($v,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n";}
         // README/index landing pages must not gain a redundant slug on reimport.
         $natural=MarkdownImport::document('', $source, 10)['path'];if($key===$c['book'].'/'.$c['version'].'/'.$natural)$front=preg_replace('/^slug:.*\n/m','',$front);
@@ -140,7 +152,7 @@ final class GitHubSync
     }
     public static function stateHash(array $db):string{return hash('sha256',json_encode($db,JSON_THROW_ON_ERROR));}
     public function propose(int $expected,string $actor,bool $includeNew=false,?string $expectedState=null):string{
-        $db=$this->store->read();$c=self::current($db);if($expectedState!==null&&!hash_equals(self::stateHash($db),$expectedState))throw new \DomainException('Workspace changed. Reload the proposal list.');if($c['revision']!==$expected||!$c['push']||$c['commit']==='')throw new \DomainException('Enable Pull Requests and synchronize first.');$changes=[];$export=$c;$tracked=[];
+        $db=$this->store->read();$c=self::current($db);if($expectedState!==null&&!hash_equals(self::stateHash($db),$expectedState))throw new \DomainException('Workspace changed. Reload the proposal list.');if($c['revision']!==$expected||!$c['push']||$c['commit']==='')throw new \DomainException('Enable change proposals and synchronize first.');$changes=[];$export=$c;$tracked=[];
         foreach($c['pages'] as $path=>$p){$key=self::byId($db,$p['id']);if($key!==$p['key'])throw new \DomainException('Tracked page moved or deleted. Resolve before proposing changes.');$tracked[$key]=true;}
         if($includeNew)foreach($db['pages'] as $key=>$e){if(PageTree::scope($key)!==$c['book'].'/'.$c['version']||isset($tracked[$key]))continue;$leaf=explode('/',$key,3)[2];$path=$leaf==='index'?'README.md':$leaf.'.md';ImportFiles::path($path);if(isset($export['pages'][$path])||isset($c['assets'][$path]))throw new \DomainException('New local page collides with a tracked repository path: '.$path);$export['pages'][$path]=['key'=>$key,'id'=>PageTree::id($key,$e),'base'=>''];}
         if(count($export['pages'])>ImportFiles::MAX_FILES)throw new \DomainException('Proposal exceeds source file limit.');
@@ -148,6 +160,6 @@ final class GitHubSync
         // No external write if a concurrent local mutation changed the snapshot before the proposal.
         $this->store->snapshot(function($current)use($db){if($current!==$db)throw new \DomainException('Workspace changed. Reload before proposing.');});
         try{$url=$this->client($c)->propose($c['repo'],$c['branch'],$c['commit'],$changes);}catch(GitHubRemoteException $e){$this->failure($c['id'],$c['revision'],$actor,'propose',$e->getMessage());throw $e;}
-        $this->store->change(function(&$db)use($c,$actor,$url){$next=self::current($db);if($next['id']!==$c['id']||$next['revision']!==$c['revision'])throw new \DomainException('Pull request created, but integration changed before recording it. Check GitHub.');self::log($next,'proposal',$actor,$url);$next['revision']++;$db['github']=$next;});return $url;
+        $this->store->change(function(&$db)use($c,$actor,$url){$next=self::current($db);if($next['id']!==$c['id']||$next['revision']!==$c['revision'])throw new \DomainException('Change proposal created, but integration changed before recording it. Check the remote repository.');self::log($next,'proposal',$actor,$url);$next['revision']++;$db['github']=$next;});return $url;
     }
 }

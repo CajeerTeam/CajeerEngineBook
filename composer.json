@@ -18,6 +18,9 @@
     },
     "scripts": {
         "test": [
+            "@php tests/gitlab.php",
+            "python3 tests/gitlab-https.py",
+            "python3 tests/github-http.py --gitlab",
             "@php tests/github.php",
             "python3 tests/github-http.py",
             "@php tests/import.php",

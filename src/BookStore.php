@@ -25,7 +25,7 @@ final class BookStore {
         if(file_exists($file)&&!is_file($file))throw new \RuntimeException('Invalid store file');
         if(!is_file($file)&&(!$this->seed||glob(Files::path($this->dir,'media').'/*.blob')))throw new \RuntimeException('Workspace content store missing; restore its backup.');
         $db=is_file($file)?Files::read($file):require dirname(__DIR__).'/data/seed.php';
-        if(!in_array($db['schema']??null,[1,2],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
+        if(!in_array($db['schema']??null,[1,2,3],true)||!is_array($db['pages']??null)||!is_array($db['media']??[]))throw new \RuntimeException('Unsupported or corrupt book store');
         try{self::validatePages($db);}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid persisted page tree',0,$e);}
         self::books($db);
         if(isset($db['history']))RevisionHistory::validate($db);

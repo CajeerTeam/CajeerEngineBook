@@ -3,9 +3,11 @@ declare(strict_types=1);
 namespace CajeerBook;
 
 require_once __DIR__.'/GitHubRemoteException.php';
+require_once __DIR__.'/GitProvider.php';
+require_once __DIR__.'/GitBlobImport.php';
 
 /** GitHub REST Git Database API. Only the fixed HTTPS API origin is contacted. */
-final class GitHubClient
+final class GitHubClient implements GitProvider
 {
     private float $deadline;
     private int $requests=0;
@@ -16,11 +18,11 @@ final class GitHubClient
     public static function branch(string $s):string{
         if(!preg_match('~\A[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}\z~D',$s)||str_contains($s,'..')||str_contains($s,'//')||str_ends_with($s,'/')||str_ends_with($s,'.'))throw new \InvalidArgumentException('Invalid Git branch.');foreach(explode('/',$s) as $p)if(str_starts_with($p,'.')||str_ends_with($p,'.lock'))throw new \InvalidArgumentException('Invalid Git branch.');return $s;
     }
-    public static function sha(mixed $s):string{if(!is_string($s)||!preg_match('/\A[a-f0-9]{40}\z/D',$s))throw new \DomainException('Invalid GitHub object identifier.');return $s;}
+    public static function sha(mixed $s):string{if(!is_string($s)||!preg_match('/\A[a-f0-9]{40}\z/D',$s))throw new \DomainException('Invalid Git object identifier.');return $s;}
     private function request(string $method,string $path,?array $payload=null,int $limit=4194304):array{
         if(++$this->requests>650||microtime(true)>$this->deadline)throw new GitHubRemoteException('GitHub sync time/request budget exceeded. Reduce the documentation directory.');
         if($this->transport!==null)return ($this->transport)($method,$path,$payload);
-        $headers="Accept: application/vnd.github+json\r\nUser-Agent: CajeerEngineBook/0.3.2\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+        $headers="Accept: application/vnd.github+json\r\nUser-Agent: CajeerEngineBook/0.3.3\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
         if($this->token!=='')$headers.='Authorization: Bearer '.$this->token."\r\n";
         if($payload!==null)$headers.="Content-Type: application/json\r\n";
         $ctx=stream_context_create(['http'=>['method'=>$method,'header'=>$headers,'content'=>$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'timeout'=>min(8,max(0.1,$this->deadline-microtime(true)))],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
@@ -47,25 +49,11 @@ final class GitHubClient
             ImportFiles::path($rel);$size=$e['size']??null;if(!is_int($size)||$size<0||$size>MediaStore::MAX_FILE||($total+=$size)>ImportFiles::MAX_TOTAL||count($entries)>=ImportFiles::MAX_FILES||isset($entries[$rel]))throw new \DomainException('GitHub documentation exceeds import limits.');
             $entries[$rel]=['sha'=>self::sha($e['sha']??null),'size'=>$size];
         }
-        $set=new ImportFiles();$tmp=tempnam(sys_get_temp_dir(),'book-git-');if($tmp===false)throw new \RuntimeException('Cannot stage GitHub blob.');chmod($tmp,0600);
-        $lock=null;$downloaded=0;$cached=0;
-        try{
-            if($cacheDir!==null){
-                \CajeerEngine\Update\OperationFiles::dir($cacheDir);$lockPath=\CajeerEngine\Update\OperationFiles::path($cacheDir,'cache.lock');$lock=fopen($lockPath,'c+');if(!$lock||!flock($lock,LOCK_EX|LOCK_NB))throw new \DomainException('Another GitHub download is running. Retry shortly.');chmod($lockPath,0600);
-                $wanted=array_fill_keys(array_column($entries,'sha'),true);
-                foreach(new \DirectoryIterator($cacheDir) as $file){if($file->isDot()||$file->getFilename()==='cache.lock')continue;if(!$file->isLink()&&$file->isFile()&&preg_match('/\A\.tmp-[a-f0-9]{24}\z/D',$file->getFilename())){\CajeerEngine\Update\OperationFiles::remove($file->getPathname());continue;}if($file->isLink()||!$file->isFile()||!preg_match('/\A([a-f0-9]{40})\.blob\z/D',$file->getFilename(),$m))throw new \RuntimeException('Unexpected GitHub cache entry.');if(!isset($wanted[$m[1]]))\CajeerEngine\Update\OperationFiles::remove($file->getPathname());}
-            }
-            foreach($entries as $path=>$e){
-                $cache=$cacheDir===null?null:\CajeerEngine\Update\OperationFiles::path($cacheDir,$e['sha'].'.blob');$bytes=false;
-                if($cache!==null&&is_file($cache)&&filesize($cache)===$e['size']){$candidate=file_get_contents($cache);if(is_string($candidate)&&sha1('blob '.strlen($candidate)."\0".$candidate)===$e['sha']){$bytes=$candidate;$cached++;}}
-                if($bytes===false){$blob=$this->request('GET',$base.'/git/blobs/'.$e['sha'],null,30*1024*1024);$content=$blob['content']??null;$bytes=is_string($content)&&($blob['encoding']??'')==='base64'?base64_decode($content,true):false;
-                    if($bytes===false||strlen($bytes)!==$e['size']||sha1('blob '.strlen($bytes)."\0".$bytes)!==$e['sha'])throw new \DomainException('GitHub blob integrity check failed.');
-                    if($cache!==null)\CajeerEngine\Update\OperationFiles::write($cache,$bytes);$downloaded++;
-                }
-                if(file_put_contents($tmp,$bytes)!==strlen($bytes))throw new \RuntimeException('Cannot stage GitHub blob.');clearstatcache(true,$tmp);$set->add($path,$tmp);unset($bytes,$candidate,$blob);
-            }
-        }finally{if(is_resource($lock))fclose($lock);@unlink($tmp);}
-        return ['files'=>$set,'entries'=>$entries,'ignored'=>$ignored,'tree'=>$tree,'downloaded'=>$downloaded,'cached'=>$cached,'author'=>$author];
+        return GitBlobImport::stage($entries,$cacheDir,function($sha)use($base){
+            $blob=$this->request('GET',$base.'/git/blobs/'.$sha,null,30*1024*1024);
+            $content=$blob['content']??null;
+            return is_string($content)&&($blob['encoding']??'')==='base64'?base64_decode($content,true):false;
+        })+['ignored'=>$ignored,'tree'=>$tree,'author'=>$author];
     }
     /** Create a new branch and PR; never write the configured base branch. */
     public function propose(string $repo,string $branch,string $commit,array $changes):string{

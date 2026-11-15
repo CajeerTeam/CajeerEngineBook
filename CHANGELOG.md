@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 — GitLab Sync
+
+- Unified Git Sync in Studio (`/studio/git`, legacy `/studio/github` retained), with GitHub and GitLab provider selection and the same transactional import, conflicts, rename, history, media and review workflow.
+- GitLab.com and explicitly enabled self-managed HTTPS origins; nested project paths, stable numeric project identity, immutable commit tree pagination and verified raw blobs with incremental cache.
+- GitLab commit batches and Merge Requests on new branches, exact parent and create/update checks, explicit draft disclosure, no direct base writes or automatic merge.
+- AES-256-GCM credentials bound to GitLab origin, project and connection; existing GitHub encrypted connections unchanged. GitLab-enabled stores use schema 3, compatible with review and TAR restore, to prevent unsafe downgrade.
+- Real PHP/RBAC integration tests, local TLS transport tests and opt-in live GitLab read acceptance.
+
 ## 0.3.2 — GitHub Sync
 
 - Add scoped Studio connection to public/private GitHub repositories using branch, documentation directory, book/version, optional encrypted token and explicit PR permission. Connect/rotate/disconnect are Admin/Owner operations.

@@ -79,7 +79,7 @@ final class ReviewWorkflow
         self::assertActor($actor);self::requireRole($users,$actor,'ownership');$p=self::policy($db);if($p['revision']!==$rev)throw new \DomainException('Review policy changed. Reload.');
         if($p['required']===$required)return;
         if($required&&count(array_filter($users,fn($u)=>Permissions::allows($u['role'],'edit')))<2)throw new \DomainException('Add another active author or reviewer before requiring review.');
-        $db['schema']=2;$db['review_policy']=['required'=>$required,'revision'=>$rev+1,'actor'=>self::actor($actor),'updated'=>gmdate('c')];self::refresh($db);
+        $db['schema']=max(2,$db['schema']??1);$db['review_policy']=['required'=>$required,'revision'=>$rev+1,'actor'=>self::actor($actor),'updated'=>gmdate('c')];self::refresh($db);
     }
     public static function authors(array $db,array $actor,string $kind,string $target):array{
         $authors=[$actor['id']];if($kind==='page'){$e=$db['pages'][$target]??null;if(!$e)throw new \InvalidArgumentException('Page not found.');$authors=array_merge($authors,self::contributors($db,$target,$e,false));if($e['published']===null)$authors=array_merge($authors,self::contributors($db,$target,$e,true));}
@@ -93,7 +93,7 @@ final class ReviewWorkflow
         else throw new \InvalidArgumentException('Unknown review target');
         if(in_array($reviewer,$authors,true)||!Permissions::allows(self::role($users,$reviewer),'publish'))throw new OrganizationAccessException('Choose an independent active Admin or Owner as reviewer.');
         foreach($db['reviews']??[] as $r)if($r['kind']===$kind&&$r['target']===$target&&in_array($r['status'],self::ACTIVE,true)&&self::fresh($db,$r))throw new \DomainException('An active review already exists for this target.');
-        $id=bin2hex(random_bytes(16));$now=gmdate('c');$db['schema']=2;
+        $id=bin2hex(random_bytes(16));$now=gmdate('c');$db['schema']=max(2,$db['schema']??1);
         $db['reviews'][$id]=['id'=>$id,'kind'=>$kind,'target'=>$target,'snapshot'=>$snapshot,'snapshot_hash'=>self::digest($snapshot),'fingerprint'=>self::fingerprint($db,$kind,$target),'tree_token'=>$kind==='tree'?$expected:null,'policy_revision'=>self::policy($db)['revision'],'requester'=>self::actor($actor),'reviewer'=>self::actor($users[$reviewer]),'authors'=>$authors,'status'=>'in_review','revision'=>1,'created'=>$now,'updated'=>$now,'messages'=>[['action'=>'submit','actor'=>self::actor($actor),'at'=>$now,'text'=>$note]],'approved_by'=>null];
         if(strlen(json_encode($db['reviews'],JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES))>self::MAX_BYTES-512*1024)throw new \DomainException('Review storage is nearly full. Remove closed reviews or export a backup.');
         return $id;
@@ -139,7 +139,7 @@ final class ReviewWorkflow
         $p=self::policy($db);if(!is_array($p)||!is_bool($p['required']??null)||!is_int($p['revision']??null)||$p['revision']<1)throw new \InvalidArgumentException('Invalid review policy');
         if(isset($p['actor']))self::assertActor($p['actor']);
         $all=$db['reviews']??[];if(!is_array($all)||count($all)>self::MAX_REQUESTS||strlen(json_encode($all,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES))>self::MAX_BYTES)throw new \DomainException('Review quota reached. Remove closed reviews or export a backup.');
-        if((isset($db['review_policy'])||$all)&&($db['schema']??null)!==2)throw new \InvalidArgumentException('Review metadata requires store schema 2');
+        if((isset($db['review_policy'])||$all)&&!in_array($db['schema']??null,[2,3],true))throw new \InvalidArgumentException('Review metadata requires store schema 2 or 3');
         foreach($db['pages'] as $e)foreach(['review_authors','review_tree_authors'] as $f)if(array_key_exists($f,$e)){if(!is_array($e[$f])||!array_is_list($e[$f])||count($e[$f])>500)throw new \InvalidArgumentException('Invalid draft contributors');foreach($e[$f] as $a)if(!self::hex($a))throw new \InvalidArgumentException('Invalid draft contributor');}
         foreach($all as $id=>$r){
             if(!self::hex($id)||!is_array($r)||($r['id']??null)!==$id||!in_array($r['kind']??null,['page','tree'],true)||!is_string($r['target']??null)||!is_array($r['snapshot']??null)||!self::hex($r['snapshot_hash']??null,64)||!hash_equals($r['snapshot_hash'],self::digest($r['snapshot']))||!self::hex($r['fingerprint']??null,64)||!in_array($r['status']??null,self::STATES,true)||!is_int($r['revision']??null)||$r['revision']<1||!is_int($r['policy_revision']??null)||$r['policy_revision']<1||$r['policy_revision']>$p['revision']||!is_array($r['authors']??null)||!array_is_list($r['authors'])||count($r['authors'])<1||count($r['authors'])>501||!is_array($r['messages']??null)||!array_is_list($r['messages'])||count($r['messages'])<1||count($r['messages'])>self::MAX_MESSAGES)throw new \InvalidArgumentException('Invalid review request');

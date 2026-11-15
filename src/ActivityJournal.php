@@ -62,7 +62,7 @@ final class ActivityJournal
             elseif($oldGit!==null&&$newGit===null)self::record($db,$actor,'git.disconnect',$oldGit['repo'],$oldGit['id']);
             elseif($oldGit!==null&&$newGit!==null){
                 if($oldGit['credential']!==$newGit['credential']||$oldGit['push']!==$newGit['push'])self::record($db,$actor,'git.rotate',$newGit['repo'],$newGit['id']);
-                if($oldGit['runs']!==$newGit['runs']){$last=end($newGit['runs']);if(is_array($last))self::record($db,$actor,match($last['type']){'proposal'=>'git.proposal','error'=>'git.error',default=>'git.sync'},$newGit['repo'],$newGit['id'],'','',[],match($last['type']){'sync'=>substr($newGit['commit'],0,40),'proposal'=>'Pull request created',default=>'GitHub request failed'});}
+                if($oldGit['runs']!==$newGit['runs']){$last=end($newGit['runs']);if(is_array($last))self::record($db,$actor,match($last['type']){'proposal'=>'git.proposal','error'=>'git.error',default=>'git.sync'},$newGit['repo'],$newGit['id'],'','',[],match($last['type']){'sync'=>substr($newGit['commit'],0,40),'proposal'=>'Git proposal created',default=>'Git request failed'});}
             }
         }
         self::trim($db,BookStore::MAX_DB_BYTES,true);

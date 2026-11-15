@@ -6,6 +6,7 @@ services:
     environment:
       BOOK_ADMIN_HASH: ${BOOK_ADMIN_HASH:-}
       BOOK_GITHUB_KEY: ${BOOK_GITHUB_KEY:-}
+      BOOK_GITLAB_ORIGINS: ${BOOK_GITLAB_ORIGINS:-}
       BOOK_SECURE_COOKIE: ${BOOK_SECURE_COOKIE:-0}
     volumes:
       - book-data:/var/lib/cajeerbook
