@@ -43,3 +43,15 @@ jobs:
           id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
           digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
           python3 bin/ci.py publish "$id" "$digest"
+      - name: Export published static artifact (public sites only)
+        if: ${{ vars.BOOK_EXPORT_STATIC == '1' }}
+        run: |
+          id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
+          digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
+          python3 bin/ci.py export "$id" "$digest" site.zip
+      - uses: actions/upload-artifact@v4
+        if: ${{ vars.BOOK_EXPORT_STATIC == '1' }}
+        with:
+          name: documentation-static
+          path: site.zip
+          if-no-files-found: error

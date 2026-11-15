@@ -26,3 +26,17 @@ publish_docs:
     - id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
     - digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
     - python3 bin/ci.py publish "$id" "$digest"
+export_static:
+  stage: deploy
+  needs: [build_docs, publish_docs]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $BOOK_EXPORT_STATIC == "1"'
+  environment: documentation-production
+  script:
+    - export BOOK_CI_TOKEN="$BOOK_CI_PUBLISH_TOKEN"
+    - id=$(python3 -c 'import json; print(json.load(open("build.json"))["id"])')
+    - digest=$(python3 -c 'import json; print(json.load(open("build.json"))["digest"])')
+    - python3 bin/ci.py export "$id" "$digest" site.zip
+  artifacts:
+    paths: [site.zip]
+    expire_in: 7 days

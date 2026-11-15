@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 $root=dirname(__DIR__);$full=!in_array('--policy-only',$argv,true);if($full)require $root.'/bootstrap.php';else spl_autoload_register(function($class)use($root){foreach(['CajeerEngine\\'=>'core/','CajeerBook\\'=>'src/'] as $prefix=>$dir)if(str_starts_with($class,$prefix)){$f=$root.'/'.$dir.str_replace('\\','/',substr($class,strlen($prefix))).'.php';if(is_file($f))require_once $f;return;}});
-use CajeerBook\{BookStore,MediaStore,CiPublishing as CI,CiController,ReviewWorkflow,AutomationQueue,MediaBackup,OrganizationAccessException,ImportFiles};
+use CajeerBook\{BookStore,MediaStore,CiPublishing as CI,CiController,ReviewWorkflow,AutomationQueue,MediaBackup,OrganizationAccessException,ImportFiles,ReleaseArtifact,Visibility};
 function ok(bool $test,string $label):void{if(!$test)throw new RuntimeException($label);echo "PASS $label\n";}
 function fail(callable $fn,string $class,string $label):void{try{$fn();}catch(Throwable $e){if($e instanceof $class){ok(true,$label);return;}throw $e;}throw new RuntimeException('Expected failure: '.$label);}
 function cleanCi(string $p):void{if(!is_dir($p))return;foreach(new DirectoryIterator($p) as $f){if($f->isDot())continue;if($f->isDir()&&!$f->isLink())cleanCi($f->getPathname());else unlink($f->getPathname());}rmdir($p);}
@@ -35,6 +35,23 @@ try{
     fail(fn()=>CiController::execute($store,$media,[$owner['id']=>$owner],$token,['action'=>'publish','id'=>$id,'digest'=>$digest]),DomainException::class,'reviewer revocation blocks deployment');
     fail(fn()=>$call($token,['action'=>'publish','id'=>$id,'digest'=>str_repeat('0',64)]),DomainException::class,'wrong digest denied');
     $published=$call($token,['action'=>'publish','id'=>$id,'digest'=>$digest]);$db=$store->read();ok($published['status']==='published'&&count(BookStore::published($db))===2&&count($db['history'])===4,'atomic real publication of both pages plus history');
+    $public=Visibility::pages($db,'public','none');
+    $manifest=ReleaseArtifact::check($db,$public,$scope,$id,$digest);ok($manifest['build']===$id&&$manifest['pages']===2,'release export binds exact public snapshot');
+    fail(fn()=>ReleaseArtifact::check($db,$public,'other/1',$id,$digest),OrganizationAccessException::class,'release export rejects foreign scope');
+    fail(fn()=>ReleaseArtifact::check($db,$public,$scope,$id,str_repeat('0',64)),DomainException::class,'release export rejects wrong digest');
+    $bad=$db;$bad['pages'][$scope.'/next']['draft']['body']='Unpublished change';ok(ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest)===$manifest,'draft edits do not affect release artifact');
+    $bad['pages'][$scope.'/next']['published']['body']='Changed publication';fail(fn()=>ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest),DomainException::class,'changed published content rejected');
+    $bad=$db;$bad['pages'][$scope.'/next']['published']=null;fail(fn()=>ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest),DomainException::class,'unpublished page rejects release artifact');
+    $bad=$db;$bad['pages'][$scope.'/next']['published_key']=$scope.'/moved';fail(fn()=>ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest),DomainException::class,'changed public path rejects release artifact');
+    $bad=$db;$bad['pages'][$scope.'/extra']=$bad['pages'][$scope.'/next'];$bad['pages'][$scope.'/extra']['id']=str_repeat('e',32);$bad['pages'][$scope.'/extra']['published_key']=$scope.'/extra';fail(fn()=>ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest),DomainException::class,'additional published page rejects release artifact');
+    $bad=$db;$bad['books']=BookStore::books($bad);$bad['books']['guide']['visibility']='private';fail(fn()=>ReleaseArtifact::check($bad,Visibility::pages($bad,'public','none'),$scope,$id,$digest),DomainException::class,'private book rejects release artifact');
+    $bad=$db;$bad['media'][$mid]['sha256']=str_repeat('0',64);fail(fn()=>ReleaseArtifact::check($bad,$public,$scope,$id,$digest),DomainException::class,'changed media digest rejects release artifact');
+    fail(fn()=>ReleaseArtifact::create($root,$store,$media,$admins,$readToken,'public',$id,$digest,$dir.'/denied.zip'),OrganizationAccessException::class,'build token cannot export release');
+    fail(fn()=>ReleaseArtifact::create($root,$store,$media,$admins,$token,'private',$id,$digest,$dir.'/denied.zip'),OrganizationAccessException::class,'private workspace cannot export CI artifact');
+    if($full){
+        $archive=$dir.'/release.zip';ReleaseArtifact::create($root,$store,$media,$admins,$token,'public',$id,$digest,$archive);
+        $z=new ZipArchive();ok($z->open($archive)===true,'real release ZIP opens');ok(json_decode($z->getFromName('release.json'),true)===$manifest&&$z->getFromName('media/'.$mid.'.txt')==='Real CI binary content','release manifest and exact original media');$z->close();
+    }
     ok(array_column(array_column(array_values($db['automation']['jobs']),'payload'),'event')===['build.ready','build.approved','build.published'],'transactional build webhooks emitted exactly once');
     ok(in_array($scope.':build',MediaStore::references($db,$mid),true),'bundle retains referenced media');
     fail(fn()=>$media->delete($mid,1),DomainException::class,'media retained by build cannot be deleted');

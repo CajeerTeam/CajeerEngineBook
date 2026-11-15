@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real HTTP integration; --policy-only uses prevalidated plain Markdown bundle fixtures."""
-import base64, importlib.util, json, os, re, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import base64, importlib.util, json, os, re, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile, hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('workspace_http',ROOT/'tests/workspaces-http.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
@@ -60,6 +60,34 @@ def exercise(base,data,env):
     result=api({'action':'publish','id':bid,'digest':digest},token=token);assert result['status']=='published' and len(json.loads(viewer.request(prefix+'/api/v1/pages',200)[1]))==2
     before=db()['pages'];assert api({'action':'publish','id':bid,'digest':digest},token=token)['status']=='published' and db()['pages']==before;outsider.request(prefix+'/api/v1/pages',404);guest.request(prefix+'/api/v1/pages',401)
     check('whole-version approval, independent reviewer, build-only token, idempotent atomic deployment and private Reader')
+    if FULL:
+        export_payload={'action':'export','id':bid,'digest':digest}
+        api(export_payload,403,token=token) # private workspace
+        post(owner,'/workspaces','visibility',id=wid,revision=str(identity()['workspaces'][wid]['revision']),visibility='public')
+        api(export_payload,401);api(export_payload,403,token=read_token);api(export_payload,403,token=foreign_token);api(export_payload,403,token=token,path=other+'/api/v1/ci')
+        api({**export_payload,'digest':'0'*64},409,token=token)
+        output=data.parent/'release.zip'
+        cmd=[sys.executable,'bin/ci.py','export',bid,digest,str(output)]
+        result=json.loads(subprocess.check_output(cmd,cwd=ROOT,env=cli_env,text=True))
+        assert hashlib.sha256(output.read_bytes()).hexdigest()==result['sha256'] and result['release']['build']==bid
+        with zipfile.ZipFile(output) as archive:
+            assert archive.testzip() is None and json.loads(archive.read('release.json'))['digest']==digest
+            assert b'Home' in archive.read('assets/search-index.js') and 'books.json' not in archive.namelist()
+            assert any(archive.read(n)==b'CI attachment' for n in archive.namelist() if n.startswith('media/'))
+            site=data.parent/'release-site';archive.extractall(site)
+        assert subprocess.run(cmd,cwd=ROOT,env=cli_env,capture_output=True).returncode==1
+        if '--browser' in sys.argv:
+            from playwright.sync_api import sync_playwright, expect
+            with sync_playwright() as p:
+                browser=p.chromium.launch();page=browser.new_page();page.context.set_offline(True)
+                page.goto((site/'index.html').as_uri());page.locator('form.search input').fill('Next');page.locator('form.search button').click()
+                expect(page.locator('[data-search-results] a').first).to_be_visible();page.locator('[data-search-results] a').first.click();expect(page.locator('main article')).to_be_visible();browser.close()
+        post(owner,prefix+'/studio/books','visibility',slug='guide',visibility='private',revision='1')
+        api(export_payload,409,token=token)
+        post(owner,prefix+'/studio/books','visibility',slug='guide',visibility='inherit',revision='2')
+        post(owner,'/workspaces','visibility',id=wid,revision=str(identity()['workspaces'][wid]['revision']),visibility='private')
+        check('CI release artifact: scope, bearer permissions, visibility, real ZIP, checksum, media and atomic client')
+
     if FULL:
         b2=make_build(token,'release-2');post(admin,route,'approve',200,id=b2['id'],digest=b2['digest']);post(editor,prefix+'/studio','save',book='guide',version='1',path='next',title='Changed',section='Guide',body='# Changed',order='10',revision=str(db()['pages']['guide/1/next']['revision']))
     else:

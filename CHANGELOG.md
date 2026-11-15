@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — Developer Documentation Stable
+
+- Connect CI publication to public static delivery: `ci.py export ID DIGEST NEW.zip` validates a retained published bundle against the current public snapshots and media under the export lock, with explicit release metadata in the archive.
+- Enforce scoped publish credentials, workspace/book visibility, current issuer authorization and exact build digest. Reject stale publications rather than exporting an unrelated snapshot; release the store and identity locks before HTTP streaming.
+- Verify the download length, SHA-256, ZIP entry safety and release identity before atomic no-overwrite installation; no partial artifacts on transfer errors. Add opt-in public static artifacts to example pipelines.
+- Readiness checks all required browser assets, including static export; handle malformed request targets and UTF-8 search input safely. CI bearer errors advertise authentication and vary by authorization.
+- Extend real PHP/HTTP/Chromium and Docker/Apache gates through CI publication to artifact delivery; add independent CLI transport/integrity failure tests. No schema migration.
+
 ## 0.3.9 — Static Export
 
 - Export published books and versions as portable ZIP HTML sites, including tree navigation, version switching, heading anchors, redirects and rich Markdown blocks.

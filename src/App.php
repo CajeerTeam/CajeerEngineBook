@@ -24,7 +24,7 @@ final class App {
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
         header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-        $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH)?:'/';$method=$_SERVER['REQUEST_METHOD']??'GET';
+        $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);if(!is_string($path)||!str_starts_with($path,'/')){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
         WorkspaceUrls::set('');
@@ -62,16 +62,41 @@ final class App {
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }
     private function ciApi(array $route):void{
-        header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');
+        header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');header('Vary: Authorization');
         if(strtolower(trim(explode(';',$_SERVER['CONTENT_TYPE']??'')[0]))!=='application/json'){http_response_code(415);$this->json(['error'=>'JSON required']);return;}
         $raw=file_get_contents('php://input',false,null,0,12*1024*1024+1);if(!is_string($raw)||strlen($raw)>12*1024*1024){http_response_code(413);$this->json(['error'=>'CI request too large']);return;}
-        $authorization=$_SERVER['HTTP_AUTHORIZATION']??'';if(!preg_match('/\ABearer (cbci_[a-f0-9]{32}\.[a-f0-9]{64})\z/D',$authorization,$m)){http_response_code(401);$this->json(['error'=>'CI bearer token required']);return;}
+        $authorization=$_SERVER['HTTP_AUTHORIZATION']??'';if(!preg_match('/\ABearer (cbci_[a-f0-9]{32}\.[a-f0-9]{64})\z/D',$authorization,$m)){http_response_code(401);header('WWW-Authenticate: Bearer');$this->json(['error'=>'CI bearer token required']);return;}
         try{$input=json_decode($raw,true,48,JSON_THROW_ON_ERROR);if(!is_array($input))throw new \InvalidArgumentException('Invalid CI request.');
+            if(($input['action']??null)==='export'){$this->ciExport($route,$m[1],$input);return;}
             $result=$this->identityStore->automationWorkspace($route[1]??'',$route[2]??'',function($w,$admins)use($input,$m){$dir=$w?Workspaces::directory($this->installationDir,$w):$this->installationDir;$store=new BookStore($dir,$w===null);return CiController::execute($store,new MediaStore($dir,$store),$admins,$m[1],$input);});
             if($result===null){http_response_code(404);$this->json(['error'=>'Workspace unavailable']);return;}$this->json($result);
         }catch(OrganizationAccessException $e){http_response_code(403);$this->json(['error'=>'CI authorization denied']);}
         catch(\JsonException|\InvalidArgumentException $e){http_response_code(422);$this->json(['error'=>$e->getMessage()]);}
         catch(\DomainException $e){http_response_code(409);$this->json(['error'=>$e->getMessage()]);}
+    }
+    /** Build under identity/store locks; stream the completed immutable artifact after releasing them. */
+    private function ciExport(array $route,string $credential,array $input):void {
+        $id=$input['id']??null;$digest=$input['digest']??null;
+        if(!is_string($id)||!preg_match('/\A[a-f0-9]{32}\z/D',$id)||!is_string($digest)||!preg_match('/\A[a-f0-9]{64}\z/D',$digest))throw new \InvalidArgumentException('Invalid release ID or digest.');
+        $temp=sys_get_temp_dir().'/.book-ci-export-'.bin2hex(random_bytes(16));
+        if(!mkdir($temp,0700))throw new \RuntimeException('Cannot allocate release export');
+        $target=$temp.'/site.zip';$abort=ignore_user_abort(true);
+        try{
+            $result=$this->identityStore->automationWorkspace($route[1]??'',$route[2]??'',function($w,$admins)use($credential,$id,$digest,$target){
+                $dir=$w?Workspaces::directory($this->installationDir,$w):$this->installationDir;
+                $store=new BookStore($dir,$w===null);$media=new MediaStore($dir,$store);
+                $visibility=$w?Visibility::workspace($w):'public';
+                WorkspaceUrls::set($w?Workspaces::prefix($w):'');
+                try{return ReleaseArtifact::create($this->root,$store,$media,$admins,$credential,$visibility,$id,$digest,$target);}
+                finally{WorkspaceUrls::set('');}
+            });
+            if($result===null){http_response_code(404);$this->json(['error'=>'Workspace unavailable']);return;}
+            $size=filesize($target);$hash=hash_file('sha256',$target);
+            if($size===false||$hash===false)throw new \RuntimeException('Cannot read release artifact');
+            header('Content-Type: application/zip');header('Content-Disposition: attachment; filename="cajeer-release-'.$id.'.zip"');
+            header('Content-Length: '.$size);header('X-Book-Artifact-SHA256: '.$hash);
+            readfile($target);
+        }finally{if(is_file($target))unlink($target);rmdir($temp);ignore_user_abort((bool)$abort);}
     }
     private function receiveWebhook(array $route):void{
         header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
@@ -209,7 +234,7 @@ final class App {
             }
             if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true]),$pages));return;}
             if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true]));return;}
-            if($path==='/search'||$path==='/api/v1/search'){$q=is_string($_GET['q']??null)?trim(substr($_GET['q'],0,200)):'';$hits=[];foreach($pages as $key=>$p){if($q!==''&&preg_match('/'.preg_quote($q,'/').'/iu',$p['title'].' '.$p['body']))$hits[]=['key'=>$key,'title'=>$p['title'],'url'=>self::url($key)];if(count($hits)>=50)break;}if($path==='/api/v1/search'){$this->json($hits);return;}$html='<div class="eyebrow">SEARCH</div><h1>Search documentation</h1><p>'.count($hits).' results</p>';foreach($hits as $hit)$html.='<div class="result">'.self::link($hit['url'],$hit['title']).'</div>';$this->page('Search',$html,$pages,'','',$q);return;}
+            if($path==='/search'||$path==='/api/v1/search'){$q=is_string($_GET['q']??null)?trim(mb_strcut(mb_scrub($_GET['q'],'UTF-8'),0,200,'UTF-8')):'';$hits=[];foreach($pages as $key=>$p){if($q!==''&&preg_match('/'.preg_quote($q,'/').'/iu',$p['title'].' '.$p['body']))$hits[]=['key'=>$key,'title'=>$p['title'],'url'=>self::url($key)];if(count($hits)>=50)break;}if($path==='/api/v1/search'){$this->json($hits);return;}$html='<div class="eyebrow">SEARCH</div><h1>Search documentation</h1><p>'.count($hits).' results</p>';foreach($hits as $hit)$html.='<div class="result">'.self::link($hit['url'],$hit['title']).'</div>';$this->page('Search',$html,$pages,'','',$q);return;}
             if($path==='/'){$books=BookStore::books($db);$html='<div class="eyebrow">CAJEERENGINE BOOK / DOCUMENTATION</div><h1>Documentation, on your terms.</h1><p class="lead">A self-hosted knowledge base for your products, APIs and teams.</p><div class="cards">';$seen=[];foreach($pages as $key=>$p){[$b,$v]=explode('/',$key);if(isset($seen["$b/$v"]))continue;$seen["$b/$v"]=true;$html.='<div class="tile"><div class="eyebrow">'.self::e($v).'</div><h2>'.self::e($books[$b]['title']??$b).'</h2>'.self::link(self::url($key),'Read documentation →').'</div>';}$this->page('Documentation',$html.'</div>',$pages);return;}
             if(str_starts_with($path,'/docs/')){$key=substr($path,6);if(isset($pages[$key])){$p=$pages[$key];$r=Markdown::render($p['body'],$key,false,false,$p['link_base']??null,Visibility::links($db,$pages));$toc='<div class="side-label">ON THIS PAGE</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);[$b,$v]=explode('/',$key);$prefix="$b/$v/";$siblings=array_filter($pages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);$keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');$versions=[];foreach($pages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;} $switch='<div class="versions">Versions: ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($pages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>'; $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article>'.$r['html'].'</article>'.$pager.'</div>';$this->page($p['title'],$html,$siblings,$key,$toc);return;}if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}}
             http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Not found','<h1>Page not found</h1><p>This page is missing or not published.</p>',$pages);

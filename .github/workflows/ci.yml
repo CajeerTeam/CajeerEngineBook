@@ -47,6 +47,7 @@ jobs:
       - run: python tests/interactive-browser.py
       - run: python tests/mermaid-browser.py
       - run: python tests/static-export-browser.py
+      - run: python tests/ci-http.py --browser
       - run: python tests/installation-http.py --browser
 
   docker-release:

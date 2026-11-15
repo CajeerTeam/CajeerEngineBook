@@ -23,6 +23,7 @@
             "python3 tests/static-export-http.py",
             "@php tests/ci-publishing.php",
             "python3 tests/ci-http.py",
+            "python3 tests/ci-artifact-client.py",
             "@php tests/automation.php",
             "python3 tests/automation-https.py",
             "python3 tests/automation-http.py",

@@ -13,6 +13,10 @@ final class ReleaseHealth
         foreach (['runtime.mjs','runtime.py','Runtime.php'] as $file) {
             if (!is_readable($root.'/resources/sdk/'.$file)) throw new \RuntimeException('SDK runtime files are missing');
         }
+        foreach (['book.css','book.js','studio-editor.js','media.js','studio-media.js','page-tree.js','organizations.js','markdown-import.js','api-playground.js','diagrams.js','diagram-frame.js','static.css','static-search.js'] as $file) {
+            $path=$root.'/public/assets/'.$file;
+            if (!is_file($path)||!is_readable($path)||filesize($path)===0) throw new \RuntimeException('Required browser asset missing: '.$file);
+        }
         $assets=$root.'/public/assets/mermaid';
         foreach (['VERSION','mermaid.min.js','LICENSE.txt'] as $file) {
             if (!is_file($assets.'/'.$file) || !is_readable($assets.'/'.$file)) throw new \RuntimeException('Local Mermaid assets are missing');

@@ -44,7 +44,7 @@ final class StaticExport
     }
 
     /** Publish atomically to a new ZIP; caller must choose an authorized scope/visibility. */
-    public function create(string $target,string $visibility,string $scope='',bool $includePrivate=false):array
+    public function create(string $target,string $visibility,string $scope='',bool $includePrivate=false,?callable $releaseGuard=null):array
     {
         if(!in_array($visibility,Visibility::WORKSPACE,true)||($scope!==''&&!preg_match('~\A[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,63}\z~D',$scope)))throw new \InvalidArgumentException('Invalid export scope');
         if(!str_ends_with($target,'.zip')||file_exists($target)||is_link($target)||!is_dir(dirname($target))||is_link(dirname($target)))throw new \InvalidArgumentException('Export destination must be a new .zip file in an existing directory');
@@ -52,11 +52,12 @@ final class StaticExport
         $archive=$stage.'/site.zip';$zip=new \ZipArchive();$opened=false;
         try{
             if($zip->open($archive,\ZipArchive::CREATE|\ZipArchive::EXCL)!==true)throw new \RuntimeException('Cannot create static ZIP');$opened=true;
-            $result=$this->store->snapshot(function(array $db)use($zip,$stage,$scope,$visibility,$includePrivate,&$opened){
+            $result=$this->store->snapshot(function(array $db)use($zip,$stage,$scope,$visibility,$includePrivate,$releaseGuard,&$opened){
                 $pages=Visibility::pages($db,$visibility,$includePrivate?'owner':'none');
                 if($scope!=='')$pages=array_filter($pages,static fn($k)=>PageTree::scope($k)===$scope,ARRAY_FILTER_USE_KEY);
+                $release=$releaseGuard!==null?$releaseGuard($db,$pages):null;
                 if(!$pages)throw new \DomainException('No published pages in the selected scope and visibility.');
-                $result=$this->build($zip,$stage,$db,$pages,$includePrivate);
+                $result=$this->build($zip,$stage,$db,$pages,$includePrivate,$release);
                 // ZipArchive reads addFile sources only at close; keep snapshot lock until then.
                 $ok=$zip->close();$opened=false;if(!$ok)throw new \RuntimeException('Cannot finalize static ZIP');
                 return $result;
@@ -81,7 +82,7 @@ final class StaticExport
         }finally{self::removeStage($dir);}
     }
 
-    private function build(\ZipArchive $zip,string $stage,array $db,array $pages,bool $includePrivate):array
+    private function build(\ZipArchive $zip,string $stage,array $db,array $pages,bool $includePrivate,?array $release=null):array
     {
         $bytes=0;$serial=0;$entries=[];
         $addFile=static function(string $name,string $file)use($zip,&$entries):void{
@@ -164,6 +165,7 @@ final class StaticExport
             if($library===false||$frame===false)throw new \RuntimeException('Cannot read Mermaid runtime');
             $write('assets/diagram-frame.html',self::diagramFrame($library,$frame));$addFile('assets/mermaid-LICENSE.txt',$mermaid.'LICENSE.txt');
         }
+        if($release!==null)$write('release.json',json_encode($release,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");
         $write('README.txt',"CajeerEngine Book static site\n\nExtract every file and open index.html, or deploy the directory to a static HTTP host.\nNo server or CDN is required. JavaScript enables offline search, tabs and Mermaid.\nOnly published snapshots and referenced local media are included.\n".($includePrivate?"WARNING: This export can contain private documentation. Keep it in a protected location.\n":"Public published content only.\n")."External images and unavailable internal links are omitted; external links still require a network.\nPages: ".count($pages)."\nMedia: ".count($mediaPaths)."\nOmitted link/image references: $omitted\n");
         return ['pages'=>count($pages),'media'=>count($mediaPaths),'redirects'=>$redirects,'omitted'=>$omitted];
     }

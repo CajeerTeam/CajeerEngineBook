@@ -1,6 +1,24 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.0 — Developer Documentation Stable
+
+The developer documentation release path connects Markdown/Git import, checked CI builds, independent review, atomic publication and standalone static delivery. A public CI release can now be exported as a ZIP with `release.json` identifying its exact build, digest, scope, commit and publication timestamp. The server checks the current published page identities, paths, snapshots and referenced media against the retained published bundle under the same store snapshot lock as ZIP generation. New drafts do not change the artifact; changed publication, changed public tree, missing or corrupt media, or a removed build prevent export. The current renderer, assets, link aliases and public redirects are used, so a repeated export need not have identical ZIP bytes. The build digest identifies the checked bundle, not the ZIP.
+
+```sh
+# After publishing the exact approved bundle, with BOOK_CI_URL and BOOK_CI_TOKEN set:
+python3 bin/ci.py export "$id" "$digest" site.zip
+```
+
+The command uses the existing POST CI endpoint (`{"action":"export","id":"...","digest":"..."}`). A publish-capable token scoped to that book/version is required; build-only tokens, expired/revoked tokens and tokens whose issuer lost access are denied. Only public workspaces and public-capable books can be exported by CI. Studio's explicitly confirmed private export remains separate. The ZIP response uses `application/zip`, `Cache-Control: private, no-store`, and `X-Book-Artifact-SHA256`. The client verifies content length, SHA-256, archive paths and release identity, then installs the ZIP without overwriting any existing file; interrupted or invalid responses leave no partial file. The hash is a transfer-integrity check over HTTPS, not a digital signature. A 409 indicates the requested publication no longer matches; rebuild/review/publish instead of silently exporting a different release. A 403 indicates authorization failure. Do not publish private artifacts to public hosting. The example GitHub/GitLab pipelines opt into static artifact delivery with `BOOK_EXPORT_STATIC=1` (public content only).
+
+### Release operation
+
+- Existing Schema 6 data remains compatible; back up the installation with `php bin/installation.php backup /safe/new-backup-directory` before upgrading, and retain the 0.3.9 release and its backup for rollback.
+- Install locked Composer dependencies, `sh bin/install-mermaid.sh`, and required PHP extensions. `/health/ready` checks required browser/SDK assets and store readiness; `/health/live` is only a process liveness probe. Readiness does not substitute for the full test suite.
+- `composer test` runs server, HTTP and CLI integration checks. CI also runs the real Chromium reader/editor/export suites and a Docker/Apache release gate, including the CI artifact path and restart persistence. Use a disposable data directory and test credentials. The local release gate is `python3 tests/release-http.py`; set `BOOK_TEST_URL` and `BOOK_TEST_PASSWORD` only for a disposable deployment.
+- Production: terminate HTTPS at a trusted reverse proxy, set `BOOK_SECURE_COOKIE=1`, use a private persistent `BOOK_DATA_DIR`, keep Composer/Mermaid assets installed, and configure scoped integration credentials and origins. Never expose the project root as the web document root; serve `public/` only. Run the automation worker when using Git webhooks.
 
 ## 0.3.9 — Static Export
 
