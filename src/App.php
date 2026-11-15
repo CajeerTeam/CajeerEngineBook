@@ -5,8 +5,8 @@ use CajeerEngine\Template\{CajeerTemplateEngine,TemplateSandbox};
 use CajeerEngine\Runtime\ServiceContainer;
 final class App {
     private BookStore $store; private MediaStore $media; private MediaController $mediaController; private CajeerTemplateEngine $view;
-    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore;
-    public function __construct(private readonly string $root){
+    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $githubPrepared=null; private ?string $githubError=null; private ?array $githubFailure=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore;
+    public function __construct(private readonly string $root,private readonly ?\Closure $githubClientFactory=null){
         $this->installationDir=$this->dataDir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
         $c=new ServiceContainer();$c->set('store',fn()=>new BookStore($this->dataDir));$this->store=$c->get('store');
         $this->identityStore=new IdentityStore($this->dataDir);$this->auth=new AuthController($this->identityStore);
@@ -27,6 +27,7 @@ final class App {
         $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH)?:'/';$method=$_SERVER['REQUEST_METHOD']??'GET';
         WorkspaceUrls::set('');
         try{
+            if($method==='POST'&&in_array($_POST['action']??null,['preview','apply'],true)&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/github\z~D',$path,$git)){$this->githubPull($git);return;}
             if(str_starts_with($path,'/w/')){
                 if(!preg_match('~\A/w/([a-f0-9]{32})/([a-f0-9]{32})(/.*)?\z~D',$path,$m)){http_response_code(404);return;}
                 $inner=$m[3]??'/';
@@ -53,6 +54,33 @@ final class App {
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             });
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+    }
+    /** Two-phase pull: capture authorization, fetch immutable Git data outside the identity lock,
+     * then reauthorize and apply under the same lock as all Studio mutations. */
+    private function githubPull(array $route):void{
+        $action=$_POST['action'];$str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';
+        $scoped=isset($route[1])&&$route[1]!=='';
+        $with=function(callable $fn)use($route,$scoped){
+            if($scoped)return $this->identityStore->withWorkspace($this->auth->token(),$route[1],$route[2],function($ctx,$w)use($fn){
+                if(!$w){$this->unavailable('/studio/github',$ctx,true);return null;}
+                $this->workspace=$w;$this->scopedIdentity=$ctx;$this->studioRole=$w['role'];$this->readerVisibility=Visibility::workspace($w);WorkspaceUrls::set(Workspaces::prefix($w));
+                $this->dataDir=Workspaces::directory($this->installationDir,$w);$this->store=new BookStore($this->dataDir,false);$this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);return $fn();
+            });
+            return $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($fn){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();return $fn();});
+        };
+        try{
+            $capture=$with(function()use($action,$str){
+                if(!$this->scopedIdentity||!Permissions::studio($this->studioRole,'/studio/github','POST',$action)||!hash_equals($this->scopedIdentity['session']['csrf'],$str('csrf'))){$this->studio('/studio/github','POST');return null;}
+                $csrf=$this->scopedIdentity['session']['csrf'];return ['user'=>$this->scopedIdentity['user']['id'],'db'=>$this->store->read(),'secret'=>MarkdownImport::previewSecret($this->installationDir,$csrf),'dir'=>$this->dataDir,'prefix'=>WorkspaceUrls::prefix()];
+            });
+            if($capture===null)return;
+            try{$sync=new GitHubSync($this->store,new MarkdownImport($this->store,$this->media),$this->githubClientFactory,$capture['dir'].'/github-cache');$this->githubPrepared=$sync->download($capture['db'],$capture['secret'],$action==='apply'?$str('preview_token'):null,$str('commit'),$str('resolution'));}
+            catch(\InvalidArgumentException|\DomainException $e){$this->githubError=$e->getMessage();if($e instanceof GitHubRemoteException&&isset($capture['db']['github']))$this->githubFailure=$capture['db']['github'];}
+            $with(function()use($capture){
+                if($this->scopedIdentity&&$this->scopedIdentity['user']['id']!==$capture['user']){$this->unavailable('/studio/github',null,true);return;}
+                $this->studio('/studio/github','POST');
+            });
+        }finally{WorkspaceUrls::set('');$this->githubPrepared=null;$this->githubError=null;$this->githubFailure=null;}
     }
     private function useLegacyStore():void{
         $this->store=new BookStore($this->installationDir,false);$this->media=new MediaStore($this->installationDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
@@ -113,6 +141,19 @@ final class App {
             if($path==='/studio/team'){
                 try{$id=is_string($_POST['id']??null)?$_POST['id']:'';$uid=$identity['user']['id'];$this->store->change(function(&$db)use($id,$uid){ActivityJournal::mark($db,$uid,$id,$db['activity']??[]);});header('Location: '.WorkspaceUrls::url('/studio/team'),true,303);}catch(\InvalidArgumentException $e){http_response_code(422);$this->page('Notification not found','<h1>Notification not found</h1><a href="'.WorkspaceUrls::url('/studio/team').'">Return to Team dashboard</a>');}return;
             }
+            if($path==='/studio/github'){
+                $str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';$sync=new GitHubSync($this->store,new MarkdownImport($this->store,$this->media),$this->githubClientFactory,$this->dataDir.'/github-cache');$preview=null;$notice='';
+                try{$action=$str('action');$actor=$identity['user']['username'];if($this->githubError!==null){if($this->githubFailure!==null)$sync->failure($this->githubFailure['id'],$this->githubFailure['revision'],$actor,$action,$this->githubError);throw new \DomainException($this->githubError);}$revision=(int)$str('revision');
+                    if($action==='configure'){$fields=[];foreach(['repo','branch','root','book','version','token','push'] as $k)$fields[$k]=$str($k);$sync->configure($fields);$notice='Repository connected.';}
+                    elseif($action==='rotate'){$sync->rotate($str('token'),$revision,$str('push')==='1');$notice='Credentials replaced.';}
+                    elseif($action==='disconnect'){if($str('confirm')!=='1')throw new \InvalidArgumentException('Confirm disconnect.');$sync->disconnect($revision);$notice='Repository disconnected; documents retained.';}
+                    elseif($action==='preview'){$preview=$sync->preview(MarkdownImport::previewSecret($this->installationDir,$csrf),$this->githubPrepared);}
+                    elseif($action==='apply'){$rows=$sync->apply(MarkdownImport::previewSecret($this->installationDir,$csrf),$str('preview_token'),$str('commit'),$str('resolution'),$actor,$this->githubPrepared,is_array($_POST['decision']??null)?$_POST['decision']:[]);$notice='Sync applied: '.count($rows).' source records processed as drafts.';}
+                    elseif($action==='propose'){if($str('confirm')!=='1')throw new \InvalidArgumentException('Confirm sending drafts to GitHub.');$notice='Pull Request created: '.$sync->propose($revision,$actor,$str('include_new')==='1',$str('state'));}
+                    else throw new \InvalidArgumentException('Unknown GitHub action.');
+                }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$notice=$e->getMessage();}
+                $this->page('GitHub Sync',GitHubView::render($this->store->read(),$csrf,$admin,$preview,$notice));return;
+            }
             if($path==='/studio/import'){
                 try{$str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';$upload=$_FILES['files']??[];
                     if(!preg_match('/\A[1-9][0-9]{0,2}\z/D',$str('count'))||!is_array($upload['name']??null)||count($upload['name'])!==(int)$str('count'))throw new \InvalidArgumentException('Upload count mismatch; check server upload limits');
@@ -171,6 +212,7 @@ final class App {
             }
             if($action==='delete'||$action==='unpublish'){if(!preg_match('/\A[1-9][0-9]{0,17}\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision');$this->store->remove($str('key'),(int)$str('revision'),$action==='unpublish');}elseif($action==='copy'){$this->store->copyVersion($str('book'),$str('from'),$str('to'));}else throw new \InvalidArgumentException('Unknown action');header('Location: '.WorkspaceUrls::url('/studio'),true,303);return;
         }
+        if($path==='/studio/github'){$this->page('GitHub Sync',GitHubView::render($this->store->read(),$csrf,$admin));return;}
         if($path==='/studio/import'){$this->page('Import Markdown',ImportView::render($this->store->read(),$csrf));return;}
         if($path==='/studio/team'){$this->page('Team dashboard',TeamView::workspace($this->store->read(),$identity,$this->studioRole,$_GET));return;}
         if($path==='/studio/reviews'){$this->page('Reviews',ReviewView::render($this->store->read(),$csrf,$identity['user'],$identity['review_users']??[],$_GET));return;}
@@ -186,7 +228,7 @@ final class App {
         if(!$entry&&is_string($_GET['book']??null)&&isset(BookStore::books($db)[$_GET['book']]))$parts[0]=$_GET['book'];
         if(!$entry&&is_string($_GET['new_under']??null))$parts=PageTreeView::newUnder($db,$_GET['new_under'])??$parts;
         $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::e($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
-        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/import','Import Markdown').self::link('/studio/team','Team dashboard').self::link('/studio/books','Books').($admin?self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media','Media library').($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree','Page tree').self::link('/studio/history','Revision history').self::link('/studio/reviews','Reviews').'</div>'.PageTreeView::list($db,$edit).'<p>Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>Revision note (optional, manual save/publish)<input name="note" maxlength="500" placeholder="What changed?"></label><div class="actions"><button name="action" value="save">Save draft</button>'.($directPublish?'<button class="primary" name="action" value="publish">Publish</button>':'').'</div></form>';
+        $html='<div class="eyebrow">AUTHORING / STUDIO</div><h1>Documentation Studio</h1><p>Drafts and published snapshots are separate.</p><div class="actions">'.self::link('/studio','New page').self::link('/studio/import','Import Markdown').self::link('/studio/github','GitHub Sync').self::link('/studio/team','Team dashboard').self::link('/studio/books','Books').($admin?self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media','Media library').($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree','Page tree').self::link('/studio/history','Revision history').self::link('/studio/reviews','Reviews').'</div>'.PageTreeView::list($db,$edit).'<p>Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>Revision note (optional, manual save/publish)<input name="note" maxlength="500" placeholder="What changed?"></label><div class="actions"><button name="action" value="save">Save draft</button>'.($directPublish?'<button class="primary" name="action" value="publish">Publish</button>':'').'</div></form>';
         if(ReviewWorkflow::required($db))$html.='<p class="tree-notice">Review required. Save the draft, then submit its saved revision for approval. '.self::link('/studio/reviews','Open reviews').'</p>';
         if($entry){$html.='<p>'.self::link('/studio/reviews?kind=page&target='.rawurlencode($edit),'Review saved draft').'</p><p data-page-history>'.self::link('/studio/history?page='.PageTree::id($edit,$entry),'Page history').'</p><div data-saved-preview><h2>Saved draft preview</h2><article>'.Markdown::render($p['body'],$edit,false,true,$p['link_base']??null,PageTree::linkMap($db))['html'].'</article></div>'.($admin?'<form method="post" action="'.WorkspaceUrls::url('/studio').'" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">Unpublish</button><button name="action" value="delete" data-confirm="Delete this page? Retained history remains recoverable.">Delete</button></form>':'');}
         $html.='<h2>Copy version to drafts</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">Copy published pages</button></form>';$this->page('Studio',$html,BookStore::published($db));

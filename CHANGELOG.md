@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 — GitHub Sync
+
+- Add scoped Studio connection to public/private GitHub repositories using branch, documentation directory, book/version, optional encrypted token and explicit PR permission. Connect/rotate/disconnect are Admin/Owner operations.
+- Fetch immutable Git commits/trees/blobs over the fixed HTTPS GitHub API; verify sizes and Git SHA-1, bound downloads, reject unsafe paths, symlinks/submodules and truncated trees, and reuse verified workspace-private cached blobs. Release the identity lock during read-only network work and reauthorize before showing/applying the plan.
+- Track source path, stable page ID, Git blob and normalized imported base; classify local/remote edits, explicit per-source conflict resolution and removed sources. Preserve exact unambiguous leaf renames and existing publications. Signed plans and atomic MarkdownImport commits update the cursor and drafts together, respecting history, review, media and privacy.
+- Propose changed tracked Markdown (optional new local pages) through a new Git branch and Pull Request, with exact base commit, reverse link mapping, explicit confirmation and workspace state check. No direct push to the base branch. Add Git run history and Team Studio activity, backup validation and controlled REST/PHP/HTTP tests.
+
 ## 0.3.1 — Markdown Import
 
 - Add scoped Studio import of Markdown files, browser directories and ZIP archives, including safe scalar front matter, README/index landing pages, SUMMARY navigation order and source-to-page mapping.

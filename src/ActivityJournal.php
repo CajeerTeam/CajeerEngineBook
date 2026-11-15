@@ -7,7 +7,7 @@ final class ActivityJournal
 {
     public const MAX_EVENTS=1000;
     public const MAX_BYTES=524288;
-    private const TYPES=['login','logout','account.create','account.enable','account.disable','account.password','account.reset','account.sessions','organization.create','organization.rename','organization.archive','organization.restore','organization.delete','organization.invite','organization.revoke','organization.join','organization.leave','organization.remove','organization.transfer','organization.role','workspace.create','workspace.adopt','workspace.rename','workspace.archive','workspace.restore','workspace.visibility','workspace.role','page.save','page.publish','page.unpublish','page.delete','page.move','page.duplicate','page.copy','page.publish-tree','page.restore','book.create','book.visibility','media.upload','media.update','media.delete','review.in_review','review.approved','review.changes_requested','review.rejected','review.cancelled','review.stale','review.published','review.comment','review.prune','review.policy'];
+    private const TYPES=['login','logout','account.create','account.enable','account.disable','account.password','account.reset','account.sessions','organization.create','organization.rename','organization.archive','organization.restore','organization.delete','organization.invite','organization.revoke','organization.join','organization.leave','organization.remove','organization.transfer','organization.role','workspace.create','workspace.adopt','workspace.rename','workspace.archive','workspace.restore','workspace.visibility','workspace.role','page.save','page.publish','page.unpublish','page.delete','page.move','page.duplicate','page.copy','page.publish-tree','page.restore','book.create','book.visibility','media.upload','media.update','media.delete','review.in_review','review.approved','review.changes_requested','review.rejected','review.cancelled','review.stale','review.published','review.comment','review.prune','review.policy','git.connect','git.rotate','git.disconnect','git.sync','git.proposal','git.error'];
     private static function id(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{32}\z/D',$v)===1;}
     public static function record(array &$db,?array $actor,string $type,string $subject='',string $target='',string $org='',string $workspace='',array $recipients=[],string $detail=''):void
     {
@@ -55,6 +55,15 @@ final class ActivityJournal
         foreach(($before['reviews']??[])+($db['reviews']??[]) as $id=>$unused){$a=$before['reviews'][$id]??null;$b=$db['reviews'][$id]??null;if($a===$b)continue;$r=$b??$a;
             $type=$b===null?'prune':($a===null||$a['status']!==$b['status']?$b['status']:'comment');
             $recipients=$type==='prune'?[]:[$r['requester']['id'],$r['reviewer']['id']];self::record($db,$actor,'review.'.$type,$r['target'],$id,'','',$recipients);
+        }
+        $oldGit=$before['github']??null;$newGit=$db['github']??null;
+        if($oldGit!==$newGit){
+            if($oldGit===null&&$newGit!==null)self::record($db,$actor,'git.connect',$newGit['repo'],$newGit['id']);
+            elseif($oldGit!==null&&$newGit===null)self::record($db,$actor,'git.disconnect',$oldGit['repo'],$oldGit['id']);
+            elseif($oldGit!==null&&$newGit!==null){
+                if($oldGit['credential']!==$newGit['credential']||$oldGit['push']!==$newGit['push'])self::record($db,$actor,'git.rotate',$newGit['repo'],$newGit['id']);
+                if($oldGit['runs']!==$newGit['runs']){$last=end($newGit['runs']);if(is_array($last))self::record($db,$actor,match($last['type']){'proposal'=>'git.proposal','error'=>'git.error',default=>'git.sync'},$newGit['repo'],$newGit['id'],'','',[],match($last['type']){'sync'=>substr($newGit['commit'],0,40),'proposal'=>'Pull request created',default=>'GitHub request failed'});}
+            }
         }
         self::trim($db,BookStore::MAX_DB_BYTES,true);
     }

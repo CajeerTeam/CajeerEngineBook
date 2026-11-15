@@ -6,6 +6,7 @@
     "require": {
         "ext-fileinfo": "*",
         "ext-mbstring": "*",
+        "ext-openssl": "*",
         "ext-phar": "*",
         "ext-zip": "*",
         "league/commonmark": "^2.10.7",
@@ -17,6 +18,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/github.php",
+            "python3 tests/github-http.py",
             "@php tests/import.php",
             "python3 tests/import-http.py",
             "@php tests/stable.php",

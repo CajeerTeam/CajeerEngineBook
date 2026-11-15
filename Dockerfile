@@ -6,7 +6,7 @@ FROM composer:2 AS composer-bin
 FROM php:8.4-apache
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
 WORKDIR /opt/cajeerbook
-RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev unzip ca-certificates \
  && docker-php-ext-configure gd --with-jpeg --with-webp \
  && docker-php-ext-install mbstring gd zip \
  && rm -rf /var/lib/apt/lists/*

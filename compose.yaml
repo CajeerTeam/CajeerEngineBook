@@ -5,6 +5,7 @@ services:
       - "127.0.0.1:8080:80"
     environment:
       BOOK_ADMIN_HASH: ${BOOK_ADMIN_HASH:-}
+      BOOK_GITHUB_KEY: ${BOOK_GITHUB_KEY:-}
       BOOK_SECURE_COOKIE: ${BOOK_SECURE_COOKIE:-0}
     volumes:
       - book-data:/var/lib/cajeerbook

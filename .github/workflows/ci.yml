@@ -10,7 +10,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: mbstring, fileinfo, phar, gd, zip
+          extensions: mbstring, fileinfo, phar, gd, zip, openssl
           tools: composer:v2
       - uses: actions/setup-node@v4
         with:
@@ -66,6 +66,7 @@ jobs:
         env:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
+          docker compose -p book-release-test exec -T book php tests/github.php
           docker compose -p book-release-test exec -T book php tests/import.php
           docker compose -p book-release-test exec -T book php tests/release.php
           docker compose -p book-release-test exec -T book php tests/installation.php

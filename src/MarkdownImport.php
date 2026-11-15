@@ -55,6 +55,7 @@ final class MarkdownImport
     private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings):string{
         $raw=html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8');
         if($raw===''||preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#|\?)~i',$raw))return $url;
+         $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return $pages[$canonical].substr($raw,$n);
         $root=str_starts_with($raw,'/');if($root&&preg_match('~^/(?:docs|media|studio|api|w)(?:/|$)~',$raw))return $url;
         $n=strcspn($raw,'?#');$path=rawurldecode(substr($raw,0,$n));$suffix=substr($raw,$n);$parts=$root||dirname($source)==='.'?[]:explode('/',dirname($source));
         if(str_contains($path,'\\')||preg_match('/[\x00-\x1f\x7f]/',$path)){$warnings[$url]=true;return $url;}
@@ -117,7 +118,7 @@ REGEX;
         },$chunk);
         if($rewritten===null)throw new \InvalidArgumentException('Markdown link parsing limit exceeded');return $rewritten;
     }
-    private function plan(array $db,array $files,string $book,string $version,string $strategy):array{
+    public function plan(array $db,array $files,string $book,string $version,string $strategy):array{
         BookStore::key($book,$version,'index');if(!in_array($strategy,['skip','update','rename'],true))throw new \InvalidArgumentException('Invalid conflict strategy');
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
@@ -174,17 +175,21 @@ REGEX;
         });
     }
     /** Apply a server-generated, validated plan inside the same exclusive BookStore transaction. */
-    private function commit(string $book,callable $planner):array{
+    public function commit(string $book,callable $planner,?callable $after=null,string $note='Markdown import'):array{
         $created=[];$result=[];
-        try{$this->store->change(function(&$db)use($book,$planner,&$created,&$result){
+        try{$this->store->change(function(&$db)use($book,$planner,$after,&$created,&$result){
             $p=$planner($db);
             $db['media']??=[];$books=BookStore::books($db);if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}$db['books']=$books;
             foreach($p['assets'] as $id=>$item){$source=$item['source'];unset($item['source']);$path=$this->media->blob($id);$created[$id]=$path;Files::copy($source,$path);if(Files::hash($path)!==$item['sha256'])throw new \RuntimeException('Import source changed');$db['media'][$id]=$item;}
+            // Git Sync may identify an exact, unambiguous source rename. Retain the
+            // stable page ID and old public path; ordinary tree publication remains separate.
+            foreach($p['moves']??[] as $dest=>$from){$entry=$db['pages'][$from]??null;if(!$entry||isset($db['pages'][$dest])||PageTree::scope($dest)!==PageTree::scope($from)||PageTree::reserved($db,$dest,PageTree::id($from,$entry)))throw new \DomainException('Import move no longer available');$entry['id']=PageTree::id($from,$entry);if($entry['published']!==null)$entry['published_key']=PageTree::publicKey($from,$entry);PageTree::retire($db,$from,$entry['id']);unset($db['pages'][$from]);$db['pages'][$dest]=$entry;}
             foreach($p['docs'] as $d){if(in_array($d['action'],['skip','unchanged'],true))continue;$key=$d['key'];$draft=$d['doc'];unset($draft['path'],$draft['explicit_order']);$draft['updated']=gmdate('c');foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 $entry=$db['pages'][$key]??['revision'=>0,'published'=>null,'id'=>bin2hex(random_bytes(16))];$entry['id']??=PageTree::id($key,$entry);$entry['draft']=$draft;$entry['revision']++;$db['pages'][$key]=$entry;
             }
+            if($after!==null)$after($db,$p);
             $result=['rows'=>$p['rows'],'warnings'=>$p['warnings'],'media_new'=>$p['media_new'],'media_total'=>$p['media_total']];
-        },'save','Markdown import');}catch(\Throwable $e){
+        },'save',$note);}catch(\Throwable $e){
             // If a durable rename succeeded before a sync error, retain committed blobs.
             try{$this->store->snapshot(function($db)use($created){foreach($created as $id=>$path)if(!isset($db['media'][$id])&&is_file($path))Files::remove($path);});}catch(\Throwable $cleanup){error_log((string)$cleanup);}throw $e;
         }return $result;

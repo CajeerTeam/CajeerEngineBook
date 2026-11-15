@@ -5,6 +5,9 @@ use CajeerEngine\Update\OperationFiles as Files;
 require_once __DIR__.'/RevisionHistory.php';
 require_once __DIR__.'/ReviewWorkflow.php';
 require_once __DIR__.'/ActivityJournal.php';
+require_once __DIR__.'/GitHubSync.php';
+require_once __DIR__.'/GitHubClient.php';
+require_once __DIR__.'/ImportFiles.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;
@@ -28,6 +31,7 @@ final class BookStore {
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);
         ActivityJournal::validate($db);
+        GitHubSync::validate($db);
         return $db;
     }
     /** Validate the trust boundary before any projection, including public book visibility. */
@@ -70,6 +74,7 @@ final class BookStore {
         if(isset($db['history']))RevisionHistory::validate($db);
         ReviewWorkflow::validate($db);
         ActivityJournal::validate($db);
+        GitHubSync::validate($db);
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         if(strlen($json)>self::MAX_DB_BYTES){
             clearstatcache(true,$path);
