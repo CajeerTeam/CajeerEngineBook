@@ -10,6 +10,9 @@ final class ReleaseHealth
         if (PHP_VERSION_ID < 80401 || !extension_loaded('mbstring') || !extension_loaded('fileinfo') || !extension_loaded('phar') || !extension_loaded('zip') || !extension_loaded('openssl') || !class_exists(\Symfony\Component\Yaml\Yaml::class) || !class_exists(\League\CommonMark\Parser\MarkdownParser::class)) {
             throw new \RuntimeException('Required PHP runtime dependencies are missing');
         }
+        foreach (['runtime.mjs','runtime.py','Runtime.php'] as $file) {
+            if (!is_readable($root.'/resources/sdk/'.$file)) throw new \RuntimeException('SDK runtime files are missing');
+        }
         $assets=$root.'/public/assets/mermaid';
         foreach (['VERSION','mermaid.min.js','LICENSE.txt'] as $file) {
             if (!is_file($assets.'/'.$file) || !is_readable($assets.'/'.$file)) throw new \RuntimeException('Local Mermaid assets are missing');

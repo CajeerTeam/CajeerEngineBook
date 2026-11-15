@@ -1,6 +1,28 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.5 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.6 — SDK & Code Examples
+
+Open a supported published OpenAPI operation in Reader or Playground and choose **SDK & Code Examples** (`/sdk?key=...`, scoped to the current workspace). Select cURL, TypeScript/JavaScript, Python or PHP, an available server and authentication alternative. Examples use placeholder values and credentials; replace them and populate the request body according to the Reference before sending. No request is executed by the example page. The operation's SDK includes every supported currently visible published operation of the same Reference. Unpublished, unsupported or inaccessible operations are excluded.
+
+### Download and use
+
+Download a TypeScript, Python or PHP ZIP. Each contains `README.md`, `operations.json`, `publication.json`, license/notice, client implementation and a runnable example. The generated version (`0.3.6+<digest-prefix>`) identifies the exact set of published operation bindings and runtime code. Operation methods have a readable method/path prefix and a stable hash suffix; the operation page and README list their exact names and parameter order. Select the server and security alternative by zero-based index, supply scalar parameter values as strings in declared order (null/None for optional omissions), auth credentials in the selected alternative's order, and content type/body when required. The client returns HTTP status, headers and bytes, with JSON/text helpers; non-2xx status codes remain responses, while validation and transport errors throw.
+
+- TypeScript/JS: Node.js 22+ or a modern browser supporting Fetch; `client.mts`, declarations and ready-to-run `client.mjs`/`runtime.mjs`. Edit `example.mjs`, run `node example.mjs`. Optional local `npm install ./extracted-sdk` and import the package name from its `package.json`. Browser CORS applies; cookie parameters/auth require Node.js. TypeScript declarations and source can be checked with `tsc --strict --module nodenext --target es2022 --noEmit example.mts`.
+- Python 3.10+: `cajeer_sdk` uses stdlib urllib; run `python3 example.py` or install with `pip install .` (setuptools build backend). No runtime dependencies.
+- PHP 8.1+: `Client.php` and `Runtime.php` use HTTPS streams, OpenSSL and `allow_url_fopen`; run `php example.php` or load the client via Composer. No runtime library dependencies.
+
+Generated SDKs make direct HTTPS requests from the caller's environment (not via Book or its managed proxy). TLS verification is enabled, redirects are not followed, no automatic retry, 256 KiB request-body / 1 MiB response caps. JavaScript has a 15-second abort deadline; Python and PHP use 15-second socket timeouts, not an overall wall-clock deadline. Only the published server list and supported operations are used, but the caller is responsible for API credentials, network access, API authorization and any side effects. The Book Playground origin allowlist controls Book's interactive transports, not downloaded code. SDKs implement the same executable subset as Playground: scalar parameters, Bearer/Basic/API Key alternatives, JSON/form/text bodies. Full schema model generation, OAuth flows, multipart, package registry publishing and multi-language dependency resolution are not supported. The Python module and PHP namespace are fixed; keep different generated versions in separate projects.
+
+### Access, versioning and upgrade
+
+The SDK uses Reader visibility and published snapshot binding, not the latest imported source. A download URL contains the publication digest; if an operation is changed, published or removed, reload the page to generate the current version. A reference may have independently approved operations from different source revisions; the digest identifies that exact visible publication set, not an atomic source revision. A downloaded archive is a standalone copy and cannot be revoked remotely. Do not distribute private SDKs outside their authorized audience. No secrets from Playground inputs, session tokens, Git credentials, identity data or draft source bundles are included. Published OpenAPI descriptions/servers/enum values should themselves be reviewed for confidentiality.
+
+Generation runs locally from bounded validated definitions, with no external network, arbitrary template execution or external generator dependency. ZIPs are built in a private temporary directory and removed after reading; no persisted artifact or new schema. Existing backups preserve the published bindings required to regenerate packages. Upgrade from 0.3.5 by backing up the installation and rebuilding/redeploying the changed files; no migration or new Composer dependencies.
+
+Tests: `php tests/sdk.php`, `python3 tests/sdk-clients.py` (Node 22, npm, TypeScript compiler 5.8.3, Python, setuptools/wheel, PHP, OpenSSL), and `python3 tests/playground-http.py` (or `--policy-only` without CommonMark). The SDK test generates real ZIPs from approved pages, builds and installs local npm/Python packages, compiles TypeScript and invokes all three clients against a local trusted HTTPS fixture. CI runs these plus existing regressions.
 
 ## 0.3.5 — API Playground
 

@@ -30,7 +30,7 @@ final class ApiPlaygroundTransport
             $parts=parse_url($request['url']);$target=($parts['path']??'/').(isset($parts['query'])?'?'.$parts['query']:'');
             if(!str_starts_with($target,'/')||preg_match('/[\x00-\x20\x7f]/',$target))throw new \InvalidArgumentException('Invalid API request target.');
             $body=$request['body'];$method=$request['method'];if(!in_array($method,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],true))throw new \InvalidArgumentException('Unsupported API method.');
-            $wire=$method.' '.$target." HTTP/1.1\r\nHost: ".$host.($port===443?'':':'.$port)."\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: CajeerEngineBook-Playground/0.3.5\r\n";
+            $wire=$method.' '.$target." HTTP/1.1\r\nHost: ".$host.($port===443?'':':'.$port)."\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: CajeerEngineBook-Playground/0.3.6\r\n";
             foreach($request['headers'] as $name=>$value){if(!preg_match('/\A[A-Za-z0-9!#$%&\x27*+.^_`|~-]{1,80}\z/D',$name)||preg_match('/[^\x20-\x7e]/',$value)||in_array(strtolower($name),['host','connection','content-length','transfer-encoding','accept-encoding','user-agent'],true))throw new \InvalidArgumentException('Invalid outbound API header.');$wire.=$name.': '.$value."\r\n";}
             if($body!==''||in_array($method,['POST','PUT','PATCH'],true))$wire.='Content-Length: '.strlen($body)."\r\n";
             $wire.="\r\n".$body;self::write($socket,$wire,$deadline);

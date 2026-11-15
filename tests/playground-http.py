@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Published API Playground visibility, CSRF, stale binding and actual browser UI."""
-import hashlib, html, importlib.util, json, os, re, socket, ssl, subprocess, sys, tempfile, threading, time, urllib.parse
+import hashlib, html, io, zipfile, importlib.util, json, os, re, socket, ssl, subprocess, sys, tempfile, threading, time, urllib.parse
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('workspace_http',ROOT/'tests/workspaces-http.py');w=importlib.util.module_from_spec(spec);spec.loader.exec_module(w)
@@ -33,26 +33,40 @@ def exercise(base,data,origin):
         headers,body=c.request(pg,200);m=json.loads(html.unescape(re.search(rb'data-api-playground="([^"]*)"',body).group(1).decode()));return headers,m,body
     def publish():
         rid=post(editor,reviews,'submit',kind='page',target=key,expected=str(db()['pages'][key]['revision']),reviewer=uid('manager'))[0]['Location'].split('=')[-1];post(admin,reviews,'approve',id=rid,revision='1');post(owner,reviews,'publish',id=rid,revision='2')
-    post(owner,reviews,'policy',required='1',revision='1');apply(source());viewer.request(pg,404);editor.request(pg,404);guest.request(pg,401);outsider.request(pg,404);check('draft-only operations are inaccessible even to editors')
+    sdk=prefix+'/sdk?'+urllib.parse.urlencode({'key':key})
+    def sdk_download(c,lang='typescript',digest=None,status=200):
+        if digest is None:
+            _,page=c.request(sdk,200);digest=re.search(rb'Publication digest: <code>([a-f0-9]{64})</code>',page).group(1).decode()
+        return c.request(sdk+'&lang='+lang+'&download=1&digest='+digest,status)
+    post(owner,reviews,'policy',required='1',revision='1');apply(source());viewer.request(sdk,404);guest.request(sdk,401);outsider.request(sdk,404);viewer.request(pg,404);editor.request(pg,404);guest.request(pg,401);outsider.request(pg,404);check('draft-only operations are inaccessible even to editors')
     publish();headers,m,body=model(viewer);assert m['definition']['servers']==[origin+'/v1'] and m['browser']==[0] and m['proxy']==[0] and m['endpoint']==proxy and m['csrf'];assert 'connect-src' in headers['Content-Security-Policy'] and origin in headers['Content-Security-Policy'] and headers['Referrer-Policy']=='no-referrer';assert headers['Cache-Control']=='private, no-store';assert b'api-playground.js' in body
     guest.request(pg,401);outsider.request(pg,404);viewer.request(other+'/playground?'+urllib.parse.urlencode({'key':key}),404);check('published model, scoped URL, CSP and private workspace isolation')
     if FULL:assert b'Try API in Playground' in viewer.request(prefix+'/docs/'+key,200)[1]
+    # SDK is generated from the exact visible publication, never the latest source.
+    _,sdk_page=viewer.request(sdk,200);sdk_digest=re.search(rb'Publication digest: <code>([a-f0-9]{64})</code>',sdk_page).group(1).decode()
+    for lang in ['typescript','python','php']:
+        h,z=sdk_download(viewer,lang,sdk_digest);assert h['Content-Type']=='application/zip' and 'attachment' in h['Content-Disposition'] and h['Cache-Control']=='private, no-store'
+        with zipfile.ZipFile(io.BytesIO(z)) as archive:
+            assert archive.testzip() is None and json.loads(archive.read('publication.json'))['digest']==sdk_digest
+            assert origin+'/v1' in archive.read('operations.json').decode() and 'secret-bearer' not in archive.read('operations.json').decode()
+    guest.request(sdk,401);outsider.request(sdk,404);viewer.request(other+'/sdk?'+urllib.parse.urlencode({'key':key}),404);sdk_download(viewer,'typescript','0'*64,409)
+    viewer.request(sdk+'&lang=invalid',400);check('SDK ZIP downloads, per-language examples, exact digest and workspace isolation')
     # Proxy must not accept arbitrary URL/method, nor transmit any request to loopback.
     payload={'server':0,'security':0,'values':['a b','2','trace'],'auth':['secret-bearer','secret-query'],'body':'{"name":"Ada"}','content_type':'application/json','confirm':True}
     form={'key':key,'binding':m['binding'],'csrf':m['csrf'],'payload':json.dumps(payload)}
     guest.request(proxy,401,form);outsider.request(proxy,404,form);viewer.request(proxy,403,form|{'csrf':'bad'});viewer.request(proxy,409,form|{'binding':'a'*64});viewer.request(proxy,422,form|{'payload':json.dumps(payload|{'confirm':False})});viewer.request(proxy,422,form|{'payload':json.dumps(payload|{'server':99})});viewer.request(proxy,422,form|{'payload':json.dumps(payload|{'url':'https://evil.example','method':'DELETE'})});_,res=viewer.request(proxy,422,form);assert b'globally routable IPv4' in res and b'secret' not in res;assert not any(r[2]=='Bearer secret-bearer' for r in tls.REQUESTS);check('proxy authorization, CSRF, binding, confirmation, server selection and DNS rejection')
     # Browser request exercises the exact same published model against real HTTPS/CORS fixture.
     if BROWSER:browser(base,pg,viewer,origin,body)
-    apply(source('https://other.example.org/v2','New draft destination'));_,m2,_=model(viewer);assert m2==m;check('unpublished specification update does not change executable model')
+    apply(source('https://other.example.org/v2','New draft destination'));_,m2,_=model(viewer);assert m2==m;check('unpublished specification update does not change executable model');sdk_download(viewer,'python',sdk_digest);check('unpublished source leaves SDK digest and download unchanged')
     # Old published model is still valid after reimport, until actual approved publication.
-    publish();headers,body=viewer.request(pg,200);assert b'No API server is enabled' in body;viewer.request(proxy,409,form);check('new approved publication invalidates previous proxy binding')
+    publish();headers,body=viewer.request(pg,200);assert b'No API server is enabled' in body;viewer.request(proxy,409,form);check('new approved publication invalidates previous proxy binding');sdk_download(viewer,'typescript',sdk_digest,409);check('new approved publication invalidates stale SDK download link')
     # Revoke role at workspace; no public disclosure or proxy use.
-    post(owner,'/workspaces','role',id=wid,revision=str(identity()['workspaces'][wid]['revision']),user=uid('reader'),role='none');viewer.request(pg,404);viewer.request(proxy,404,form);check('workspace access revocation closes Playground and proxy')
+    post(owner,'/workspaces','role',id=wid,revision=str(identity()['workspaces'][wid]['revision']),user=uid('reader'),role='none');viewer.request(pg,404);viewer.request(proxy,404,form);check('workspace access revocation closes Playground and proxy');viewer.request(sdk,404);sdk_download(viewer,'php',sdk_digest,404)
     raw=dbpath.read_text();assert 'secret-bearer' not in raw and 'secret-query' not in raw and '"name":"Ada"' not in raw;rate=(data/'playground-rate.json').read_text();assert 'secret' not in rate and 'http' not in rate;check('request secrets and body not persisted in BookStore or rate limiter')
     # A public workspace exposes only published browser model, never anonymous proxy.
     # Enable workspace public via the current revision and re-publish the enabled server.
-    apply(source());publish();post(owner,'/workspaces','visibility',id=wid,revision=str(identity()['workspaces'][wid]['revision']),visibility='public');_,g,_=model(guest);assert g['browser']==[0] and g['proxy']==[] and not g['csrf'];guest.request(proxy,401,form);viewer.request(pg,404);check('public guest browser-only; explicit workspace deny still enforced')
-    post(owner,prefix+'/studio/books','visibility',slug='api',visibility='private',revision='1');guest.request(pg,404);outsider.request(pg,404);check('private book in public workspace blocks operation model')
+    apply(source());publish();post(owner,'/workspaces','visibility',id=wid,revision=str(identity()['workspaces'][wid]['revision']),visibility='public');_,g,_=model(guest);assert g['browser']==[0] and g['proxy']==[] and not g['csrf'];guest.request(proxy,401,form);viewer.request(pg,404);check('public guest browser-only; explicit workspace deny still enforced');sdk_download(guest);viewer.request(sdk,404)
+    post(owner,prefix+'/studio/books','visibility',slug='api',visibility='private',revision='1');guest.request(pg,404);outsider.request(pg,404);check('private book in public workspace blocks operation model');guest.request(sdk,404);outsider.request(sdk,404);check('SDK public download respects explicit deny and book visibility')
 
 def browser(base,pg,viewer,origin,body):
     from playwright.sync_api import sync_playwright

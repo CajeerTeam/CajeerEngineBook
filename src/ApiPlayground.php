@@ -79,14 +79,14 @@ final class ApiPlayground
         foreach($d['body_types'] as $t)if(!is_string($t)||!preg_match('~\A(?:application/(?:json|[a-z0-9.+-]+\+json|x-www-form-urlencoded)|text/plain)\z~D',$t))throw new \InvalidArgumentException('Invalid Playground body type.');
     }
     /** Only resolve visible, mapped published pages. Legacy generated bodies must match a retained source exactly. */
-    public static function published(array $db,array $visible,string $key):?array {
+    public static function published(array $db,array $visible,string $key,?array &$legacyCache=null):?array {
         $p=$visible[$key]??null;if(!$p||!preg_match('~/operations/(?:get|head|post|put|patch|delete|options)-[a-f0-9]{24}$~D',$key))return null;
         foreach($db['openapi']??[] as $s){$map=$s['pages'][$key]??null;if(!$map||$map['id']!==$p['id'])continue;
             if(isset($p['playground'])){try{self::validateSnapshot($p);$d=$p['playground'];if(str_ends_with($key,'/'.strtolower($d['method']).'-'.substr(hash('sha256',$d['path']),0,24)))return $d;}catch(\Throwable){}return null;}
             // If older revisions have been pruned, a matching legacy body may refer to different auth definitions.
             if(($s['revisions'][0]['revision']??null)!==1)return null;
             $match=null;$hash=null;
-            foreach($s['revisions'] as $r){try{$doc=OpenApiDocument::fromBundle($r['bundle']);$model=OpenApiReference::render($doc,$s['book'],$s['version'],$s['slug'],true);}catch(\InvalidArgumentException|\DomainException){return null;}$candidate=$model['pages'][$key]??null;if(!$candidate||$candidate['body']!==$p['body'])continue;$d=$candidate['playground']??null;if(!$d)return null;$h=hash('sha256',OpenApiDocument::json($d));if($hash!==null&&$hash!==$h)return null;$match=$d;$hash=$h;}
+            foreach($s['revisions'] as $r){$cacheKey=$s['book'].'/'.$s['version'].'/'.$s['slug'].'/'.hash('sha256',$r['bundle']);try{if($legacyCache!==null&&isset($legacyCache[$cacheKey]))$model=$legacyCache[$cacheKey];else{$doc=OpenApiDocument::fromBundle($r['bundle']);$model=OpenApiReference::render($doc,$s['book'],$s['version'],$s['slug'],true);if($legacyCache!==null)$legacyCache[$cacheKey]=$model;}}catch(\InvalidArgumentException|\DomainException){return null;}$candidate=$model['pages'][$key]??null;if(!$candidate||$candidate['body']!==$p['body'])continue;$d=$candidate['playground']??null;if(!$d)return null;$h=hash('sha256',OpenApiDocument::json($d));if($hash!==null&&$hash!==$h)return null;$match=$d;$hash=$h;}
             return $match;
         }return null;
     }

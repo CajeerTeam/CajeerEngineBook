@@ -19,6 +19,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/sdk.php",
+            "python3 tests/sdk-clients.py",
             "@php tests/playground.php",
             "python3 tests/playground-https.py",
             "python3 tests/playground-http.py",

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 — SDK & Code Examples
+
+- Add Reader SDK & Code Examples for published OpenAPI operations: cURL, TypeScript/JavaScript, Python and PHP with selectable server/auth alternative and placeholder credentials.
+- Generate downloadable versioned SDK ZIPs with real HTTP client methods, TypeScript source/types and ready-to-run JS, Python package and PHP Composer library; include published operation metadata, README and examples. No external generator, runtime package install or network call on the Book server.
+- Build only from currently visible published snapshots in one reference; publication digest binds operation definitions and runtime version, stale downloads reject, no source bundles/drafts/secrets or cross-workspace data. No schema migration or persisted artifacts.
+- Exercise generated clients over real TLS, parameter/auth/body serialization, response limits, redirect rejection, TypeScript compilation, local npm and Python package installation, and HTTP access/revocation.
+
 ## 0.3.5 — API Playground
 
 - Add interactive requests from published OpenAPI operations: HTTPS server selection, scalar parameters, JSON/form/text bodies, Bearer/Basic/API Key, real browser CORS fetch and optional authenticated server proxy. Display status, headers, duration, text/JSON or binary Base64; download/copy response and generate redacted cURL.
