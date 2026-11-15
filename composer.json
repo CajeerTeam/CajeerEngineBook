@@ -19,6 +19,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/static-export.php",
+            "python3 tests/static-export-http.py",
             "@php tests/ci-publishing.php",
             "python3 tests/ci-http.py",
             "@php tests/automation.php",

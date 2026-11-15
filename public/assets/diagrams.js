@@ -22,7 +22,7 @@
             for(const c of [...live])if(!c.figure.isConnected)c.destroy();
             if(live.size>=maxFrames){state.textContent='Too many active diagrams. Close another diagram and retry.';return;}
             ticket=randomTicket();renderedSource=source;factor=1;
-            frame=document.createElement('iframe');frame.title='Rendered Mermaid diagram';frame.setAttribute('sandbox','allow-scripts');frame.referrerPolicy='no-referrer';frame.src='/diagram-frame';
+            frame=document.createElement('iframe');frame.title='Rendered Mermaid diagram';frame.setAttribute('sandbox','allow-scripts');frame.referrerPolicy='no-referrer';frame.src=document.documentElement.dataset.diagramFrame || '/diagram-frame';
             viewport.append(frame);viewport.hidden=false;live.add(controller);state.textContent='Rendering diagram…';
             timer=setTimeout(()=>{stop();state.textContent='Diagram rendering timed out. Source remains available.';},20000);
         }

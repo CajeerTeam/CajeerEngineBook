@@ -46,6 +46,7 @@ jobs:
       - run: python tests/interactive-browser.py --reader-only
       - run: python tests/interactive-browser.py
       - run: python tests/mermaid-browser.py
+      - run: python tests/static-export-browser.py
       - run: python tests/installation-http.py --browser
 
   docker-release:
@@ -69,6 +70,7 @@ jobs:
         env:
           BOOK_TEST_URL: http://127.0.0.1:8080
         run: |
+          docker compose -p book-release-test exec -T book php tests/static-export.php
           docker compose -p book-release-test exec -T book php tests/ci-publishing.php
           docker compose -p book-release-test exec -T book php tests/automation.php
           docker compose -p book-release-test exec -T book php tests/sdk.php

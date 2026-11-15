@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 — Static Export
+
+- Export published books and versions as portable ZIP HTML sites, including tree navigation, version switching, heading anchors, redirects and rich Markdown blocks.
+- Local offline full-text search, verified referenced media, pinned sandboxed Mermaid rendering and no CDN or PHP requirement.
+- Public-only by default; explicit private export confirmation, Owner/Admin authorization and CSRF. CLI supports scoped builds.
+- Atomic archive publication, resource limits, no drafts, history, credentials or unreferenced media.
+
 ## 0.3.8 — CI/CD Publishing
 
 - Scoped expiring hashed CI tokens, bearer API and Python CLI; protected GitHub Actions/GitLab CI examples.

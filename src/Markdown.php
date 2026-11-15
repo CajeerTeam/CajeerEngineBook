@@ -38,7 +38,7 @@ final class Markdown
     }
 
     /** @return array{html:string,toc:list<array{id:string,title:string,level:int}>,blocks?:list<array{source:string,html:string,kind:string}>} */
-    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = [], ?string $richPrefix = null, ?int &$sharedBudget = null, int $richDepth = 0, bool $allowNested = false): array
+    public static function render(string $md, ?string $pageKey = null, bool $editor = false, bool $studio = false, ?string $linkBase = null, array $linkMap = [], ?string $richPrefix = null, ?int &$sharedBudget = null, int $richDepth = 0, bool $allowNested = false, ?\Closure $exportUrl = null): array
     {
         self::validate($md);
         $environment = self::environment();
@@ -101,6 +101,10 @@ final class Markdown
                         $node->data->set('attributes.download', '');
                     }
                 }
+                if ($url !== null && $exportUrl !== null) {
+                    if ($node instanceof Link && preg_match('~\A/(?:w/[a-f0-9]{32}/[a-f0-9]{32}/)?media/[a-f0-9]{32}\?download=1(?:#.*)?\z~D',$url)) $node->data->set('attributes.download','');
+                    $url = $exportUrl($url, $node instanceof Image);
+                }
                 $node->setUrl($url ?? '#');
                 if ($richPrefix !== null && $node instanceof Link && $url !== null && str_starts_with($url,'#')) $fragmentLinks[]=$node;
                 if ($url === null) $node->data->set('book_editor_unsafe', true);
@@ -118,15 +122,17 @@ final class Markdown
                     $richBudget -= RichBlocks::cost($component); ++$richIndex;
                     $bodyHtml=[]; $bodyEditors=[];
                     foreach (RichBlocks::bodies($component) as $i=>$body) {
-                        $inner=self::render($body,$pageKey,$editor,$studio,$linkBase,$linkMap,($richPrefix ?? 'book:rich:').$richIndex.':'.$i.':',$richBudget,$richDepth+1,RichBlocks::interactive($component) && RichBlocks::kind($component)!=='code-tabs');
+                        $inner=self::render($body,$pageKey,$editor,$studio,$linkBase,$linkMap,($richPrefix ?? 'book:rich:').$richIndex.':'.$i.':',$richBudget,$richDepth+1,RichBlocks::interactive($component) && RichBlocks::kind($component)!=='code-tabs',$exportUrl);
                         $bodyHtml[]=$inner['html'];
                         if ($editor) $bodyEditors[]=$inner['blocks'];
                     }
-                    $resolve=static function(string $url,bool $image) use ($pageKey,$linkBase,$linkMap,$studio,$editor): ?string {
+                    $resolve=static function(string $url,bool $image) use ($pageKey,$linkBase,$linkMap,$studio,$editor,$exportUrl): ?string {
                         $url=self::safeUrl($url,$image,$pageKey,$linkBase);
                         if ($url!==null && !$image && $linkMap) $url=PageTree::rewriteLink($url,$linkMap);
                         if ($url!==null && ($studio || $editor)) $url=self::previewMediaUrl($url);
-                        return $url===null?null:WorkspaceUrls::markdown($url);
+                        if ($url===null) return null;
+                        $url=WorkspaceUrls::markdown($url);
+                        return $exportUrl===null?$url:$exportUrl($url,$image);
                     };
                     $node->data->set('book_rich_html',RichBlocks::html($component,$bodyHtml,$resolve));
                     $node->data->set('book_rich_data',$component);

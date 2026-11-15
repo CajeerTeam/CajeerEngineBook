@@ -1,6 +1,25 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.3.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.3.9 — Static Export
+
+Open **Studio → Static Export** as Owner/Admin. Select all books or one book/version, choose public published content (default) or explicitly confirm the export of private published pages, then download the ZIP. Extract it and open `index.html` directly in a browser, or deploy the complete directory to a static web host at any URL prefix. No PHP, database, CDN or network is needed for exported content. The export is an immutable snapshot; regenerate it after publishing changes.
+
+- Published page tree, previous/next navigation, version switching, heading anchors, moved-page redirects and rich Markdown blocks; local styles, theme switching, tabs, code and image viewers.
+- `search.html` searches a local JavaScript index of rendered page text, titles and paths. It ranks titles above body matches and displays safe text snippets. Search works on `file://` without fetch; requires JavaScript.
+- Referenced uploaded images and attachments are copied byte-for-byte after MIME/size/SHA-256 verification. Mermaid diagrams use the existing strict opaque-origin sandbox and locally installed pinned Mermaid library. Run `sh bin/install-mermaid.sh` before exporting diagrams (already installed in Docker). No remote image requests are made; remote images become their alt text, unavailable internal destinations are inert, and external hyperlinks remain external. API Playground, SDK generation, Studio and other dynamic actions are not exported.
+- Only the selected workspace's published snapshots are read. Public exports exclude private books and private workspaces, even for an administrator. Explicit private exports have **no authentication or revocation**; treat the ZIP and extracted files as confidential. Drafts, revision history, review content, credentials, integration state and unused media are not exported. The archive is a site, not a restorable backup.
+
+CLI (trusted installation operator; existing destination is never overwritten):
+
+```sh
+php bin/static-export.php /tmp/docs.zip
+php bin/static-export.php /tmp/guide.zip --scope=handbook/1.0
+php bin/static-export.php /tmp/team.zip --workspace=WORKSPACE_ID --include-private
+```
+
+`BOOK_DATA_DIR` selects the installation; omit `--workspace` for legacy content. The CLI emits counts for pages, media, redirects and omitted references. `README.txt` in each site describes deployment and privacy. Page directories use `p-` prefixes to avoid filesystem name collisions, with relative links and explicit `index.html` files. Export generation is capped at 256 MiB of generated HTML, 64 MiB of search index, existing 512 MiB media quota and 10,000 redirects; split a large installation by book/version. The shared store lock protects the snapshot and media until ZIP close; a failed build never publishes a partial ZIP.
 
 ## 0.3.8 — CI/CD Publishing
 
@@ -771,7 +790,7 @@ Architecture: `src/` Book logic, `core/` reused upstream components, `templates/
 
 ## Roadmap (not implemented in 0.1.6)
 
-Callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, static export, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
+Callouts/cards/tabs/Mermaid, user/team RBAC and private books, revision history, Git sync, OpenAPI interactive reference, PostgreSQL/full-text indexing, locales, custom domains, SSO and production security/load certification.
 
 
 ## Callouts and cards (0.1.7)

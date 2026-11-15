@@ -42,7 +42,7 @@ final class Permissions
         if(!self::allows($role,'edit'))return false;
         if(in_array($method,['GET','HEAD'],true)){
             if(in_array($path,['/studio/automation','/studio/ci'],true))return self::allows($role,'manage');
-            if(in_array($path,['/studio/export','/studio/media/backup'],true))return self::allows($role,'export');
+            if(in_array($path,['/studio/export','/studio/media/backup','/studio/static-export'],true))return self::allows($role,'export');
             return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
         }
         if($method!=='POST')return false;
@@ -57,6 +57,7 @@ final class Permissions
             '/studio/import'=>in_array($action,['preview','apply'],true)?'edit':'',
             '/studio/history'=>$action==='restore'?'edit':'',
             '/studio/team'=>$action==='read'?'edit':'',
+            '/studio/static-export'=>$action==='download'?'export':'',
             '/studio/ci'=>in_array($action,['issue','revoke','build','approve','publish','cancel','prune','rollback'],true)?'manage':'',
             '/studio/automation'=>in_array($action,['configure','retry'],true)?'manage':'',
             '/studio/reviews'=>match($action){'submit','comment','cancel'=>'edit','approve','changes','reject','publish'=>'publish','policy','prune'=>'ownership',default=>''},default=>'',

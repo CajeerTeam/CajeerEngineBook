@@ -1,0 +1,5 @@
+/* Static Reader uses the normal Book theme and its responsive navigation. */
+.static-result { margin: 1rem 0; }
+.static-result h2 { margin: 0 0 .35rem; font-size: 1.1rem; }
+.static-result p { margin: .35rem 0; overflow-wrap: anywhere; }
+.static-result .eyebrow { font-size: .75rem; }
