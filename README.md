@@ -1,6 +1,35 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.9 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.5.0 — Enterprise Documentation Stable
+
+The enterprise deployment combines PostgreSQL, Redis, multiple Apache instances/workers, Caddy HTTPS, OIDC, multilingual published documentation/search, tenant isolation, audit and verified encrypted recovery. Existing healthy 0.4.9 PostgreSQL installations need no SQL schema migration. Stop all old writers and the backup scheduler, make and independently verify a 0.4.9 backup, overlay the changed files, retain the existing data/namespace and secrets, then build the new images. Do not mix versions during the upgrade.
+
+### Enterprise deployment
+
+Use Docker Compose 2.24.4+ and the existing protected environment for PostgreSQL, Redis, primary host, ACME, ingress, OIDC (if enabled) and backup. Configure `BOOK_BACKUP_KEY_PATH`, `BOOK_BACKUP_S3_URI`, AWS credentials/region, and a separate PostgreSQL drill database (`BOOK_BACKUP_DRILL_PG_DSN`, `BOOK_BACKUP_DRILL_PG_USER`, `BOOK_BACKUP_DRILL_PG_PASSWORD`). The drill database must be independently provisioned; the application source namespace is explicitly rejected even through alternate DSNs. The enterprise overlay automatically selects the same PostgreSQL database/namespace as the application for capture. Never reuse the source database as a drill target. `BOOK_BACKUP_MAX_AGE` defaults to 90000 seconds; adjust to your backup interval and RPO policy. The first verified capture can take longer than readiness startup; monitor scheduler logs and run a manual backup before serving traffic if required.
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml:compose.domains.yaml:compose.backup.yaml:compose.enterprise.yaml
+docker compose --profile automation --profile backup config --quiet
+docker compose --profile automation --profile backup build book worker domain-check backup
+docker compose up -d --wait postgres redis
+# Existing 0.4.9 SQL installation: check only (fresh installations use migrate --offline).
+docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php check
+docker compose run --rm --no-deps --user www-data book php bin/search.php check
+docker compose run --rm --no-deps --user www-data book php bin/audit.php check
+docker compose run --rm --no-deps --user www-data book php bin/runtime.php check
+docker compose --profile automation up -d --wait --scale book=2 --scale worker=2
+docker compose --profile backup up -d --no-deps backup
+docker compose exec -T backup php bin/recovery.php health 90000
+```
+
+For configured OIDC, run `php bin/oidc.php check` in the application environment before enabling mandatory SSO. Use a trusted HTTPS primary host with a matching OIDC callback and secure cookies. Unknown hosts and custom-domain access to private/admin endpoints remain denied. The backup health command exits nonzero for missing/stale verified captures; it does not probe S3 continuously or hold the scheduler lock. Monitor it separately from Reader readiness. Use the previous section's backup key/remote configuration and independent lifecycle rules. Preserve archived audit prefixes, TLS material and environment secrets separately.
+
+### Release acceptance
+
+`composer test` includes the enterprise policy tests and real two-node HTTP load smoke test. CI additionally requires PostgreSQL/Redis, browser, Docker, HTTPS/DNS, OIDC and S3 tests, plus a single disposable enterprise installation that publishes over HTTPS, searches the published content, exports scoped audit, runs the scheduler, deletes the local archive and restores from the remote copy into a new PostgreSQL namespace. `enterprise-release` must pass all dependent jobs before deployment. The distributed job records a 300-request / 100-client smoke benchmark (p50/p95/p99, throughput, errors). For repeatable staging measurements run `python3 tests/enterprise-load.py --url http://127.0.0.1:8080` **only against a disposable installation seeded by `tests/release-http.py`**. This is not certification for 100,000 documents or the roadmap's production latency/SLA targets. The existing dataset limits, portable logical recovery (not PITR), single OIDC provider and shared media filesystem remain in force. Benchmark your actual document corpus, storage and hardware before production cutover.
 
 ## 0.4.9 — Automated Backup & Recovery
 

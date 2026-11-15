@@ -37,17 +37,17 @@ final class PostgresIdentityStore
         if($actual!==$this->binding)throw new \RuntimeException('PostgreSQL identity installation binding mismatch.');
     }
     /** Hold the identity row lock across callbacks, even when they use another SQL content connection. */
-    public function transaction(callable $fn):mixed
+    public function transaction(callable $fn,bool $shared=false):mixed
     {
         $pdo=PostgresContentStore::connect();$pdo->beginTransaction();
         try{
-            $this->assertBinding($pdo);$db=$this->load($pdo,true);
+            $this->assertBinding($pdo);$db=$this->load($pdo,true,$shared);
             $result=$fn($db,$pdo);$pdo->commit();return $result;
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
     }
-    private function load(PDO $pdo,bool $lock=false):array
+    private function load(PDO $pdo,bool $lock=false,bool $shared=false):array
     {
-        $state=self::query($pdo,'SELECT format,owner_anchor,metadata::text AS metadata FROM cajeer_book.identity_state WHERE installation=?'.($lock?' FOR UPDATE':''),[$this->installation])->fetch(PDO::FETCH_ASSOC);
+        $state=self::query($pdo,'SELECT format,owner_anchor,metadata::text AS metadata FROM cajeer_book.identity_state WHERE installation=?'.($lock?($shared?' FOR SHARE':' FOR UPDATE'):''),[$this->installation])->fetch(PDO::FETCH_ASSOC);
         if(!$state||(int)$state['format']!==1)throw new \RuntimeException('PostgreSQL identity missing or unsupported; run offline installation migration.');
         $meta=self::decode($state['metadata']);$rows=[];
         foreach(self::TABLES as $table){

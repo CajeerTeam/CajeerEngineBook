@@ -25,7 +25,7 @@ final class RecoveryManager
     private function report(string $id):string{return Files::path($this->spool,self::id($id).'.json');}
     private function fingerprint():string{return hash('sha256',$this->root."\n".(getenv('BOOK_PG_NAMESPACE')?:'')."\n".$this->remote->identity());}
     private function state():array{
-        $path=Files::path($this->spool,'state.json');if(!is_file($path))return ['format'=>1,'repository'=>$this->fingerprint(),'last_success'=>0,'last_capture'=>0,'last_id'=>'','last_attempt'=>0,'failures'=>0,'pending'=>null];
+        $path=Files::path($this->spool,'state.json');clearstatcache(true,$path);if(!is_file($path))return ['format'=>1,'repository'=>$this->fingerprint(),'last_success'=>0,'last_capture'=>0,'last_id'=>'','last_attempt'=>0,'failures'=>0,'pending'=>null];
         if(filesize($path)>16384)throw new \RuntimeException('Invalid recovery state.');$s=Files::read($path);
         if(($s['format']??null)!==1||($s['repository']??null)!==$this->fingerprint()||!is_int($s['last_success']??null)||!is_int($s['last_capture']??null)||!is_int($s['last_attempt']??null)||!is_int($s['failures']??null)||!is_string($s['last_id']??null)||!array_key_exists('pending',$s))throw new \RuntimeException('Recovery state invalid or repository changed; use a new spool.');
         if($s['last_id']!=='')self::id($s['last_id']);
@@ -62,9 +62,19 @@ final class RecoveryManager
     }
     private function postgresDrill(string $restored,string $dsn):array{
         if(!str_starts_with($dsn,'pgsql:')||$dsn===getenv('BOOK_PG_DSN'))throw new \InvalidArgumentException('Drill requires a separate PostgreSQL database.');
+        $sourceNamespace=getenv('BOOK_PG_DSN')?PostgresContentStore::namespace():null;
         $ns=bin2hex(random_bytes(16));$env=['BOOK_DATA_DIR'=>$restored,'BOOK_PG_DSN'=>$dsn,'BOOK_PG_NAMESPACE'=>$ns,'BOOK_PG_USER'=>getenv('BOOK_BACKUP_DRILL_PG_USER')?:'','BOOK_PG_PASSWORD'=>getenv('BOOK_BACKUP_DRILL_PG_PASSWORD')?:'','BOOK_REDIS_HOST'=>''];$old=[];
         foreach($env as $name=>$value){$old[$name]=getenv($name);putenv($name.'='.$value);}
         try{
+            // DSNs can alias the same database (hostname, port, options or credentials).
+            // Refuse a database containing the source installation before creating any schema.
+            if($sourceNamespace!==null){
+                $probe=PostgresContentStore::connect();
+                if(is_string($probe->query("SELECT to_regclass('cajeer_book.content_installation')::text")->fetchColumn())){
+                    $q=$probe->prepare('SELECT 1 FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$sourceNamespace]);
+                    if($q->fetchColumn()!==false)throw new \RuntimeException('Drill database contains the source installation. Use a separate database.');
+                }
+            }
             PostgresContentStore::migrate($restored);$result=InstallationBackup::audit($restored,$this->public);$result['search']=PostgresContentStore::searchStatus($restored);
             [$pdo,$id]=AuditLog::connection($restored);$result['audit_streams']=count(AuditLog::verify($pdo,$id));return $result;
         }finally{
@@ -108,6 +118,13 @@ final class RecoveryManager
         $verified=[];foreach(new \DirectoryIterator($this->spool) as $f){if(!$f->isFile()||$f->isLink()||!preg_match('/\A([0-9]{8}T[0-9]{6}Z-[a-f0-9]{32})\.json\z/D',$f->getFilename(),$m))continue;
             $r=Files::read($f->getPathname());if(($r['id']??null)!==$m[1]||!is_int($r['verified_at']??null))throw new \RuntimeException('Invalid backup report.');$verified[$m[1]]=$r['verified_at'];}
         arsort($verified,SORT_NUMERIC);$keep=array_slice(array_keys($verified),0,2);foreach($verified as $id=>$at)if($id!==$latest&&!in_array($id,$keep,true)&&$at<time()-$this->retention*86400){Files::remove($this->artifact($id));Files::remove($this->report($id));}
+    }
+    /** Non-mutating probe, safe during an active backup. A verified *capture* is the RPO. */
+    public function health(int $maxAge):array{
+        if($maxAge<300||$maxAge>1209600)throw new \InvalidArgumentException('Invalid backup RPO limit.');
+        $s=$this->state();$age=$s['last_capture']>0?max(0,time()-$s['last_capture']):null;
+        $ok=$age!==null&&$age<=$maxAge&&$s['last_capture']<=time()&&$s['last_id']!=='';
+        return ['status'=>$ok?'ok':'unavailable','capture_age_seconds'=>$age,'max_age_seconds'=>$maxAge,'pending'=>$s['pending']!==null,'failures'=>$s['failures'],'last_id'=>$s['last_id']];
     }
     public function status():array{return $this->locked(fn()=>['state'=>$this->state(),'remote'=>$this->remote->mode(),'interval_seconds'=>$this->interval,'retention_days'=>$this->retention]);}
     /** Restore from a local or remote ID. No requirement for the source installation to be online. */

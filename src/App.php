@@ -65,7 +65,7 @@ final class App {
                 $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
-            });
+            },in_array($method,['GET','HEAD'],true));
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
         finally{
             // A denial has no business transaction to join. Record a minimal, separate event after locks release.

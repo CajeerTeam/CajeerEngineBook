@@ -204,6 +204,7 @@ jobs:
           docker compose --profile automation up -d --wait --wait-timeout 180 --scale book=2 --scale worker=2
           curl --fail --retry 10 --retry-connrefused http://127.0.0.1:8080/health/ready
           python3 tests/release-http.py
+          python3 tests/enterprise-load.py --url "$BOOK_TEST_URL" | tee "$RUNNER_TEMP/enterprise-load.json"
           docker compose exec -T --index 1 book php bin/runtime.php status
           docker compose exec -T --index 2 book php bin/runtime.php status
           docker compose restart book
@@ -211,6 +212,13 @@ jobs:
           # Redis restart drops ephemeral data; the SQL publication and both app instances survive.
           docker compose restart redis
           python3 tests/release-http.py --check-persisted
+      - name: Preserve load measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: enterprise-load
+          path: ${{ runner.temp }}/enterprise-load.json
+          if-no-files-found: ignore
       - name: Show distributed logs on failure
         if: failure()
         run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation logs --no-color
@@ -223,5 +231,21 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: DNS and HTTPS custom-domain release gate
+      - name: Enterprise TLS, publication, audit and recovery gate
         run: sh tests/domains-edge.sh
+
+  enterprise-release:
+    needs: [test, docker-release, postgres-content, distributed-release, domains-edge]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      GATE_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require every enterprise release gate to pass
+        run: |
+          python3 - <<'PY'
+          import os, json, sys
+          results = json.loads(os.environ["GATE_RESULTS"])
+          print(json.dumps({k: v["result"] for k, v in results.items()}, indent=2))
+          sys.exit(0 if all(v["result"] == "success" for v in results.values()) else 1)
+          PY

@@ -22,3 +22,10 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  backup:
+    environment:
+      BOOK_BACKUP_S3_URI: ''
+      BOOK_BACKUP_REMOTE_DIR: /test-remote
+    volumes:
+      - ${BOOK_TEST_DNS_DIR:?Set DNS records directory}/remote:/test-remote

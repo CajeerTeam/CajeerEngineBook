@@ -58,11 +58,12 @@ final class IdentityStore
         $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
         if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');return $json;
     }
-    private function transaction(callable $fn,bool $persist=true):mixed
+    private function transaction(callable $fn,bool $persist=true,bool $shared=false):mixed
     {
+        if($shared&&$persist)throw new \LogicException('Shared identity transactions cannot persist.');
         $root=dirname($this->dir);
         if(!$this->portable&&($pg=PostgresIdentityStore::forDirectory($root))!==null){
-            return $pg->transaction(function(array $db,\PDO $pdo)use($pg,$fn,$persist,$root){
+            return $pg->transaction(function(array $db,\PDO $pdo)use($pg,$fn,$persist,$root,$shared){
                 self::validate($db);$before=$db;
                 if(strlen(json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE))+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');
                 // Existing file anchors remain a check on migrated installations. PostgreSQL also
@@ -76,9 +77,9 @@ final class IdentityStore
                     self::checkedJson($db);$pg->write($pdo,$before,$db);$before=$db;
                 };
                 $this->identityConnection=$pdo;$this->identityBackend=$pg;
-                try{$result=$fn($db,$flush);$flush();return $result;}
+                try{$result=$fn($db,$flush);if($shared&&$db!==$before)throw new \LogicException('Shared identity transaction mutated state.');$flush();return $result;}
                 finally{$this->identityConnection=null;$this->identityBackend=null;}
-            });
+            },$shared);
         }
         return $this->fileTransaction($fn,$persist);
     }
@@ -234,7 +235,7 @@ final class IdentityStore
             ActivityJournal::record($db,$u,'login','SSO sign in',$id);return ['status'=>'ok']+$r;
         });
     }
-    public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null){$this->identityBackend->auditReady($this->identityConnection);return;}$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
+    public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null){$this->identityBackend->auditReady($this->identityConnection);return;}$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}},false,true);}
     public function initialized():bool{return $this->transaction(fn($db)=>$db['users']!==[]);}
     public function initialize(string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($username,$name,$email,$password){if($db['users']!==[])throw new \DomainException('Identity already initialized.');$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),true);ActivityJournal::record($db,$u,'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function login(string $username,string $password,string $ip,string $legacyHash=''):array{
@@ -326,9 +327,9 @@ final class IdentityStore
         return $result;
     }
     /** Always anonymous, even if a caller supplies a valid main-host session cookie. */
-    public function withDomain(string $host,callable $fn):mixed{return $this->transaction(fn($db)=>$fn(CustomDomains::find($db,$host)),false);}
+    public function withDomain(string $host,callable $fn):mixed{return $this->transaction(fn($db)=>$fn(CustomDomains::find($db,$host)),false,true);}
     public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
-    public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){Workspaces::assertRegistryDirectories($root,$db);PostgresContentStore::assertRegistry($root,$db);(new BookStore($root,Workspaces::legacy($db)===null))->checkReady();foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();});}
+    public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){Workspaces::assertRegistryDirectories($root,$db);PostgresContentStore::assertRegistry($root,$db);(new BookStore($root,Workspaces::legacy($db)===null))->checkReady();foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();},false,true);}
     public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
     public function createWorkspace(string $token,string $org,string $name,string $slug,bool $legacy=false):array{return $this->transaction(function(&$db)use($token,$org,$name,$slug,$legacy){$uid=self::requireSession($db,$token)['user'];$w=Workspaces::create($db,$uid,$org,$name,$slug,$legacy);ActivityJournal::record($db,$db['users'][$uid],$legacy?'workspace.adopt':'workspace.create',$w['name'],$w['id'],$org,$w['id']);
         if($legacy){$root=dirname($this->dir);$store=new BookStore($root);$store->materialize();}
@@ -372,6 +373,7 @@ final class IdentityStore
         return $this->transaction(function($db){$out=[['org'=>'','id'=>'']];foreach($db['workspaces'] as $w)if(!$w['legacy'])$out[]=['org'=>$w['organization'],'id'=>$w['id']];return $out;},false);
     }
     public function withWorkspace(string $token,string $org,string $id,callable $fn,bool $publishedRead=false):mixed{
+        $shared=$token===''&&$publishedRead;
         return $this->transaction(function(&$db,$flush)use($token,$org,$id,$fn,$publishedRead){
             $ctx=self::context($db,$token);$uid=$ctx['user']['id']??'';
             $w=Workspaces::access($db,$uid,$org,$id);
@@ -379,17 +381,18 @@ final class IdentityStore
             if($ctx&&$w&&Permissions::allows($w['role'],'edit')){$ctx['review_users']=self::reviewUsers($db,$db['workspaces'][$id]);$ctx['team_members']=self::reviewUsers($db,$db['workspaces'][$id],'read');}
             // Flush session heartbeat before dispatch; SQL keeps the identity lock through content dispatch.
             $flush();return $fn($ctx,$w);
-        });
+        },!$shared,$shared);
     }
     /** Root/legacy routes cannot bypass the current workspace or book visibility policy. */
-    public function withLegacy(string $token,callable $fn):mixed{
+    public function withLegacy(string $token,callable $fn,bool $publishedRead=false):mixed{
+        $shared=$token===''&&$publishedRead;
         return $this->transaction(function(&$db,$flush)use($token,$fn){
             $ctx=self::context($db,$token);$u=$ctx['user']??null;$w=Workspaces::legacy($db);$o=$w?$db['organizations'][$w['organization']]:null;
             $role=$o?(($o['archived']||$w['archived'])?'none':Permissions::workspace($o,$w,$u['id']??'')):(($u['owner']??false)?'owner':'none');
             $visible=!$o||(!$o['archived']&&!$w['archived']&&($role!=='none'||(!isset($o['members'][$u['id']??''])&&Visibility::workspace($w)==='public')));
             if($ctx&&Permissions::allows($role,'edit')){$ctx['review_users']=self::reviewUsers($db,$w);$ctx['team_members']=self::reviewUsers($db,$w,'read');}
             $flush();return $fn($ctx,$role,$w,$visible);
-        });
+        },!$shared,$shared);
     }
     public function withLegacyStudio(string $token,callable $fn):mixed{
         return $this->withLegacy($token,fn($ctx,$role,$w,$visible)=>$fn($ctx,Permissions::allows($role,'edit'),$role));

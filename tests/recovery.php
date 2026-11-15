@@ -17,13 +17,19 @@ try{
  $input=$base.'/input.txt';$mediaText=str_repeat('media content unique and private\n',50000);file_put_contents($input,$mediaText);$media=new MediaStore($dir,$books);$mid=$media->upload($input,'attachment.txt')['item']['id'];
  if(!$storage){$books->setHistoryActor($owner);$books->saveResult(['book'=>'guide','version'=>'1','path'=>'start','title'=>'Start','section'=>'Guide','order'=>10,'body'=>"# Start\n\n[File](/media/$mid)",'revision'=>0],true);}
  if($postgres){if(!$dsn||!getenv('BOOK_BACKUP_DRILL_PG_DSN'))throw new RuntimeException('Source and drill PostgreSQL databases required.');putenv('BOOK_PG_DSN='.$dsn);PostgresContentStore::migrate($root);}
- $m=new RecoveryManager($public);$a=$m->run();$id=$a['id'];$file=$spool.'/'.$id.'.cbk';
+ $m=new RecoveryManager($public);ok($m->health(300)['status']==='unavailable','no verified capture is unhealthy');$a=$m->run();$id=$a['id'];$file=$spool.'/'.$id.'.cbk';
  ok($a['status']==='verified'&&$a['remote']===($s3?'s3':'filesystem')&&is_file($file),'scheduled backup verified after remote read-back and actual restore');
  ok($m->run()['status']==='not_due','persistent interval prevents duplicate backups');
  ok(!str_contains(file_get_contents($file),'media content unique')&&!str_contains(file_get_contents($file),'owner@example.org'),'backup does not expose plaintext identity or media');
  ok((fileperms($file)&0777)===0600&&glob($spool.'/.recovery-*')===[],'private artifact and staging cleanup');
  ok($m->status()['state']['last_id']===$id&&$m->status()['state']['pending']===null,'durable verified state');
- if($postgres)ok(isset($a['restore']['postgres_drill']['search'])&&$a['restore']['postgres_drill']['audit_streams']===3,'real PostgreSQL drill migration, search and audit');
+ if($postgres){
+  ok(isset($a['restore']['postgres_drill']['search'])&&$a['restore']['postgres_drill']['audit_streams']===3,'real PostgreSQL drill migration, search and audit');
+  $old=getenv('BOOK_BACKUP_DRILL_PG_DSN');$ou=getenv('BOOK_BACKUP_DRILL_PG_USER');$op=getenv('BOOK_BACKUP_DRILL_PG_PASSWORD');
+  putenv('BOOK_BACKUP_DRILL_PG_DSN='.$dsn.';application_name=alias_drill');putenv('BOOK_BACKUP_DRILL_PG_USER='.(getenv('BOOK_PG_USER')?:''));putenv('BOOK_BACKUP_DRILL_PG_PASSWORD='.(getenv('BOOK_PG_PASSWORD')?:''));
+  try{deny(fn()=>$m->drill($id),'alternate DSN to source database rejected');}finally{putenv('BOOK_BACKUP_DRILL_PG_DSN='.$old);putenv('BOOK_BACKUP_DRILL_PG_USER='.$ou);putenv('BOOK_BACKUP_DRILL_PG_PASSWORD='.$op);}
+ }
+ ok($m->health(300)['status']==='ok','fresh verified capture is healthy');
  // Remove local copy: restore must read remote bytes, not the local repository or live source.
  unlink($file);$result=$m->restore($id,$base.'/restored',true);$restored=new BookStore(Workspaces::directory($base.'/restored',$w),false,true);$ri=new IdentityStore($base.'/restored',true);
  ok($result['users']===1&&$ri->backup()['organizations'][$org['id']]['id']===$org['id']&&$ri->current($token)===null,'remote-only restore retains identity and revokes old sessions');
@@ -40,7 +46,8 @@ try{
   $otherFile=$remote.'/'.$b['id'].'.cbk';$otherBytes=file_get_contents($otherFile);file_put_contents($otherFile,$original);deny(fn()=>$m->restore($b['id'],$base.'/swapped',true),'valid older encrypted artifact cannot be substituted for a different ID');file_put_contents($otherFile,$otherBytes);
   $r=Files::read($spool.'/'.$id.'.json');$r['verified_at']=time()-3*86400;Files::json($spool.'/'.$id.'.json',$r);$c=$m->run(true);ok(!is_file($file)&&is_file($remoteFile)&&is_file($spool.'/'.$b['id'].'.cbk')&&is_file($spool.'/'.$c['id'].'.cbk'),'retention keeps two newest local backups and never deletes remote objects');
  }
- $lock=fopen($spool.'/scheduler.lock','c+b');flock($lock,LOCK_EX);deny(fn()=>$m->run(true),'concurrent scheduler excluded');fclose($lock);
+ $lock=fopen($spool.'/scheduler.lock','c+b');flock($lock,LOCK_EX);ok($m->health(300)['status']==='ok','RPO probe remains available while scheduler locked');deny(fn()=>$m->run(true),'concurrent scheduler excluded');fclose($lock);
+ $saved=Files::read($spool.'/state.json');$aged=$saved;$aged['last_capture']=time()-301;Files::json($spool.'/state.json',$aged);ok($m->health(300)['status']==='unavailable','RPO uses capture time rather than completion');Files::json($spool.'/state.json',$saved);
  $stale=$spool.'/.recovery-'.str_repeat('a',32);mkdir($stale,0700);file_put_contents($stale.'/plaintext','crash residue');$m->status();ok(!file_exists($stale),'next locked operation cleans abandoned plaintext staging');
  echo "OK\n";
 }finally{if($postgres&&$dsn){putenv('BOOK_PG_DSN='.$dsn);try{$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);}catch(Throwable $e){fwrite(STDERR,'Cleanup: '.$e->getMessage()."\n");}}clean($base);}

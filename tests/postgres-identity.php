@@ -65,6 +65,13 @@ try{
     ok($count('content_store')===$scopes&&$count('identity_workspaces')===$workspaces,'failed workspace creation leaves no orphan SQL scope or registry entry');
     $pdo->exec("DROP TRIGGER $trigger ON cajeer_book.identity_workspaces; DROP FUNCTION cajeer_book.$trigger()");
     $new=$s->createWorkspace($ot,$oid,'Atomic success','atomic-success');$dir=Workspaces::directory($root,$new);ok($count('content_store')===$scopes+1&&$count('identity_workspaces')===$workspaces+1&&(new BookStore($dir,false))->read()['pages']===[]&&!file_exists($dir.'/books.json'),'new workspace and content commit together without JSON');
+    // Anonymous readers hold compatible shared locks; an authorization writer cannot
+    // pass them. NOWAIT proves this without depending on timing or sleeps.
+    $s->withWorkspace('', $oid,$wid,function($ctx,$w)use($ns){
+        $p=PostgresContentStore::connect();$p->beginTransaction();
+        try{$q=$p->prepare('SELECT installation FROM cajeer_book.identity_state WHERE installation=? FOR SHARE NOWAIT');$q->execute([$ns]);ok($q->fetchColumn()===$ns,'parallel anonymous reader can acquire shared identity lock');}finally{$p->rollBack();}
+        $p->beginTransaction();try{$q=$p->prepare('SELECT installation FROM cajeer_book.identity_state WHERE installation=? FOR UPDATE NOWAIT');deny(fn()=>$q->execute([$ns]),'authorization writer cannot pass active public reader');}finally{$p->rollBack();}
+    },true);
     // Independent process cannot change authorization during a scoped content operation.
     $revision=$s->organization($ot,$oid)['revision'];$code='require $argv[1]."/bootstrap.php"; $i=new CajeerBook\\IdentityStore($argv[2]);echo "started\n";flush();$i->mutateOrganization($argv[3],$argv[4],(int)$argv[5],"role",["user"=>$argv[6],"role"=>"viewer"]);echo "done\n";';
     $proc=null;$pipes=[];$s->withWorkspace($wt,$oid,$wid,function($ctx,$w)use(&$proc,&$pipes,$code,$root,$ot,$oid,$revision,$writer){

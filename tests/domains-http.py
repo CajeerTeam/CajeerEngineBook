@@ -86,7 +86,7 @@ def exercise(ports,state,env):
 
 def main():
     with tempfile.TemporaryDirectory(prefix='book-domains-http-') as tmp:
-        env=dict(os.environ,BOOK_DATA_DIR=tmp+'/data',BOOK_PRIMARY_HOST=MAIN,BOOK_DOMAIN_EDGE_SECRET=EDGE,BOOK_DOMAIN_ASK_IP='127.0.0.1',BOOK_SECURE_COOKIE='0')
+        env=dict(os.environ,BOOK_DATA_DIR=tmp+'/data',BOOK_PRIMARY_HOST=MAIN,BOOK_DOMAIN_EDGE_SECRET=EDGE,BOOK_DOMAIN_ASK_IP='127.0.0.1',BOOK_SECURE_COOKIE='1')
         for k in ['BOOK_REDIS_HOST','BOOK_REDIS_URL','BOOK_OIDC_CONFIG','BOOK_OIDC_REQUIRED','BOOK_ADMIN_HASH']:env.pop(k,None)
         if PG:
             assert env.get('BOOK_PG_DSN') and FULL;env['BOOK_PG_NAMESPACE']=uuid.uuid4().hex

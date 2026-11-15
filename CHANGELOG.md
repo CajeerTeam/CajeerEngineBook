@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — Enterprise Documentation Stable
+
+- Concurrent anonymous PostgreSQL Reader and domain resolution using shared identity locks; authorization and visibility mutations retain exclusive locks.
+- Readiness rejects incompatible Redis, HTTPS and required OIDC settings. Docker build context excludes local secrets and backups.
+- Enterprise Compose overlay aligns backup source identity with the application, requires remote storage and a separate SQL restore drill; backup health measures verified capture age without blocking the scheduler.
+- Restore drill rejects the source installation even through alternate DSNs.
+- Integrated TLS/DNS, publication/search, audit, scheduled backup and remote-only SQL recovery gate; real concurrent HTTP benchmark and mandatory aggregate CI gate.
+
 ## 0.4.9 — Automated Backup & Recovery
 
 - Installation-wide consistent portable snapshots: identity lock and shared content-scope locks, reused SQL read connection, verified media and retained audit history.

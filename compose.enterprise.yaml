@@ -1,0 +1,26 @@
+# Last overlay after base + postgres + redis + distributed + domains + backup.
+# Both the scheduler and app use the exact same SQL installation.
+services:
+  backup:
+    environment:
+      BOOK_PG_DSN: "pgsql:host=postgres;port=5432;dbname=book;connect_timeout=5"
+      BOOK_PG_USER: book
+      BOOK_PG_PASSWORD: ${BOOK_PG_PASSWORD:?Set BOOK_PG_PASSWORD}
+      BOOK_PG_NAMESPACE: ${BOOK_PG_NAMESPACE:?Set BOOK_PG_NAMESPACE}
+      BOOK_PRIMARY_HOST: ${BOOK_PRIMARY_HOST:?Set BOOK_PRIMARY_HOST}
+      BOOK_BACKUP_S3_URI: ${BOOK_BACKUP_S3_URI:?Set a remote S3 backup repository}
+      BOOK_BACKUP_DRILL_PG_DSN: ${BOOK_BACKUP_DRILL_PG_DSN:?Set a separate PostgreSQL drill database}
+      BOOK_BACKUP_DRILL_PG_USER: ${BOOK_BACKUP_DRILL_PG_USER:?Set drill database user}
+      BOOK_BACKUP_DRILL_PG_PASSWORD: ${BOOK_BACKUP_DRILL_PG_PASSWORD:?Set drill database password}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      book:
+        condition: service_healthy
+    healthcheck:
+      disable: false
+      test: [CMD, php, bin/recovery.php, health, "${BOOK_BACKUP_MAX_AGE:-90000}"]
+      interval: 60s
+      timeout: 10s
+      start_period: 10m
+      retries: 3

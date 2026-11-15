@@ -5,11 +5,21 @@ namespace CajeerBook;
 final class ReleaseHealth
 {
     public const MERMAID_VERSION = '11.17.2';
+    /** Reject insecure/inconsistent operator settings without depending on a live IdP. */
+    public static function configuration(): void
+    {
+        $primary=CustomDomains::primary();$oidc=Oidc::config();
+        if(Oidc::required()&&$oidc===null)throw new \RuntimeException('Required OIDC provider is not configured.');
+        if(($primary!==null||$oidc!==null)&&getenv('BOOK_SECURE_COOKIE')==='0')throw new \RuntimeException('HTTPS domains and OIDC require secure cookies.');
+        if($primary!==null&&$oidc!==null&&($oidc['redirect_uri']!=='https://'.$primary.Oidc::CALLBACK))throw new \RuntimeException('OIDC callback must use the primary HTTPS domain.');
+        if(RedisRuntime::enabled()&&!getenv('BOOK_PG_DSN'))throw new \RuntimeException('Redis requires PostgreSQL.');
+    }
     public static function check(string $root): void
     {
         if (PHP_VERSION_ID < 80401 || !extension_loaded('mbstring') || !extension_loaded('fileinfo') || !extension_loaded('phar') || !extension_loaded('zip') || !extension_loaded('openssl') || !class_exists(\Symfony\Component\Yaml\Yaml::class) || !class_exists(\League\CommonMark\Parser\MarkdownParser::class)) {
             throw new \RuntimeException('Required PHP runtime dependencies are missing');
         }
+        self::configuration();
         foreach (['runtime.mjs','runtime.py','Runtime.php'] as $file) {
             if (!is_readable($root.'/resources/sdk/'.$file)) throw new \RuntimeException('SDK runtime files are missing');
         }
