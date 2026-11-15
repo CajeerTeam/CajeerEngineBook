@@ -80,7 +80,7 @@ final class RecoveryManager
         }finally{
             try{
                 // Only remove this drill's randomly generated, marker-bound namespace.
-                $binding=null;foreach(['postgres.required','postgres.migrating'] as $marker){$p=$restored.'/'.$marker;if(is_file($p)&&!is_link($p)&&preg_match('/\A([a-f0-9]{32}):([a-f0-9]{32})\n\z/D',(string)file_get_contents($p),$m)&&$m[1]===$ns){$binding=[$m[1],$m[2]];break;}}if($binding!==null){$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=? AND binding=?');$q->execute($binding);// A failed migration may already have rolled back the namespace.
+                $binding=null;foreach(['postgres.required','postgres.migrating'] as $marker){$p=$restored.'/'.$marker;if(is_file($p)&&!is_link($p)&&preg_match('/\A([a-f0-9]{32}):([a-f0-9]{32})\n\z/D',(string)file_get_contents($p),$m)&&$m[1]===$ns){$binding=[$m[1],$m[2]];break;}}if($binding!==null){$pdo=PostgresContentStore::runtimeConnect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=? AND binding=?');$q->execute($binding);// A failed migration may already have rolled back the namespace.
                 if($q->rowCount()>1)throw new \RuntimeException('Drill namespace cleanup failed.');}
             }finally{foreach($old as $name=>$value)putenv($value===false?$name:$name.'='.$value);}
         }

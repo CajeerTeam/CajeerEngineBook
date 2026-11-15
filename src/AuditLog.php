@@ -15,18 +15,15 @@ final class AuditLog
     private static function id(mixed $s):string{return is_string($s)&&preg_match('/\A[a-f0-9]{32}\z/D',$s)?$s:'';}
     private static function json(array $a):string{return json_encode($a,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);}
     private static function q(PDO $pdo,string $sql,array $args=[]):\PDOStatement{$q=$pdo->prepare($sql);$q->execute($args);return $q;}
-    public static function schema(PDO $pdo):void{
-        $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-audit.sql');if($sql===false)throw new \RuntimeException('Audit schema unavailable.');$pdo->exec($sql);
-    }
     public static function assertReady(PDO $pdo):void{
         if((int)$pdo->query('SELECT version FROM cajeer_book.audit_format WHERE singleton=true')->fetchColumn()!==1)throw new \RuntimeException('Audit schema missing; run bin/audit.php migrate --offline.');
     }
     public static function connection(string $root):array{
         $b=PostgresContentStore::identityBinding($root);if(!$b)throw new \DomainException('Enterprise audit requires PostgreSQL.');
-        $pdo=PostgresContentStore::connect();if(self::q($pdo,'SELECT binding FROM cajeer_book.content_installation WHERE installation=?',[$b[0]])->fetchColumn()!==$b[1])throw new \RuntimeException('Audit installation binding mismatch.');return [$pdo,$b[0]];
+        $pdo=PostgresContentStore::runtimeConnect();if(self::q($pdo,'SELECT binding FROM cajeer_book.content_installation WHERE installation=?',[$b[0]])->fetchColumn()!==$b[1])throw new \RuntimeException('Audit installation binding mismatch.');return [$pdo,$b[0]];
     }
     public static function migrate(string $root):void{
-        [$pdo,$id]=self::connection($root);$pdo->beginTransaction();try{$pdo->exec('SELECT pg_advisory_xact_lock(1128416305,1)');self::schema($pdo);self::initialize($pdo,$id);$pdo->commit();}catch(\Throwable $e){$pdo->rollBack();throw $e;}
+        [$pdo,$id]=self::connection($root);$pdo->beginTransaction();try{self::initialize($pdo,$id);$pdo->commit();}catch(\Throwable $e){$pdo->rollBack();throw $e;}
     }
     /** Initialize once, offline, after content/identity import. Existing missing streams are damage. */
     public static function initialize(PDO $pdo,string $id):void{

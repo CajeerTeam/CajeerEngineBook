@@ -39,7 +39,7 @@ final class PostgresIdentityStore
     /** Hold the identity row lock across callbacks, even when they use another SQL content connection. */
     public function transaction(callable $fn,bool $shared=false):mixed
     {
-        $pdo=PostgresContentStore::connect();$pdo->beginTransaction();
+        $pdo=PostgresContentStore::runtimeConnect();$pdo->beginTransaction();
         try{
             $this->assertBinding($pdo);$db=$this->load($pdo,true,$shared);
             $result=$fn($db,$pdo);$pdo->commit();return $result;

@@ -81,20 +81,25 @@ final class PostgresContentStore
         if(!str_starts_with($dir,$prefix)||!preg_match('~\A[a-f0-9]{32}/[a-f0-9]{32}\z~D',substr($dir,strlen($prefix))))throw new \RuntimeException('Invalid PostgreSQL workspace scope.');
         return substr($dir,strlen($prefix));
     }
-    public static function connect():PDO
+    public static function connect(?string $user=null,?string $password=null):PDO
     {
         $dsn=getenv('BOOK_PG_DSN')?:'';
         if(!str_starts_with($dsn,'pgsql:'))throw new \RuntimeException('BOOK_PG_DSN must be a PostgreSQL PDO DSN.');
         if(!in_array('pgsql',PDO::getAvailableDrivers(),true))throw new \RuntimeException('PostgreSQL requires the PHP pdo_pgsql extension.');
         try{
-            $pdo=new PDO($dsn,getenv('BOOK_PG_USER')?:null,getenv('BOOK_PG_PASSWORD')?:null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false,PDO::ATTR_STRINGIFY_FETCHES=>false]);
+            $pdo=new PDO($dsn,$user??(getenv('BOOK_PG_USER')?:null),$password??(getenv('BOOK_PG_PASSWORD')?:null),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_PERSISTENT=>false,PDO::ATTR_EMULATE_PREPARES=>false,PDO::ATTR_STRINGIFY_FETCHES=>false]);
             $pdo->exec("SET search_path TO pg_catalog; SET lock_timeout TO '30s'; SET statement_timeout TO '120s'; SET client_encoding TO 'UTF8'");
             return $pdo;
         }catch(\PDOException $e){throw new \RuntimeException('PostgreSQL content connection failed.',0,$e);}
     }
+    /** Runtime connections pin the database-wide schema; raw connect is operator/test only. */
+    public static function runtimeConnect():PDO
+    {
+        $pdo=self::connect();DatabaseMigrations::pin($pdo);return $pdo;
+    }
     private function db():PDO{
         if($this->connection===null){
-            $pdo=self::connect();
+            $pdo=self::runtimeConnect();
             if((int)$pdo->query('SELECT version FROM cajeer_book.content_format WHERE singleton=true')->fetchColumn()!==1)throw new \RuntimeException('Unsupported PostgreSQL content format.');
             $q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$this->namespace]);
             if($q->fetchColumn()!==$this->binding)throw new \RuntimeException('PostgreSQL installation binding mismatch; verify database and data directory.');
@@ -120,7 +125,7 @@ final class PostgresContentStore
     {
         if(self::$backupConnection!==null)throw new \LogicException('Nested installation freeze.');
         $binding=self::identityBinding($root);if(!$binding)throw new \LogicException('PostgreSQL required.');
-        $pdo=self::connect();$pdo->beginTransaction();
+        $pdo=self::runtimeConnect();$pdo->beginTransaction();
         try{
             $q=$pdo->prepare('SELECT scope FROM cajeer_book.content_store WHERE installation=? ORDER BY scope FOR SHARE');$q->execute([$binding[0]]);$q->fetchAll(PDO::FETCH_COLUMN);$q->closeCursor();
             self::$backupConnection=$pdo;self::$backupNamespace=$binding[0];$fn();$pdo->commit();
@@ -231,16 +236,13 @@ final class PostgresContentStore
     public static function reindex(string $root):array
     {
         $binding=self::identityBinding($root);if($binding===null)throw new \RuntimeException('PostgreSQL required.');
+        $repair=self::connect();$q=$repair->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$binding[0]]);
+        if($q->fetchColumn()!==$binding[1])throw new \RuntimeException('PostgreSQL installation binding mismatch.');
+        DatabaseMigrations::repairSearchIndexes($repair);$repair=null;
         return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$binding){
             Workspaces::assertRegistryDirectories($root,$identity);self::assertRegistry($root,$identity);
-            $pdo=self::connect();$pdo->beginTransaction();
+            $pdo=self::runtimeConnect();$pdo->beginTransaction();
             try{
-                $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');
-                $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql');if($sql===false)throw new \RuntimeException('Missing PostgreSQL schema.');$pdo->exec($sql);
-                foreach(['search_simple_gin','search_english_gin','search_russian_gin','search_title_trgm','search_path_trgm','search_scope_locale'] as $index){
-                    $valid=$pdo->query("SELECT indisvalid FROM pg_index WHERE indexrelid='cajeer_book.".$index."'::regclass")->fetchColumn();
-                    if(!in_array($valid,[true,1,'1','t'],true))$pdo->exec('REINDEX INDEX cajeer_book.'.$index);
-                }
                 $report=self::rebuildInstallation($pdo,$binding[0],$binding[1]);$pdo->commit();return $report;
             }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
         });
@@ -319,15 +321,14 @@ final class PostgresContentStore
         $id=self::namespace();$marker=self::markerData($root);
         if($marker!==null&&$marker[0]!==$id)throw new \RuntimeException('PostgreSQL namespace mismatch.');
         $pdo=self::connect();
-        $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql');if($sql===false)throw new \RuntimeException('Missing PostgreSQL schema.');
-        $pdo->beginTransaction();
-        try{
-            // Serialize schema creation across installation namespaces in a shared database.
-            $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');$pdo->exec($sql);
-            $identitySql=file_get_contents(dirname(__DIR__).'/sql/postgres-identity.sql');if($identitySql===false)throw new \RuntimeException('Missing PostgreSQL identity schema.');$pdo->exec($identitySql);AuditLog::schema($pdo);
-            if((int)$pdo->query('SELECT version FROM cajeer_book.content_format WHERE singleton=true')->fetchColumn()!==1)throw new \RuntimeException('Unsupported PostgreSQL content format.');
-            $pdo->commit();
-        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        // A completed installation must use the schema engine, never the legacy import.
+        if($marker!==null){
+            $check=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$check->execute([$id]);
+            if($check->fetchColumn()!==$marker[1])throw new \RuntimeException('PostgreSQL installation binding mismatch.');
+            $identityMarker=self::markerData($root,self::IDENTITY_MARKER);
+            if($identityMarker!==null)throw new \RuntimeException('PostgreSQL identity already migrated; use bin/migrations.php apply --offline or restore the matched backup.');
+        }
+        DatabaseMigrations::prepareInstallation($pdo,$marker!==null);
         // 0.4.1 already has SQL content. Never import its stale books.json again.
         if($marker!==null){
             $check=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$check->execute([$id]);

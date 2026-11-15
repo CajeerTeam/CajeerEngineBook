@@ -6,7 +6,7 @@ if($argc!==2||!in_array($argv[1],['check','status'],true)){fwrite(STDERR,"Usage:
 try{
     $root=PostgresContentStore::configuredRoot();$binding=PostgresContentStore::identityBinding($root);
     if(!$binding)throw new RuntimeException('PostgreSQL required.');
-    $pdo=PostgresContentStore::connect();$q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$binding[0]]);if($q->fetchColumn()!==$binding[1])throw new RuntimeException('Installation binding mismatch.');
+    $pdo=PostgresContentStore::runtimeConnect();$q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$binding[0]]);if($q->fetchColumn()!==$binding[1])throw new RuntimeException('Installation binding mismatch.');
     (new IdentityStore($root))->checkReady();
     $redis=RedisRuntime::forRoot($root);if(!$redis)throw new RuntimeException('Redis not configured.');$redis->check();
     if($argv[1]==='check'){echo "Distributed runtime ready\n";exit(0);}

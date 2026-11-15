@@ -1,6 +1,49 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.5.2 — Database Migration Engine
+
+**Existing PostgreSQL 0.5.1 installations must upgrade their database schema before starting 0.5.2.** This is a database-wide operation: all installation namespaces sharing the PostgreSQL database use the same schema. Stop every web node, worker, domain-check and backup process (including any older release), make a verified backup with the old code, and retain the matching data directory, namespace, media and keys. Do not run a rolling mixed-version upgrade. File-only installations require no SQL migration.
+
+The new CLI uses PHP PDO PostgreSQL directly (no Composer dependency for schema diagnostics):
+
+```sh
+php bin/migrations.php status
+php bin/migrations.php plan
+php bin/migrations.php preflight
+php bin/migrations.php apply --offline
+php bin/migrations.php verify
+```
+
+- `status` / `plan`: read-only catalog/ledger/history verification, current and required version, pending steps, estimated database/audit table size, CREATE privilege and whether an exclusive advisory lock is available. An unregistered legacy schema is a candidate, not yet verified. `verify` returns nonzero unless the registered schema is current and valid.
+- `preflight`: **offline transactional rehearsal** of the actual upgrade, including baseline validation, index build and registry writes; rolls back even on success. It checks the actual DDL privileges and lock availability. It can take as long as applying the migration and needs temporary database disk/WAL capacity; PostgreSQL sequence gaps may remain after rollback. No application data or migration records are committed. It is not a substitute for a backup, nor a server free-disk-space probe.
+- `apply --offline`: serializes all migrations with a database-wide PostgreSQL advisory lock and commits the entire pending migration sequence in one transaction. On failure, DDL and registry changes roll back together; fix the cause and rerun. The lock timeout is 30 seconds and the per-statement timeout 30 minutes. A repeated apply at the current schema is a verified no-op.
+- `rollback 1 --offline`: removes only the new audit outcome index and records the rollback. The baseline is not reversible. The 0.5.2 runtime refuses schema 1; deploy the matching 0.5.1 code only after stopping 0.5.2 everywhere. To return to 0.5.2, apply again. No content, identity or audit rows are removed by this rollback. For future destructive changes, restore the matching pre-upgrade database and media backup rather than pretending to reverse data loss.
+
+Schema 1 is the exact existing 0.5.1 content/identity/search/audit DDL. On a populated unregistered database the engine creates a temporary reference schema inside the transaction, compares required tables/columns, partitions, constraints, indexes, trigger and function definitions against the baseline, and refuses incomplete or unexpected structural changes. Extra independent indexes are permitted. It never reimports legacy JSON to register a populated SQL installation. Schema 2 adds the actual `(installation, outcome, at_epoch DESC, event_id DESC)` index used by Audit Explorer's outcome filter. Existing business data and hash chains remain unchanged. The database registry records SHA-256 of each ordered SQL file bundle (both directions), release, application mode and timing; a separate history records applies and rollbacks. Baseline SQL files are now immutable; future schema changes must be new ordered migrations. Do not edit the registry or historical SQL to bypass verification.
+
+Every PostgreSQL content/identity connection, audit operation, worker and recovery import uses the current schema guard. Non-persistent PDO sessions hold a shared advisory lock for their lifetime, so an exclusive migration fails rather than racing active 0.5.2 runtime connections. Older processes do not implement this shared lock and **must** be stopped explicitly. Use direct PostgreSQL or session-mode pooling, not transaction-mode pooling with session advisory locks. A raw `PostgresContentStore::connect()` is reserved for operator/test code; ordinary runtime paths use `runtimeConnect()`.
+
+For a fresh file-to-PostgreSQL import, `php bin/postgres-content.php migrate --offline` prepares the current schema through the same engine and imports content/identity. A completed SQL installation must instead use `bin/migrations.php`; the import CLI refuses to overwrite it. Older incomplete 0.4.x schemas should first complete their documented upgrades with the matching pre-0.5.2 release. `search.php reindex --offline` repairs derived search indexes and rebuilds the projection, not the schema version; `audit.php migrate --offline` initializes missing installation audit streams only on a current schema.
+
+### Upgrade in Docker Compose
+
+Use the installation's existing Compose overlays. Stop all Book services except PostgreSQL/Redis; create and verify a backup before replacing the source/image, then rebuild. Run the CLI in a one-off Book container with the matched data volume:
+
+```sh
+docker compose run --rm --no-deps --user www-data book php bin/migrations.php plan
+docker compose run --rm --no-deps --user www-data book php bin/migrations.php preflight
+docker compose run --rm --no-deps --user www-data book php bin/migrations.php apply --offline
+docker compose run --rm --no-deps --user www-data book php bin/migrations.php verify
+docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php check
+docker compose run --rm --no-deps --user www-data book php bin/search.php check
+docker compose run --rm --no-deps --user www-data book php bin/audit.php check
+```
+
+Resume the original services only after successful checks. For a dedicated migration role, set `BOOK_MIGRATION_PG_USER` and `BOOK_MIGRATION_PG_PASSWORD` for the migration CLI (pass via `docker compose run -e ...` if required); it uses the same `BOOK_PG_DSN` and binding. The migration role must own or have the required ownership privileges on the schema/tables, and CREATE on the database for initial schema/reference validation. The default existing deployment still uses the schema-owning application role; optional separation is operator-managed. With a separately provisioned runtime role, grant USAGE on the schema, SELECT on the migration ledger/history, and the existing application table/sequence/function privileges, but do not grant registry writes or DDL to runtime. Prepare a fresh schema with the migration role first, then perform the normal content import with the runtime role. Never expose migration credentials to the web container. PostgreSQL 16+ and `pg_trgm` are required. The baseline validation uses PostgreSQL catalog definitions; major PostgreSQL upgrades need separate qualification.
+
+Migration integration tests run in an isolated **disposable** `book_migrations` database provisioned by `tests/release-gate.py --suite postgres`. They cover fresh schema, actual legacy data, dry-run, drift, concurrent locking, failed DDL/ledger transaction, rollback/reapply and live content/identity/audit. Local policy tests are `php tests/migrations-policy.php`; a full production release still requires a successful infrastructure gate.
 
 ## 0.5.1 — Release Gate Hardening
 

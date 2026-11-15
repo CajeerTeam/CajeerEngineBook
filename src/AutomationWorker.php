@@ -20,7 +20,7 @@ final class AutomationWorker
     {
         $registered=[];foreach($this->identity->automationScopes() as $scope)$registered[$scope['id']===''?'legacy':$scope['org'].'/'.$scope['id']]=$scope;
         // The existing automation_jobs partition is the durable inbox/outbox. No new queue schema.
-        $pdo=PostgresContentStore::connect();$q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$binding[0]]);if($q->fetchColumn()!==$binding[1])throw new \RuntimeException('Worker installation binding mismatch.');
+        $pdo=PostgresContentStore::runtimeConnect();$q=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$binding[0]]);if($q->fetchColumn()!==$binding[1])throw new \RuntimeException('Worker installation binding mismatch.');
         $q=$pdo->prepare("SELECT DISTINCT scope FROM cajeer_book.automation_jobs WHERE installation=? AND ((value->>'state'='queued' AND (value->>'due')::bigint<=?) OR (value->>'state'='running' AND (value->>'lease_until')::bigint<=?)) ORDER BY scope");$now=time();$q->execute([$binding[0],$now,$now]);$due=$q->fetchAll(\PDO::FETCH_COLUMN);
         // A Redis notification is only a hint; untrusted, stale and foreign scopes cannot authorize work.
         $due=array_values(array_unique(array_merge(array_intersect($preferred,$due),$due)));$count=0;

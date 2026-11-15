@@ -142,10 +142,13 @@ def postgres(g):
             '-c',"CREATE ROLE book_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_app_test_only'",
             '-c',"CREATE ROLE book_drill LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_drill_test_only'",
             '-c','ALTER DATABASE book_test OWNER TO book_app','-c','REVOKE CONNECT ON DATABASE book_test FROM PUBLIC',
-            '-c','CREATE DATABASE book_drill OWNER book_drill','-c','REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC'])
+            '-c','CREATE DATABASE book_drill OWNER book_drill','-c','REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC',
+            '-c','CREATE DATABASE book_migrations OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_migrations FROM PUBLIC'])
         port=capture(['docker','port',pg,'5432/tcp'],g.env).rsplit(':',1)[1]
         rport=capture(['docker','port',redis,'6379/tcp'],g.env).rsplit(':',1)[1]
         g.env.update(BOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_test;connect_timeout=5',BOOK_PG_USER='book_app',BOOK_PG_PASSWORD='book_app_test_only')
+        migration_env=dict(g.env,BOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_migrations;connect_timeout=5',BOOK_MIGRATION_TEST='1')
+        g.run('postgres-migrations',['php','tests/postgres-migrations.php'],1200,migration_env)
         g.run('upgrade-050',['php','tests/upgrade-050.php','--postgres'])
         for name in ('postgres-content','postgres-identity','postgres-audit'):
             g.run(name,['php',f'tests/{name}.php'])

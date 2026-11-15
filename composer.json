@@ -24,6 +24,7 @@
     "scripts": {
         "test": [
             "@php tests/enterprise-policy.php",
+            "@php tests/migrations-policy.php",
             "python3 tests/release-gate-policy.py",
             "@php tests/upgrade-050.php",
             "python3 tests/enterprise-load.py",

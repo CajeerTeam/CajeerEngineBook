@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2 — Database Migration Engine
+
+- Database-wide versioned PostgreSQL SQL migrations, exact ordered SQL checksums, current ledger and durable apply/rollback history.
+- Strict 0.5.1 baseline adoption using a transactional reference schema and PostgreSQL catalog verification, without importing stale file data or modifying existing content.
+- Actual audit outcome cursor index, transactional upgrade and index-only safe rollback; irreversible baseline cannot be removed.
+- CLI status/plan/preflight/apply/verify/rollback, full transactional dry-run, binding checks, migration credentials, bounded lock/statement timeouts.
+- Shared schema guards in PostgreSQL runtime connections; offline exclusive schema changes fail while current runtime sessions are active. Search repair and audit initialization no longer reapply historical schema DDL.
+- Fresh import and recovery drill use the same migration engine. PostgreSQL installations must run `bin/migrations.php apply --offline` before 0.5.2 starts; file-only mode is unchanged.
+- Dedicated PostgreSQL migration integration gate covering fresh and populated schema, drift, rollback, concurrency, injected transaction failure and actual data/identity/audit preservation.
+
 ## 0.5.1 — Release Gate Hardening
 
 - Fail closed on invalid enterprise security configuration on actual application routes; readiness retains its JSON contract.
