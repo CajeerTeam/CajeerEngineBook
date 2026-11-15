@@ -7,4 +7,4 @@ else spl_autoload_register(static function(string $class)use($root):void{
         $p=$root.'/'.$dir.str_replace('\\','/',substr($class,strlen($prefix))).'.php';if(is_file($p))require $p;
     }
 });
-if(PHP_SAPI==='cli-server')(new CajeerBook\App($root))->run();
+if(PHP_SAPI==='cli-server'){if(getenv('BOOK_OBSERVABILITY_EXPORTER')==='1')CajeerBook\Diagnostics::serve();else (new CajeerBook\App($root))->run();}

@@ -7,10 +7,16 @@ export BOOK_PRIMARY_HOST=book.example.com BOOK_ACME_EMAIL=ci@example.com
 export BOOK_PG_NAMESPACE="$(openssl rand -hex 16)" BOOK_PG_PASSWORD="$(openssl rand -hex 24)" BOOK_PG_ADMIN_PASSWORD="$(openssl rand -hex 24)"
 export BOOK_REDIS_PASSWORD="$(openssl rand -hex 32)" BOOK_DOMAIN_EDGE_SECRET="$(openssl rand -hex 32)"
 export COMPOSE_PROJECT_NAME="${BOOK_GATE_PROJECT:-book-domain-$(openssl rand -hex 6)}"
-export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml:compose.domains.yaml:compose.backup.yaml:compose.enterprise.yaml:tests/compose.domains-test.yaml
+export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml:compose.domains.yaml:compose.backup.yaml:compose.enterprise.yaml:compose.observability.yaml:tests/compose.domains-test.yaml
 export BOOK_TEST_DNS_DIR="$(mktemp -d)" BOOK_TEST_CADDYFILE
 BOOK_TEST_CADDYFILE="$BOOK_TEST_DNS_DIR/Caddyfile"; chmod 755 "$BOOK_TEST_DNS_DIR"
 printf '{}' > "$BOOK_TEST_DNS_DIR/records.json"
+export BOOK_METRICS_TOKEN_PATH="$BOOK_TEST_DNS_DIR/metrics-token" BOOK_GRAFANA_PASSWORD_PATH="$BOOK_TEST_DNS_DIR/grafana-password" BOOK_ALERT_WEBHOOK_PATH="$BOOK_TEST_DNS_DIR/alert-webhook" BOOK_MONITOR_TLS=0
+openssl rand -hex 32 > "$BOOK_METRICS_TOKEN_PATH"
+openssl rand -hex 32 > "$BOOK_GRAFANA_PASSWORD_PATH"
+printf 'http://monitoring-receiver:8080/alerts\n' > "$BOOK_ALERT_WEBHOOK_PATH"
+chmod 644 "$BOOK_METRICS_TOKEN_PATH" "$BOOK_GRAFANA_PASSWORD_PATH" "$BOOK_ALERT_WEBHOOK_PATH"
+mkdir "$BOOK_TEST_DNS_DIR/alerts"
 # Production overlay is exercised with a separate filesystem repository in this
 # gate; the independent recovery-s3.sh gate exercises real S3 over HTTPS.
 export BOOK_BACKUP_KEY_PATH="$BOOK_TEST_DNS_DIR/backup.key"
@@ -24,14 +30,14 @@ as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
 as_root chown 33:33 "$BOOK_BACKUP_KEY_PATH" "$BOOK_TEST_DNS_DIR/remote"
 chmod 700 "$BOOK_TEST_DNS_DIR/remote" 2>/dev/null || as_root chmod 700 "$BOOK_TEST_DNS_DIR/remote"
 sed '/^        on_demand$/a\        issuer internal' deploy/book-Caddyfile > "$BOOK_TEST_CADDYFILE"
-cleanup() { rc=$?; if [ "$rc" -ne 0 ]; then docker compose logs --no-color || true; fi; docker compose --profile backup down -v --remove-orphans || rc=1; as_root rm -rf "$BOOK_TEST_DNS_DIR" || rc=1; exit "$rc"; }
+cleanup() { rc=$?; if [ "$rc" -ne 0 ]; then docker compose logs --no-color || true; fi; docker compose --profile automation --profile backup down -v --remove-orphans || rc=1; as_root rm -rf "$BOOK_TEST_DNS_DIR" || rc=1; exit "$rc"; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Validate the actual production configuration, not only the local-CA variant.
 docker run --rm -e BOOK_ACME_EMAIL -e BOOK_DOMAIN_EDGE_SECRET -v "$PWD/deploy/book-Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 docker compose config --quiet
-docker compose --profile backup build book backup
+docker compose --profile automation --profile backup build book worker domain-check backup diagnostics
 docker compose up -d --wait postgres redis dns-fixture
 docker compose exec -T postgres psql -U book_admin -d book -v ON_ERROR_STOP=1 -c "CREATE ROLE book_drill LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$BOOK_BACKUP_DRILL_PG_PASSWORD'" -c "CREATE DATABASE book_drill OWNER book_drill" -c "REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC"
 docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php migrate --offline
@@ -92,3 +98,6 @@ code="$(https book.example.com -sS -o /dev/null -w '%{http_code}' -H "Cookie: __
 [ "$(https docs.example.net -sS -o /dev/null -w '%{http_code}' https://docs.example.net/api/v1/pages)" = 421 ]
 [ "$(https docs.example.net -sS -o /dev/null -w '%{http_code}' https://docs.example.net/assets/book.css)" = 421 ]
 echo 'PASS real DNS TXT verification, local-CA TLS issuance, host isolation, HTTP redirect, SNI rejection and immediate domain disable'
+
+# Real Prometheus scrape, Grafana provisioning and Alertmanager delivery from this deployment.
+bash tests/monitoring-gate.sh

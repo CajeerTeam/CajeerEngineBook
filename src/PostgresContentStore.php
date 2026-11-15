@@ -7,6 +7,7 @@ use PDO;
 require_once __DIR__.'/PostgresSearch.php';
 require_once __DIR__.'/Search.php';
 require_once __DIR__.'/RedisRuntime.php';
+require_once __DIR__.'/Observability.php';
 
 /** PostgreSQL content storage. Immutable media bytes remain on disk; identity shares the installation binding. */
 final class PostgresContentStore
@@ -86,11 +87,12 @@ final class PostgresContentStore
         $dsn=getenv('BOOK_PG_DSN')?:'';
         if(!str_starts_with($dsn,'pgsql:'))throw new \RuntimeException('BOOK_PG_DSN must be a PostgreSQL PDO DSN.');
         if(!in_array('pgsql',PDO::getAvailableDrivers(),true))throw new \RuntimeException('PostgreSQL requires the PHP pdo_pgsql extension.');
+        $start=hrtime(true);$ok=false;
         try{
             $pdo=new PDO($dsn,$user??(getenv('BOOK_PG_USER')?:null),$password??(getenv('BOOK_PG_PASSWORD')?:null),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_PERSISTENT=>false,PDO::ATTR_EMULATE_PREPARES=>false,PDO::ATTR_STRINGIFY_FETCHES=>false]);
             $pdo->exec("SET search_path TO pg_catalog; SET lock_timeout TO '30s'; SET statement_timeout TO '120s'; SET client_encoding TO 'UTF8'");
-            return $pdo;
-        }catch(\PDOException $e){throw new \RuntimeException('PostgreSQL content connection failed.',0,$e);}
+            $ok=true;return $pdo;
+        }catch(\PDOException $e){throw new \RuntimeException('PostgreSQL content connection failed.',0,$e);}finally{Observability::operation('sql_connect',$start,$ok);}
     }
     /** Runtime connections pin the database-wide schema; raw connect is operator/test only. */
     public static function runtimeConnect():PDO
@@ -109,15 +111,15 @@ final class PostgresContentStore
     }
     private function query(PDO $pdo,string $sql,array $args=[]):\PDOStatement
     {
-        $s=$pdo->prepare($sql);$s->execute($args);return $s;
+        $start=hrtime(true);$ok=false;try{$s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;}finally{Observability::operation('sql_content_query',$start,$ok);}
     }
     private function params():array{return [$this->namespace,$this->scope];}
     private static function json(mixed $v):string{return json_encode($v,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRESERVE_ZERO_FRACTION);}
     private static function decode(string $v):mixed{return json_decode($v,true,512,JSON_THROW_ON_ERROR);}
     private function lock(PDO $pdo,bool $write):void
     {
-        $r=$this->query($pdo,'SELECT revision FROM cajeer_book.content_store WHERE installation=? AND scope=? '.($write?'FOR UPDATE':'FOR SHARE'),$this->params())->fetchColumn();
-        if($r===false)throw new \RuntimeException('PostgreSQL workspace content missing; restore or migrate it explicitly.');
+        $start=hrtime(true);$ok=false;try{$r=$this->query($pdo,'SELECT revision FROM cajeer_book.content_store WHERE installation=? AND scope=? '.($write?'FOR UPDATE':'FOR SHARE'),$this->params())->fetchColumn();
+        if($r===false)throw new \RuntimeException('PostgreSQL workspace content missing; restore or migrate it explicitly.');$ok=true;}finally{Observability::operation('sql_content_lock',$start,$ok);}
     }
     /** Called under the identity snapshot lock. Reuse this read connection for
      * nested snapshots so a queued exclusive writer cannot deadlock the backup. */
@@ -135,13 +137,13 @@ final class PostgresContentStore
     public function transaction(bool $write,callable $fn):mixed
     {
         if(self::$backupConnection!==null){if($write||$this->namespace!==self::$backupNamespace)throw new \LogicException('Write or foreign scope during backup snapshot.');return $fn($this->load(self::$backupConnection));}
-        $pdo=$this->db();$pdo->beginTransaction();$this->wake=false;
+        $start=hrtime(true);$ok=false;$pdo=$this->db();$pdo->beginTransaction();$this->wake=false;
         try{
             $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             $this->lock($pdo,$write);$result=$fn($this->load($pdo));$pdo->commit();
             if($this->wake)RedisRuntime::forBinding($this->namespace,$this->binding)?->notify($this->scope);
-            return $result;
-        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+            $ok=true;return $result;
+        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}finally{Observability::operation('sql_content_transaction',$start,$ok);}
     }
     private function load(PDO $pdo):array
     {
@@ -393,7 +395,7 @@ final class PostgresContentStore
             // If marker creation fails after commit, rerun offline; existing rows must match exactly.
             Files::write($root.'/'.self::IDENTITY_MARKER,$id.':'.$binding."\n");
             Files::write($root.'/'.self::MARKER,$id.':'.$binding."\n");
-            try{Files::remove($root.'/'.self::PENDING);}catch(\Throwable $e){error_log('PostgreSQL migration marker cleanup: '.$e->getMessage());}
+            try{Files::remove($root.'/'.self::PENDING);}catch(\Throwable $e){Observability::log('migration.cleanup_failure',['error_type'=>get_class($e)]);}
             return $report;
         });
         return $report;

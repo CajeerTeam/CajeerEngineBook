@@ -29,3 +29,17 @@ services:
       BOOK_BACKUP_REMOTE_DIR: /test-remote
     volumes:
       - ${BOOK_TEST_DNS_DIR:?Set DNS records directory}/remote:/test-remote
+
+  prometheus:
+    ports: !reset []
+  grafana:
+    ports: !reset []
+  monitoring-receiver:
+    image: python:3.12-alpine
+    command: [python, /fixture/monitoring-receiver.py]
+    networks: [monitoring]
+    volumes:
+      - ./tests/monitoring-receiver.py:/fixture/monitoring-receiver.py:ro
+      - ./tests/monitoring-check.py:/fixture/monitoring-check.py:ro
+      - ${BOOK_TEST_DNS_DIR:?Set DNS records directory}:/fixture-data:ro
+      - ${BOOK_TEST_DNS_DIR:?Set DNS records directory}/alerts:/alerts

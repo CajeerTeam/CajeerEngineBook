@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/Observability.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -191,7 +192,7 @@ REGEX;
             $result=['rows'=>$p['rows'],'warnings'=>$p['warnings'],'media_new'=>$p['media_new'],'media_total'=>$p['media_total']];
         },'save',$note);}catch(\Throwable $e){
             // If a durable rename succeeded before a sync error, retain committed blobs.
-            try{$this->store->snapshot(function($db)use($created){foreach($created as $id=>$path)if(!isset($db['media'][$id])&&is_file($path))Files::remove($path);});}catch(\Throwable $cleanup){error_log((string)$cleanup);}throw $e;
+            try{$this->store->snapshot(function($db)use($created){foreach($created as $id=>$path)if(!isset($db['media'][$id])&&is_file($path))Files::remove($path);});}catch(\Throwable $cleanup){Observability::log('cleanup.failure',['error_type'=>get_class($cleanup)]);}throw $e;
         }return $result;
     }
 }

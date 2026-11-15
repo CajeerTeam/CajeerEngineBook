@@ -1,0 +1,103 @@
+groups:
+  - name: book-operations
+    rules:
+      - alert: BookExporterUnavailable
+        expr: up{job="book"} == 0 or absent(up{job="book"})
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Book diagnostics exporter unreachable'}
+      - alert: BookDependencyUnavailable
+        expr: book_dependency_up{component!~"worker|backup|backup_scheduler"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Book dependency unavailable: {{ $labels.component }}'}
+      - alert: BookHighServerErrorRate
+        expr: sum(rate(book_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(book_http_requests_total[5m])), 0.001) > 0.01 and sum(rate(book_http_requests_total[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Book HTTP 5xx rate exceeds 1%'}
+      - alert: BookReaderSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(book_http_request_duration_seconds_bucket{route="reader"}[5m]))) > 0.3
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Reader p95 exceeds 300 ms'}
+      - alert: BookSearchSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(book_http_request_duration_seconds_bucket{route="search"}[5m]))) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Search p95 exceeds 200 ms'}
+      - alert: BookSqlLockWait
+        expr: histogram_quantile(0.95, sum by (le) (rate(book_operation_duration_seconds_bucket{operation=~"sql_.*_lock"}[5m]))) > 0.5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'PostgreSQL lock acquisition p95 exceeds 500 ms'}
+      - alert: BookWorkerStale
+        expr: book_dependency_up{component="worker"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'No successful worker tick in five minutes'}
+      - alert: BookQueueDelayed
+        expr: book_queue_oldest_due_age_seconds > 300
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Queued job overdue by more than five minutes'}
+      - alert: BookDeadLetter
+        expr: book_queue_jobs{state="dead"} > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'Book has dead-letter jobs'}
+      - alert: BookBackupStale
+        expr: book_dependency_up{component="backup"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Backup RPO exceeded'}
+      - alert: BookBackupSchedulerStale
+        expr: book_dependency_up{component="backup_scheduler"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Backup scheduler heartbeat older than one hour'}
+      - alert: BookBackupFailed
+        expr: book_backup_failures > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Backup scheduler has outstanding failures'}
+      - alert: BookDiskLow
+        expr: book_storage_free_bytes < 1073741824
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Book data volume has less than 1 GiB free'}
+      - alert: BookDomainLeaseExpiring
+        expr: book_domains_expiring > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'A verified domain DNS lease expires within 48 hours'}
+      - alert: BookReadinessFailed
+        expr: sum(increase(book_http_requests_total{route="ready",status="5xx"}[5m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'At least one application readiness check failed'}
+      - alert: BookRedisMemoryHigh
+        expr: book_redis_memory_used_bytes / book_redis_memory_limit_bytes > 0.85 and book_redis_memory_limit_bytes > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Redis memory exceeds 85% of configured limit'}
+      - alert: BookRedisEvictions
+        expr: increase(book_redis_evicted_keys_total[5m]) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'Redis is evicting keys'}
+      - alert: BookWorkerScopeFailures
+        expr: increase(book_worker_scope_failures_total[5m]) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'Worker encountered a workspace processing failure'}
+      - alert: BookTLSExpiring
+        expr: book_tls_certificate_expiry_timestamp_seconds - time() < 1209600
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Primary TLS certificate expires within 14 days'}
+      - alert: BookDomainUnverified
+        expr: book_domains_unverified > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'A previously checked domain has no valid DNS proof'}

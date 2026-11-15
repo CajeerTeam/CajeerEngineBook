@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/Observability.php';
 
 /** PostgreSQL workers serialize one workspace, not the installation. Network runs outside identity/store locks. */
 final class AutomationWorker
@@ -11,10 +12,13 @@ final class AutomationWorker
         return $this->identity->automationWorkspace($org,$id,function($w,$admins)use($fn){$dir=$w?Workspaces::directory($this->root,$w):$this->root;return $fn(new BookStore($dir,$w===null),$dir,$admins);});
     }
     public function tick(array $preferred=[]):int{
+        $start=hrtime(true);$ok=false;try{$n=$this->runTick($preferred);$ok=true;Observability::worker($n);if($n)Observability::log('worker.tick',['processed'=>$n,'outcome'=>'ok']);return $n;}catch(\Throwable $e){Observability::log('worker.failure',['error_type'=>get_class($e)]);throw $e;}finally{Observability::operation('worker_tick',$start,$ok);Observability::flush();}
+    }
+    private function runTick(array $preferred):int{
         $binding=PostgresContentStore::identityBinding($this->root);
         if($binding!==null)return $this->distributedTick($binding,$preferred);
         Files::dir($this->root);$lock=Files::path($this->root,'automation-worker.lock');$h=fopen($lock,'c+');if(!$h)throw new \RuntimeException('Worker lock unavailable.');
-        try{if(!flock($h,LOCK_EX|LOCK_NB))return 0;chmod($lock,0600);$count=0;foreach($this->identity->automationScopes() as $scope){try{if($this->process($scope['org'],$scope['id'],true))$count++;}catch(\Throwable $e){error_log('Automation workspace failed: '.get_class($e));}}return $count;}finally{fclose($h);}
+        try{if(!flock($h,LOCK_EX|LOCK_NB))return 0;chmod($lock,0600);$count=0;foreach($this->identity->automationScopes() as $scope){try{if($this->process($scope['org'],$scope['id'],true))$count++;}catch(\Throwable $e){Observability::workerScopeFailure();Observability::log('worker.scope_failure',['error_type'=>get_class($e)]);}}return $count;}finally{fclose($h);}
     }
     private function distributedTick(array $binding,array $preferred):int
     {
@@ -29,7 +33,7 @@ final class AutomationWorker
         foreach($due as $key){if(!isset($registered[$key]))continue;$scope=$registered[$key];$name='cajeer-book:worker:'.$binding[0].':'.$binding[1].':'.$key;
             $lock->execute([$name]);if((int)$lock->fetchColumn()!==1)continue;
             try{if($this->process($scope['org'],$scope['id'],false))$count++;}
-            catch(\Throwable $e){error_log('Automation workspace failed: '.get_class($e));}
+            catch(\Throwable $e){Observability::workerScopeFailure();Observability::log('worker.scope_failure',['error_type'=>get_class($e)]);}
             finally{$unlock->execute([$name]);$unlock->fetchColumn();}
         }
         RedisRuntime::forBinding($binding[0],$binding[1])?->heartbeat($count);return $count;
@@ -44,7 +48,7 @@ final class AutomationWorker
             }if(!$due)return null;
             $job=null;$store->change(function(&$db)use(&$job,$now,$recover){$job=AutomationQueue::claim($db,$now,$recover);});if(!$job)return null;
             $db=$store->read();return ['job'=>$job,'db'=>$db,'dir'=>$dir,'actor'=>$admins[$job['actor']]??null];
-        });if(!$capture)return false;$job=$capture['job'];$db=$capture['db'];$actor=$capture['actor'];
+        });if(!$capture)return false;$job=$capture['job'];$db=$capture['db'];$actor=$capture['actor'];$started=hrtime(true);Observability::log('job.start',['job_id'=>$job['id'],'kind'=>$job['kind'],'attempt'=>$job['attempts']]);
         try{
             $c=AutomationQueue::assertLease($db,$job);if(!$actor)throw new OrganizationAccessException('Automation administrator no longer authorized.');
             if($job['kind']==='delivery'){
@@ -70,7 +74,7 @@ final class AutomationWorker
         catch(GitHubRemoteException $e){$this->finish($org,$id,$job,'dead','Git provider request failed.',true);}
         catch(\DomainException|\InvalidArgumentException $e){$this->finish($org,$id,$job,'dead','Configuration, conflict or validation requires attention.');}
         catch(\Throwable $e){$this->finish($org,$id,$job,'dead','Network or worker failure.',true);}
-        return true;
+        Observability::log('job.processed',['job_id'=>$job['id'],'kind'=>$job['kind'],'attempt'=>$job['attempts'],'duration_ms'=>round((hrtime(true)-$started)/1e6,3)]);return true;
     }
     private function finish(string $org,string $id,array $job,string $state,string $error='',bool $retry=false):void{
         $this->with($org,$id,function($store,$dir,$admins)use($job,$state,$error,$retry){$store->change(function(&$db)use($job,$state,$error,$retry,$admins){

@@ -25,7 +25,11 @@ final class App {
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
-        header('X-Request-ID: '.AuditLog::beginRequest());header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+        $id=AuditLog::beginRequest();Observability::startRequest($id);
+        try{$this->runRequest($id);}finally{Observability::finishRequest();}
+    }
+    private function runRequest(string $id):void{
+        header('X-Request-ID: '.$id);header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
         $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);if(!is_string($path)||!str_starts_with($path,'/')){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
@@ -40,7 +44,7 @@ final class App {
                 try{ReleaseHealth::configuration();}
                 catch(\Throwable $e){
                     if($path!=='/health/ready')throw $e;
-                    error_log('Readiness configuration: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);return;
+                    Observability::log('health.failure',['component'=>'configuration','error_type'=>get_class($e)]);http_response_code(503);$this->json(['status'=>'unavailable']);return;
                 }
             }
             if($this->domainGate($path,$method))return;
@@ -75,11 +79,11 @@ final class App {
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             },in_array($method,['GET','HEAD'],true));
-        }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+        }catch(\Throwable $e){Observability::log('http.failure',['error_type'=>get_class($e)]);if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
         finally{
             // A denial has no business transaction to join. Record a minimal, separate event after locks release.
             $status=http_response_code();if(getenv('BOOK_PG_DSN')&&$this->domainHost===null&&in_array($status,[401,403,429],true)&&preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/(?:studio|api/v1|webhooks|account|organizations|workspaces|domains|audit)(?:/|$)~D',$path)){
-                try{$this->identityStore->auditFailure($status===429?'access.limited':'access.denied',$status===429?'limited':'denied');}catch(\Throwable){error_log('Audit denial event could not be persisted');}
+                try{$this->identityStore->auditFailure($status===429?'access.limited':'access.denied',$status===429?'limited':'denied');}catch(\Throwable){Observability::log('audit.failure');}
             }
         }
     }
@@ -296,7 +300,7 @@ final class App {
     private function searchInspector():void
     {
         $html='<div class="eyebrow">STUDIO / SEARCH</div><h1>Search Inspector</h1><p>'.self::link('/studio','Back to Studio').' · '.self::link('/search','Open Reader search').'</p>';
-        try{$info=$this->store->searchInfo();}catch(\RuntimeException $e){error_log('Search diagnostics: '.$e->getMessage());http_response_code(503);$this->page('Search Inspector',$html.'<p role="alert">Search index unavailable. Stop writers and run <code>php bin/search.php reindex --offline</code>, then <code>php bin/search.php check</code>.</p>');return;}
+        try{$info=$this->store->searchInfo();}catch(\RuntimeException $e){Observability::log('health.failure',['component'=>'search','error_type'=>get_class($e)]);http_response_code(503);$this->page('Search Inspector',$html.'<p role="alert">Search index unavailable. Stop writers and run <code>php bin/search.php reindex --offline</code>, then <code>php bin/search.php check</code>.</p>');return;}
         $html.='<p>Engine: '.self::e($info['engine']).' · Published documents: '.$info['documents'].($info['revision']!==null?' · Indexed revision: '.$info['revision']:' · File mode: no persistent index').'</p>';
         try{$o=Search::options($_GET);$audience=$_GET['audience']??'member';if(!in_array($audience,['member','public'],true))throw new \InvalidArgumentException('Invalid search audience.');}catch(\InvalidArgumentException $e){http_response_code(422);$this->page('Search Inspector',$html.'<p>'.self::e($e->getMessage()).'</p>');return;}
         $html.='<form method="get" action="'.self::e(WorkspaceUrls::url('/studio/search')).'" class="editor"><label>Query<input name="q" maxlength="200" value="'.self::e($o['q']).'"></label><label>Audience<select name="audience"><option value="member"'.($audience==='member'?' selected':'').'>Authorized member</option><option value="public"'.($audience==='public'?' selected':'').'>Anonymous public Reader</option></select></label><label>Book<input name="book" value="'.self::e($o['book']).'"></label><label>Version<input name="version" value="'.self::e($o['version']).'"></label><label>'.self::t('Language').'<select name="locale">'.Locale::options($o['locale'],true).'</select></label><button class="primary">Inspect query</button></form>';
@@ -341,7 +345,7 @@ final class App {
             if($path==='/health/live'){$this->json(['status'=>'ok']);return;}
             if($path==='/health/ready'){
                 try { $this->identityStore->checkReady(); $this->identityStore->checkWorkspaceStores($this->installationDir); ReleaseHealth::check($this->root); RedisRuntime::forRoot($this->installationDir)?->check(); $this->json(['status'=>'ok']); }
-                catch(\Throwable $e){error_log('Readiness: '.$e->getMessage());http_response_code(503);$this->json(['status'=>'unavailable']);}
+                catch(\Throwable $e){Observability::log('health.failure',['component'=>'readiness','error_type'=>get_class($e)]);http_response_code(503);$this->json(['status'=>'unavailable']);}
                 return;
             }
             if($path==='/search'||$path==='/api/v1/search'){$this->search($path==='/api/v1/search');return;}
@@ -409,7 +413,7 @@ final class App {
                 if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}
             }
             http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page(Locale::t('Page not found'),'<h1>'.self::t('Page not found').'</h1><p>'.self::t('This page is missing or not published.').'</p>',$pages);
-        }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+        }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:400);$this->page('Invalid request','<h1>Invalid request</h1><p>'.self::e($e->getMessage()).'</p>');}catch(\Throwable $e){Observability::log('http.failure',['error_type'=>get_class($e)]);if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }
     private function redirect(string $path): void {
         $q=$_SERVER['QUERY_STRING']??'';

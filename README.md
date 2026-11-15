@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.3 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.5.3 — Observability & Diagnostics
+
+The optional `compose.observability.yaml` overlay adds a dedicated authenticated diagnostics exporter, Prometheus, Grafana and Alertmanager. Application, workers, DNS checks and backup scheduler emit bounded shared-volume metrics and structured JSON events. See [Observability operations](docs/admin/observability.md) for configuration, credentials, alert routing, health semantics, troubleshooting and verification. No database migration beyond 0.5.2 schema 2 is required. Telemetry is opt-in (`BOOK_OBSERVABILITY=1`), is not a durable audit log, and failure to record it does not change a business operation.
 
 ## 0.5.2 — Database Migration Engine
 

@@ -1,0 +1,92 @@
+# Append to base + PostgreSQL + Redis + distributed + domains + backup + enterprise overlays.
+# Exporter, Prometheus and Alertmanager are not exposed through the public edge.
+x-book-logs: &book-logs
+  driver: json-file
+  options: {max-size: "20m", max-file: "5"}
+services:
+  book:
+    logging: *book-logs
+    environment:
+      BOOK_OBSERVABILITY: '1'
+  worker:
+    logging: *book-logs
+    environment:
+      BOOK_OBSERVABILITY: '1'
+  backup:
+    logging: *book-logs
+    environment:
+      BOOK_OBSERVABILITY: '1'
+  domain-check:
+    logging: *book-logs
+    environment:
+      BOOK_OBSERVABILITY: '1'
+  diagnostics:
+    logging: *book-logs
+    build: .
+    environment:
+      BOOK_OBSERVABILITY: '1'
+      BOOK_OBSERVABILITY_EXPORTER: '1'
+      BOOK_METRICS_TOKEN_FILE: /run/secrets/metrics-token
+      BOOK_MONITOR_WORKERS: '1'
+      BOOK_MONITOR_BACKUP: '1'
+      BOOK_MONITOR_TLS: ${BOOK_MONITOR_TLS:-1}
+      BOOK_MONITOR_DOMAINS: '1'
+      BOOK_BACKUP_MAX_AGE: ${BOOK_BACKUP_MAX_AGE:-90000}
+      BOOK_PG_DSN: 'pgsql:host=postgres;port=5432;dbname=book;connect_timeout=5'
+      BOOK_PG_USER: book
+      BOOK_PG_PASSWORD: ${BOOK_PG_PASSWORD:?Set BOOK_PG_PASSWORD}
+      BOOK_PG_NAMESPACE: ${BOOK_PG_NAMESPACE:?Set BOOK_PG_NAMESPACE}
+      BOOK_REDIS_HOST: redis
+      BOOK_REDIS_PASSWORD: ${BOOK_REDIS_PASSWORD:?Set BOOK_REDIS_PASSWORD}
+      BOOK_PRIMARY_HOST: ${BOOK_PRIMARY_HOST:?Set BOOK_PRIMARY_HOST}
+      BOOK_SECURE_COOKIE: '1'
+    volumes:
+      - book-data:/var/lib/cajeerbook
+      - ${BOOK_METRICS_TOKEN_PATH:?Set a private metrics token file}:/run/secrets/metrics-token:ro
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    networks: [default, monitoring]
+  prometheus:
+    logging: *book-logs
+    image: prom/prometheus:v3.5.0
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=30d, --storage.tsdb.retention.size=5GB]
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${BOOK_METRICS_TOKEN_PATH:?Set a private metrics token file}:/run/secrets/metrics-token:ro
+      - book-prometheus:/prometheus
+    ports: ['127.0.0.1:9090:9090']
+    networks: [monitoring]
+    restart: unless-stopped
+  alertmanager:
+    logging: *book-logs
+    image: prom/alertmanager:v0.28.1
+    command: [--config.file=/etc/alertmanager/alertmanager.yml, --storage.path=/alertmanager]
+    volumes:
+      - ./deploy/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${BOOK_ALERT_WEBHOOK_PATH:?Set a private HTTPS webhook URL file}:/run/secrets/alert-webhook:ro
+      - book-alertmanager:/alertmanager
+    networks: [monitoring]
+    restart: unless-stopped
+  grafana:
+    logging: *book-logs
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-password
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/book-dashboards:ro
+      - ${BOOK_GRAFANA_PASSWORD_PATH:?Set a private Grafana admin password file}:/run/secrets/grafana-password:ro
+      - book-grafana:/var/lib/grafana
+    ports: ['127.0.0.1:3000:3000']
+    networks: [monitoring]
+    restart: unless-stopped
+networks:
+  monitoring:
+volumes:
+  book-prometheus:
+  book-alertmanager:
+  book-grafana:

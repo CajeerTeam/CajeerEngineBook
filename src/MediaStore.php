@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/Observability.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -87,7 +88,7 @@ final class MediaStore
         } catch(\Throwable $e){
             // A filesystem sync can fail after the metadata rename: never remove a committed blob.
             if($created!==null && is_file($created)){
-                try{$id=basename($created,'.blob');if(!isset($this->books->read()['media'][$id])) Files::remove($created);}catch(\Throwable $cleanup){error_log((string)$cleanup);}
+                try{$id=basename($created,'.blob');if(!isset($this->books->read()['media'][$id])) Files::remove($created);}catch(\Throwable $cleanup){Observability::log('cleanup.failure',['error_type'=>get_class($cleanup)]);}
             }
             throw $e;
         }
@@ -146,7 +147,7 @@ final class MediaStore
             unset($db['media'][$id]);
         });
         // ID is never reused. Delete only after commit; already-open readers can finish.
-        foreach(['blob','thumbPath'] as $method)try{Files::remove($this->$method($id));}catch(\Throwable $e){error_log((string)$e);}
+        foreach(['blob','thumbPath'] as $method)try{Files::remove($this->$method($id));}catch(\Throwable $e){Observability::log('cleanup.failure',['error_type'=>get_class($e)]);}
     }
     /** Explicit maintenance for blobs left by interrupted transactions. Never follows symlinks. */
     public function collectOrphans(): int

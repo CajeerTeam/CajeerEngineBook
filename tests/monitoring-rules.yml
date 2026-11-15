@@ -1,0 +1,43 @@
+rule_files: [/rules/alerts.yml]
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'book_dependency_up{component="redis",job="book",instance="diagnostics:80"}'
+        values: '0x10'
+      - series: 'book_dependency_up{component="worker",job="book",instance="diagnostics:80"}'
+        values: '0x10'
+      - series: 'book_dependency_up{component="backup",job="book",instance="diagnostics:80"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BookDependencyUnavailable
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: BookDependencyUnavailable
+        exp_alerts:
+          - exp_labels: {component: redis, job: book, instance: 'diagnostics:80', severity: critical}
+            exp_annotations: {summary: 'Book dependency unavailable: redis'}
+      - eval_time: 3m
+        alertname: BookWorkerStale
+        exp_alerts:
+          - exp_labels: {component: worker, job: book, instance: 'diagnostics:80', severity: critical}
+            exp_annotations: {summary: 'No successful worker tick in five minutes'}
+      - eval_time: 3m
+        alertname: BookBackupStale
+        exp_alerts:
+          - exp_labels: {component: backup, job: book, instance: 'diagnostics:80', severity: critical}
+            exp_annotations: {summary: 'Backup RPO exceeded'}
+  - interval: 30s
+    input_series:
+      - series: 'book_dependency_up{component="redis",job="book",instance="diagnostics:80"}'
+        values: '0x5 1x5'
+    alert_rule_test:
+      - eval_time: 2m30s
+        alertname: BookDependencyUnavailable
+        exp_alerts:
+          - exp_labels: {component: redis, job: book, instance: 'diagnostics:80', severity: critical}
+            exp_annotations: {summary: 'Book dependency unavailable: redis'}
+      - eval_time: 4m
+        alertname: BookDependencyUnavailable
+        exp_alerts: []

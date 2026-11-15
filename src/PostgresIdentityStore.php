@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace CajeerBook;
 
 use PDO;
+require_once __DIR__.'/Observability.php';
 
 /** Identity records and role assignments are SQL-authoritative. The installation row serializes
  * authorization and identity changes, including scoped content dispatch and backup snapshots. */
@@ -19,7 +20,7 @@ final class PostgresIdentityStore
     }
     private static function query(PDO $pdo,string $sql,array $args=[]):\PDOStatement
     {
-        $q=$pdo->prepare($sql);$q->execute($args);return $q;
+        $start=hrtime(true);$ok=false;try{$q=$pdo->prepare($sql);$q->execute($args);$ok=true;return $q;}finally{Observability::operation('sql_identity_query',$start,$ok);}
     }
     private static function json(mixed $value):string{return json_encode($value,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION);}
     private static function decode(string $value):array
@@ -39,16 +40,16 @@ final class PostgresIdentityStore
     /** Hold the identity row lock across callbacks, even when they use another SQL content connection. */
     public function transaction(callable $fn,bool $shared=false):mixed
     {
-        $pdo=PostgresContentStore::runtimeConnect();$pdo->beginTransaction();
+        $start=hrtime(true);$ok=false;$pdo=PostgresContentStore::runtimeConnect();$pdo->beginTransaction();
         try{
             $this->assertBinding($pdo);$db=$this->load($pdo,true,$shared);
-            $result=$fn($db,$pdo);$pdo->commit();return $result;
-        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+            $result=$fn($db,$pdo);$pdo->commit();$ok=true;return $result;
+        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}finally{Observability::operation('sql_identity_transaction',$start,$ok);}
     }
     private function load(PDO $pdo,bool $lock=false,bool $shared=false):array
     {
-        $state=self::query($pdo,'SELECT format,owner_anchor,metadata::text AS metadata FROM cajeer_book.identity_state WHERE installation=?'.($lock?($shared?' FOR SHARE':' FOR UPDATE'):''),[$this->installation])->fetch(PDO::FETCH_ASSOC);
-        if(!$state||(int)$state['format']!==1)throw new \RuntimeException('PostgreSQL identity missing or unsupported; run offline installation migration.');
+        $start=hrtime(true);$ok=false;try{$state=self::query($pdo,'SELECT format,owner_anchor,metadata::text AS metadata FROM cajeer_book.identity_state WHERE installation=?'.($lock?($shared?' FOR SHARE':' FOR UPDATE'):''),[$this->installation])->fetch(PDO::FETCH_ASSOC);
+        if(!$state||(int)$state['format']!==1)throw new \RuntimeException('PostgreSQL identity missing or unsupported; run offline installation migration.');$ok=true;}finally{if($lock)Observability::operation('sql_identity_lock',$start,$ok);}
         $meta=self::decode($state['metadata']);$rows=[];
         foreach(self::TABLES as $table){
             $rows[$table]=[];

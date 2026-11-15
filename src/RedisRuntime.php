@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/Observability.php';
 
 /** Redis is an acceleration/notification layer, never an identity or job authority. */
 final class RedisRuntime
@@ -65,10 +66,10 @@ LUA;
     }
     private function invoke(callable $fn,?string $allowedError=null):mixed
     {
-        if(microtime(true)<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');
-        try{$r=$this->connection();$r->clearLastError();$v=$fn($r);$error=$r->getLastError();
-            if($error&&($allowedError===null||!str_starts_with($error,$allowedError)))throw new \RuntimeException('Redis command failed.');return $v;
-        }catch(\Throwable $e){if($allowedError!==null&&str_starts_with($e->getMessage(),$allowedError))return false;$this->failed();throw new \RuntimeException('Redis runtime unavailable.',0,$e);}
+        $start=hrtime(true);$ok=false;
+        try{if(microtime(true)<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');$r=$this->connection();$r->clearLastError();$v=$fn($r);$error=$r->getLastError();
+            if($error&&($allowedError===null||!str_starts_with($error,$allowedError)))throw new \RuntimeException('Redis command failed.');$ok=true;return $v;
+        }catch(\Throwable $e){if($allowedError!==null&&str_starts_with($e->getMessage(),$allowedError))return false;$this->failed();throw new \RuntimeException('Redis runtime unavailable.',0,$e);}finally{Observability::operation('redis_command',$start,$ok);}
     }
     private function command(string ...$args):mixed{return $this->invoke(fn($r)=>$r->rawCommand(...$args));}
     private function createGroup(string $stream):void
@@ -133,6 +134,14 @@ LUA;
         $raw=$this->invoke(fn($r)=>$r->hGetAll($this->prefix.'metrics'));$stats=[];
         if(is_array($raw))foreach($raw as $k=>$v)$stats[$k]=(int)$v;
         return ['metrics'=>$stats,'stream_length'=>(int)$this->command('XLEN',$this->prefix.'jobs'),'workers_recent'=>(int)$this->command('ZCOUNT',$this->prefix.'workers',(string)(time()-60),'+inf')];
+    }
+    /** Optional INFO privileges, isolated from core readiness. Only numeric allowlisted fields. */
+    public function resources():array
+    {
+        $result=[];foreach(['memory'=>['used_memory','maxmemory'],'stats'=>['evicted_keys','rejected_connections'],'clients'=>['connected_clients']] as $section=>$keys){
+            $raw=$this->command('INFO',$section);if(!is_string($raw))throw new \RuntimeException('Redis INFO unavailable.');
+            foreach($keys as $k){if(!preg_match('/^'.preg_quote($k,'/').':([0-9]+)\r?$/m',$raw,$m))throw new \RuntimeException('Redis INFO field missing.');$result[$k]=(int)$m[1];}
+        }return $result;
     }
     private function pruneConsumers(string $stream):void
     {

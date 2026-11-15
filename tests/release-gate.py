@@ -115,6 +115,7 @@ def native(g):
         args = shlex.split(command)
         if args[0] == '@php': args[0] = 'php'
         g.run(f'composer-{i+1:02d}-{Path(args[1]).stem}', args)
+    g.run('monitoring-rules', ['docker','run','--rm','--entrypoint','/bin/promtool','-v',str(ROOT/'deploy/monitoring/alerts.yml')+':/rules/alerts.yml:ro','-v',str(ROOT/'tests/monitoring-rules.yml')+':/rules/tests.yml:ro','prom/prometheus:v3.5.0','test','rules','/rules/tests.yml'], 600)
     g.run('s3-https', ['bash','tests/recovery-s3.sh'], 1200)
     g.run('offline-search', ['node','tests/static-search-language.mjs'])
     for i, args in enumerate(json.loads((ROOT/'tests/gate-browser.json').read_text())):

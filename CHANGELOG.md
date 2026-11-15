@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3 — Observability & Diagnostics
+
+- Bounded shared-volume HTTP and operation histograms, counters, structured request/job logs and request correlation. No raw credentials, SQL text or user-controlled labels in telemetry.
+- Independent authenticated exporter and CLI for storage, PostgreSQL, identity, search, audit, queues, Redis, worker, DNS, backup RPO and primary TLS diagnostics. Existing public health contracts unchanged.
+- Prometheus, Grafana dashboard, Alertmanager webhook notifications and operational alert rules with log rotation.
+- Multi-process HTTP telemetry and real recovery regressions; monitoring stack, alert delivery and Redis failure/recovery integration tests in release gate.
+- No schema change from 0.5.2.
+
 ## 0.5.2 — Database Migration Engine
 
 - Database-wide versioned PostgreSQL SQL migrations, exact ordered SQL checksums, current ledger and durable apply/rollback history.

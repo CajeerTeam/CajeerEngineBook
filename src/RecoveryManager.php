@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/Observability.php';
 
 /** Durable operator scheduler, encrypted repository and destructive-free recovery drills. */
 final class RecoveryManager
@@ -32,7 +33,7 @@ final class RecoveryManager
         if($s['pending']!==null){if(!is_array($s['pending'])||!is_string($s['pending']['id']??null)||!is_int($s['pending']['captured_at']??null)||!is_string($s['pending']['sha256']??null)||!preg_match('/\A[a-f0-9]{64}\z/D',$s['pending']['sha256']))throw new \RuntimeException('Invalid pending backup state.');self::id($s['pending']['id']);}
         return $s;
     }
-    private function save(array $s):void{Files::json($this->spool.'/state.json',$s);}
+    private function save(array $s):void{Files::json($this->spool.'/state.json',$s);Observability::backup($s);}
     private function locked(callable $fn):mixed{
         $path=Files::path($this->spool,'scheduler.lock');$h=fopen($path,'c+b');if(!$h)throw new \RuntimeException('Backup lock unavailable.');
         try{chmod($path,0600);if(!flock($h,LOCK_EX|LOCK_NB))throw new \RuntimeException('Another recovery operation is running.');
@@ -86,7 +87,10 @@ final class RecoveryManager
         }
     }
     /** Run now, or only when due. Retries retain the same immutable encrypted local copy. */
-    public function run(bool $force=false):array{return $this->locked(function()use($force){
+    public function run(bool $force=false):array{
+        $start=hrtime(true);$ok=false;try{$r=$this->runBackup($force);$ok=true;if($r['status']!=='not_due')Observability::log('backup.run',['outcome'=>'ok']);return $r;}catch(\Throwable $e){Observability::log('backup.failure',['error_type'=>get_class($e)]);throw $e;}finally{Observability::operation('backup_run',$start,$ok);try{if(Observability::enabled())Observability::backup($this->state());}catch(\Throwable){}Observability::flush();}
+    }
+    private function runBackup(bool $force):array{return $this->locked(function()use($force){
         $s=$this->state();$now=time();
         if(!$force&&(($s['failures']>0&&$s['last_attempt']+300>$now)||($s['pending']===null&&$s['last_capture']+$this->interval>$now)))return ['status'=>'not_due','state'=>$s];
         $s['last_attempt']=$now;$this->save($s);$stage=$this->stage();$key=null;
@@ -110,7 +114,7 @@ final class RecoveryManager
             $report=['id'=>$id,'sha256'=>$sha,'bytes'=>filesize($file),'captured_at'=>$s['pending']['captured_at'],'verified_at'=>time(),'remote'=>$this->remote->mode(),'restore'=>$checked];
             $this->audit('backup.verified');Files::json($this->report($id),$report);
             $s['last_success']=time();$s['last_capture']=$s['pending']['captured_at'];$s['last_id']=$id;$s['pending']=null;$s['failures']=0;$this->save($s);
-            try{$this->prune($s['last_id']);}catch(\Throwable $e){error_log('Backup retention failed: '.$e->getMessage());$report['retention_warning']=true;}return ['status'=>'verified']+$report;
+            try{$this->prune($s['last_id']);}catch(\Throwable $e){Observability::log('backup.retention_failure',['error_type'=>get_class($e)]);$report['retention_warning']=true;}return ['status'=>'verified']+$report;
         }catch(\Throwable $e){$s['failures']=min(1000000,$s['failures']+1);$s['last_attempt']=time();$this->save($s);try{$this->audit('backup.failed',true);}catch(\Throwable){}throw $e;}
         finally{if(is_string($key))sodium_memzero($key);self::clean($stage);}
     });}

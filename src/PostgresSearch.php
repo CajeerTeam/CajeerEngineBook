@@ -2,11 +2,12 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use PDO;
+require_once __DIR__.'/Observability.php';
 
 /** Transactional derived index, scoped to the same locked content revision as the Reader. */
 final class PostgresSearch
 {
-    private static function q(PDO $pdo,string $sql,array $args):\PDOStatement{$s=$pdo->prepare($sql);$s->execute($args);return $s;}
+    private static function q(PDO $pdo,string $sql,array $args):\PDOStatement{$start=hrtime(true);$ok=false;try{$s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;}finally{Observability::operation('sql_search_query',$start,$ok);}}
     public static function assertReady(PDO $pdo,array $scope):void
     {
         $pdo->query('SELECT locale FROM cajeer_book.search_document LIMIT 0');

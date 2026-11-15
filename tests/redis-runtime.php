@@ -19,7 +19,7 @@ function launch(array $args,?array $env=null):array{
 function finish(array $child):string{[$p,$pipes]=$child;$out=stream_get_contents($pipes[1]);$err=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);if(proc_close($p)!==0)throw new RuntimeException('Child failed: '.$err);return trim($out);}
 $dsn=getenv('BOOK_PG_DSN');$host=getenv('BOOK_REDIS_HOST');if(!$dsn||!$host)throw new RuntimeException('Real PostgreSQL and Redis required.');
 $root=sys_get_temp_dir().'/book-redis-'.bin2hex(random_bytes(8));$ns=bin2hex(random_bytes(16));$log=$root.'/test-deliveries';
-putenv('BOOK_DATA_DIR='.$root);putenv('BOOK_PG_NAMESPACE='.$ns);putenv('BOOK_PG_DSN');putenv('BOOK_REDIS_HOST');putenv('BOOK_AUTOMATION_KEY='.str_repeat('ab',32));putenv('BOOK_WEBHOOK_ORIGINS=https://receiver.example.org');
+putenv('BOOK_OBSERVABILITY=1');putenv('BOOK_DATA_DIR='.$root);putenv('BOOK_PG_NAMESPACE='.$ns);putenv('BOOK_PG_DSN');putenv('BOOK_REDIS_HOST');putenv('BOOK_AUTOMATION_KEY='.str_repeat('ab',32));putenv('BOOK_WEBHOOK_ORIGINS=https://receiver.example.org');
 try{
     $identity=new IdentityStore($root);$owner=$identity->initialize('owner','Owner','owner@example.org','password-owner-123');$token=$identity->login('owner','password-owner-123','192.0.2.1')['token'];$org=$identity->createOrganization($token,'Team','team');$workspaces=[];
     foreach(['alpha','beta'] as $slug)$workspaces[]=$identity->createWorkspace($token,$org['id'],ucfirst($slug),$slug);
@@ -56,7 +56,12 @@ try{
     ok(finish(launch(['--worker',$log,$scopes[0]],$env))==='1','SQL polling processes durable job with Redis stream deleted and connection unavailable');
     $j=array_values($s->read()['automation']['jobs']);ok(count(array_filter($j,fn($r)=>$r['state']!=='succeeded'))===0,'all jobs remain durably completed after Redis outage');
     $stats=$redis->stats()['metrics'];ok(($stats['cache_hits']??0)>=1&&($stats['rate_denied']??0)>=1&&($stats['jobs_processed']??0)>=2,'operator metrics reflect real cache, rate and worker activity');
+    CajeerBook\Observability::flush();putenv('BOOK_MONITOR_WORKERS=1');$diagnostics=(new CajeerBook\Diagnostics())->collect();$metrics=$diagnostics['metrics'];
+    ok($diagnostics['checks']['postgres']==='ok'&&$diagnostics['checks']['redis']==='ok'&&$diagnostics['checks']['queue']==='ok'&&$diagnostics['checks']['search']==='ok'&&$diagnostics['checks']['audit']==='ok','real SQL and Redis probes expose independent component health');
+    ok($metrics['queue_jobs{state="succeeded"}']>=4&&$metrics['redis_cache_hits_total']>=1&&$metrics['worker_jobs_processed_total']>=4&&$metrics['redis_memory_used_bytes']>0,'actual queue, Redis resource and worker metrics');
+    ok(($metrics['operation_duration_seconds_count{operation="sql_content_lock",outcome="ok"}']??0)>0&&($metrics['operation_duration_seconds_count{operation="sql_identity_query",outcome="ok"}']??0)>0,'real SQL lock and query timing');
     $raw->close();
 }finally{
+    CajeerBook\Observability::flush();putenv('BOOK_OBSERVABILITY');
     putenv('BOOK_PG_DSN='.$dsn);putenv('BOOK_REDIS_HOST='.$host);try{$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);}catch(Throwable $e){fwrite(STDERR,'Cleanup: '.$e->getMessage()."\n");}clean($root);
 }

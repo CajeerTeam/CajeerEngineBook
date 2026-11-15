@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/Observability.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 require_once __DIR__.'/Organizations.php';
@@ -426,7 +427,7 @@ final class IdentityStore
             $workspaces=Workspaces::list($db,$uid);$legacy=Workspaces::legacy($db);
             if(!$legacy&&$ctx['user']['owner'])array_unshift($workspaces,['id'=>'','name'=>'Legacy documentation','organization_name'=>'Installation','legacy'=>true,'role'=>'owner','archived'=>false,'organization_archived'=>false]);
             $ctx['workspace_count']=count($workspaces);$ctx['workspace_page']=max(1,min(100,$page));$workspaces=array_slice($workspaces,($ctx['workspace_page']-1)*10,10);
-            foreach($workspaces as &$w)if(!$w['archived']&&!$w['organization_archived']&&Permissions::allows($w['role'],'edit')){try{$store=new BookStore(Workspaces::directory(dirname($this->dir),$w),$w['legacy']&&$w['id']==='');$w['summary']=TeamView::summary($store->read(),$uid,$w['role']);}catch(\Throwable $e){error_log('Team summary: '.$e->getMessage());$w['unavailable']=true;}}unset($w);
+            foreach($workspaces as &$w)if(!$w['archived']&&!$w['organization_archived']&&Permissions::allows($w['role'],'edit')){try{$store=new BookStore(Workspaces::directory(dirname($this->dir),$w),$w['legacy']&&$w['id']==='');$w['summary']=TeamView::summary($store->read(),$uid,$w['role']);}catch(\Throwable $e){Observability::log('team.failure',['error_type'=>get_class($e)]);$w['unavailable']=true;}}unset($w);
             $ctx['workspaces']=$workspaces;$ctx['organizations']=Organizations::list($db,$uid);$ctx['inbox']=$inbox;$ctx['audit']=ActivityJournal::identityVisible($db,$uid,true);
             return $ctx;
         });

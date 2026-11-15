@@ -8,7 +8,7 @@ function ok(bool $v,string $s):void{if(!$v)throw new RuntimeException($s);echo "
 function deny(callable $f,string $s):void{try{$f();}catch(RuntimeException|InvalidArgumentException|DomainException){ok(true,$s);return;}throw new RuntimeException('Accepted: '.$s);}
 function clean(string $p):void{if(is_link($p)||is_file($p)){unlink($p);return;}if(!is_dir($p))return;foreach(new DirectoryIterator($p) as $f)if(!$f->isDot())clean($f->getPathname());rmdir($p);}
 $dsn=getenv('BOOK_PG_DSN');$base=sys_get_temp_dir().'/book-recovery-'.bin2hex(random_bytes(8));mkdir($base,0700);$root=$base.'/source';$spool=$base.'/spool';$remote=$base.'/remote';$public=dirname(__DIR__).'/public';$ns=bin2hex(random_bytes(16));mkdir($remote,0700);umask(0077);
-putenv('BOOK_DATA_DIR='.$root);putenv('BOOK_PG_DSN');putenv('BOOK_PG_NAMESPACE='.$ns);putenv('BOOK_BACKUP_DIR='.$spool);putenv('BOOK_BACKUP_KEY_FILE='.$base.'/key');putenv('BOOK_BACKUP_INTERVAL=300');putenv('BOOK_BACKUP_RETENTION_DAYS=1');
+putenv('BOOK_OBSERVABILITY=1');putenv('BOOK_DATA_DIR='.$root);putenv('BOOK_PG_DSN');putenv('BOOK_PG_NAMESPACE='.$ns);putenv('BOOK_BACKUP_DIR='.$spool);putenv('BOOK_BACKUP_KEY_FILE='.$base.'/key');putenv('BOOK_BACKUP_INTERVAL=300');putenv('BOOK_BACKUP_RETENTION_DAYS=1');
 if(!$s3){putenv('BOOK_BACKUP_S3_URI');putenv('BOOK_BACKUP_REMOTE_DIR='.$remote);}else{putenv('BOOK_BACKUP_REMOTE_DIR');if(!getenv('BOOK_BACKUP_S3_URI'))throw new RuntimeException('S3 test requires a real repository.');}
 $key=bin2hex(random_bytes(32));Files::write($base.'/key',$key."\n");
 try{
@@ -20,6 +20,8 @@ try{
  $m=new RecoveryManager($public);ok($m->health(300)['status']==='unavailable','no verified capture is unhealthy');$a=$m->run();$id=$a['id'];$file=$spool.'/'.$id.'.cbk';
  ok($a['status']==='verified'&&$a['remote']===($s3?'s3':'filesystem')&&is_file($file),'scheduled backup verified after remote read-back and actual restore');
  ok($m->run()['status']==='not_due','persistent interval prevents duplicate backups');
+ $telemetry=CajeerBook\Observability::backupSnapshot();ok($telemetry['capture']===$a['captured_at']&&$telemetry['verified']>=$a['verified_at']&&$telemetry['failures']===0&&$telemetry['pending']===0,'real verified backup publishes capture and verification timestamps');
+ putenv('BOOK_MONITOR_BACKUP=1');$diag=(new CajeerBook\Diagnostics())->collect();ok($diag['checks']['backup']==='ok','diagnostics reads verified backup without repository credentials');putenv('BOOK_MONITOR_BACKUP');
  ok(!str_contains(file_get_contents($file),'media content unique')&&!str_contains(file_get_contents($file),'owner@example.org'),'backup does not expose plaintext identity or media');
  ok((fileperms($file)&0777)===0600&&glob($spool.'/.recovery-*')===[],'private artifact and staging cleanup');
  ok($m->status()['state']['last_id']===$id&&$m->status()['state']['pending']===null,'durable verified state');
@@ -41,7 +43,7 @@ try{
   $remoteFile=$remote.'/'.$id.'.cbk';$original=file_get_contents($remoteFile);file_put_contents($remoteFile,substr($original,0,-1));deny(fn()=>$m->restore($id,$base.'/truncated',true),'truncated encrypted remote rejected');
   file_put_contents($remoteFile,$original."x");deny(fn()=>$m->restore($id,$base.'/trailing',true),'appended bytes rejected');file_put_contents($remoteFile,$original);
   // Restore local copy for retention and simulate an unavailable remote after manager initialization.
-  Files::copy($remoteFile,$file);rename($remote,$base.'/offline');deny(fn()=>$m->run(true),'remote outage fails backup rather than claiming success');$pending=$m->status()['state']['pending'];ok(is_array($pending)&&is_file($spool.'/'.$pending['id'].'.cbk'),'verified encrypted local copy retained for retry');
+  Files::copy($remoteFile,$file);rename($remote,$base.'/offline');deny(fn()=>$m->run(true),'remote outage fails backup rather than claiming success');$pending=$m->status()['state']['pending'];$telemetry=CajeerBook\Observability::backupSnapshot();ok($telemetry['failures']>0&&$telemetry['pending']===1&&$telemetry['capture']===$a['captured_at'],'remote outage exposes pending and failures without claiming a fresh capture');ok(is_array($pending)&&is_file($spool.'/'.$pending['id'].'.cbk'),'verified encrypted local copy retained for retry');
   ok($m->run()['status']==='not_due','retry backoff is persistent');rename($base.'/offline',$remote);$b=$m->run(true);ok($b['id']===$pending['id']&&$b['sha256']===$pending['sha256'],'retry uploads same immutable local backup');
   $otherFile=$remote.'/'.$b['id'].'.cbk';$otherBytes=file_get_contents($otherFile);file_put_contents($otherFile,$original);deny(fn()=>$m->restore($b['id'],$base.'/swapped',true),'valid older encrypted artifact cannot be substituted for a different ID');file_put_contents($otherFile,$otherBytes);
   $r=Files::read($spool.'/'.$id.'.json');$r['verified_at']=time()-3*86400;Files::json($spool.'/'.$id.'.json',$r);$c=$m->run(true);ok(!is_file($file)&&is_file($remoteFile)&&is_file($spool.'/'.$b['id'].'.cbk')&&is_file($spool.'/'.$c['id'].'.cbk'),'retention keeps two newest local backups and never deletes remote objects');
@@ -50,4 +52,4 @@ try{
  $saved=Files::read($spool.'/state.json');$aged=$saved;$aged['last_capture']=time()-301;Files::json($spool.'/state.json',$aged);ok($m->health(300)['status']==='unavailable','RPO uses capture time rather than completion');Files::json($spool.'/state.json',$saved);
  $stale=$spool.'/.recovery-'.str_repeat('a',32);mkdir($stale,0700);file_put_contents($stale.'/plaintext','crash residue');$m->status();ok(!file_exists($stale),'next locked operation cleans abandoned plaintext staging');
  echo "OK\n";
-}finally{if($postgres&&$dsn){putenv('BOOK_PG_DSN='.$dsn);try{$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);}catch(Throwable $e){fwrite(STDERR,'Cleanup: '.$e->getMessage()."\n");}}clean($base);}
+}finally{CajeerBook\Observability::flush();putenv('BOOK_OBSERVABILITY');if($postgres&&$dsn){putenv('BOOK_PG_DSN='.$dsn);try{$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);}catch(Throwable $e){fwrite(STDERR,'Cleanup: '.$e->getMessage()."\n");}}clean($base);}

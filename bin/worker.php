@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/bootstrap.php';
-use CajeerBook\{AutomationWorker,DataDirectory,IdentityStore,RedisRuntime};
+use CajeerBook\{AutomationWorker,DataDirectory,IdentityStore,RedisRuntime,Observability};
 if($argc!==2||!in_array($argv[1],['--once','--loop'],true)){fwrite(STDERR,"Usage: php bin/worker.php --once|--loop\n");exit(2);}
 $root=dirname(__DIR__);$dir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');$worker=new AutomationWorker($dir,new IdentityStore($dir));
 $redis=RedisRuntime::forRoot($dir);$hints=[];
-do{try{$n=$worker->tick($hints);$hints=[];if($argv[1]==='--once'){echo "Processed $n job(s)\n";break;}if(!$n){if($redis)$hints=$redis->wait();else sleep(2);}}catch(Throwable $e){error_log('Automation worker: '.get_class($e));if($argv[1]==='--once')exit(1);sleep(5);}}while(true);
+do{try{$n=$worker->tick($hints);$hints=[];if($argv[1]==='--once'){echo "Processed $n job(s)\n";break;}if(!$n){if($redis)$hints=$redis->wait();else sleep(2);}}catch(Throwable $e){Observability::log('worker.loop_failure',['error_type'=>get_class($e)]);if($argv[1]==='--once')exit(1);sleep(5);}}while(true);
