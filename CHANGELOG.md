@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 — OpenAPI Reference
+
+- Import OpenAPI 3.0/3.1 JSON and YAML from pasted source, uploaded files, directory, ZIP or connected GitHub/GitLab at a verified immutable commit. Bounded local multi-file JSON Pointer resolution, recursive schema handling and no remote reference fetching.
+- Generate ordinary draft pages for overview, operations and schemas with stable URLs, parameters, security, request/response examples and model properties; use existing Reader, search, Editor, RBAC, privacy, review and history.
+- Signed preview, diff, atomic update and retirement drafts; reject manual-edit/path conflicts, retain published snapshots and stable IDs. Version normalized sources with actor, checksum and commit; download or restore retained revisions.
+- Store schema 4 only on OpenAPI import; compatible with Git/Review, backup and audit. Add Symfony YAML 7.4.23, readiness check and PHP/HTTP acceptance tests in CI.
+
 ## 0.3.3 — GitLab Sync
 
 - Unified Git Sync in Studio (`/studio/git`, legacy `/studio/github` retained), with GitHub and GitLab provider selection and the same transactional import, conflicts, rename, history, media and review workflow.

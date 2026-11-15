@@ -22,7 +22,7 @@ final class GitHubClient implements GitProvider
     private function request(string $method,string $path,?array $payload=null,int $limit=4194304):array{
         if(++$this->requests>650||microtime(true)>$this->deadline)throw new GitHubRemoteException('GitHub sync time/request budget exceeded. Reduce the documentation directory.');
         if($this->transport!==null)return ($this->transport)($method,$path,$payload);
-        $headers="Accept: application/vnd.github+json\r\nUser-Agent: CajeerEngineBook/0.3.3\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+        $headers="Accept: application/vnd.github+json\r\nUser-Agent: CajeerEngineBook/0.3.4\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
         if($this->token!=='')$headers.='Authorization: Bearer '.$this->token."\r\n";
         if($payload!==null)$headers.="Content-Type: application/json\r\n";
         $ctx=stream_context_create(['http'=>['method'=>$method,'header'=>$headers,'content'=>$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'timeout'=>min(8,max(0.1,$this->deadline-microtime(true)))],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
@@ -38,22 +38,22 @@ final class GitHubClient implements GitProvider
     public function head(string $repo,string $branch):string{return self::sha($this->request('GET',$this->base($repo).'/branches/'.rawurlencode(self::branch($branch)))['commit']['sha']??null);}
     public function commitTree(string $repo,string $sha):string{return self::sha($this->request('GET',$this->base($repo).'/git/commits/'.self::sha($sha))['tree']['sha']??null);}
     /** Download selected blobs at one immutable commit. Never execute repository files. */
-    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null):array{
+    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null,bool $specifications=false):array{
         $base=$this->base($repo);$info=$this->request('GET',$base.'/git/commits/'.self::sha($commit));$tree=self::sha($info['tree']['sha']??null);$author=$info['author']['name']??'';if(!is_string($author)||strlen($author)>200||!preg_match('//u',$author)||preg_match('/[\x00-\x1f\x7f]/',$author))$author='';$list=$this->request('GET',$base.'/git/trees/'.$tree.'?recursive=1',null,16777216);
         if(($list['truncated']??true)!==false||!is_array($list['tree']??null)||count($list['tree'])>100000)throw new \DomainException('GitHub tree is truncated or too large.');
         $prefix=$root===''?'':$root.'/';$entries=[];$total=0;$ignored=0;
         foreach($list['tree'] as $e){$path=$e['path']??null;if(!is_string($path)||!str_starts_with($path,$prefix)||$path===$root)continue;$rel=substr($path,strlen($prefix));if($rel==='')continue;
             if(($e['type']??'')==='tree')continue;
             if(!in_array($e['mode']??'', ['100644','100755'],true)||($e['type']??'')!=='blob')throw new \DomainException('Documentation directory contains a symlink, submodule or special file.');
-            if(!preg_match('/\.(?:md|markdown|png|jpe?g|gif|webp|pdf|zip|txt|csv)$/i',$rel)){$ignored++;continue;}
+            if(!preg_match($specifications?'/\.(?:json|ya?ml)$/i':'/\.(?:md|markdown|png|jpe?g|gif|webp|pdf|zip|txt|csv)$/i',$rel)){$ignored++;continue;}
             ImportFiles::path($rel);$size=$e['size']??null;if(!is_int($size)||$size<0||$size>MediaStore::MAX_FILE||($total+=$size)>ImportFiles::MAX_TOTAL||count($entries)>=ImportFiles::MAX_FILES||isset($entries[$rel]))throw new \DomainException('GitHub documentation exceeds import limits.');
-            $entries[$rel]=['sha'=>self::sha($e['sha']??null),'size'=>$size];
+            $entries[$rel]=['sha'=>self::sha($e['sha']??null),'size'=>$size];if($specifications&&(count($entries)>OpenApiDocument::MAX_FILES||$total>OpenApiDocument::MAX_BYTES))throw new \DomainException('Git specification folder exceeds limits.');
         }
         return GitBlobImport::stage($entries,$cacheDir,function($sha)use($base){
             $blob=$this->request('GET',$base.'/git/blobs/'.$sha,null,30*1024*1024);
             $content=$blob['content']??null;
             return is_string($content)&&($blob['encoding']??'')==='base64'?base64_decode($content,true):false;
-        })+['ignored'=>$ignored,'tree'=>$tree,'author'=>$author];
+        },$specifications?OpenApiDocument::MAX_BYTES:ImportFiles::MAX_TOTAL)+['ignored'=>$ignored,'tree'=>$tree,'author'=>$author];
     }
     /** Create a new branch and PR; never write the configured base branch. */
     public function propose(string $repo,string $branch,string $commit,array $changes):string{

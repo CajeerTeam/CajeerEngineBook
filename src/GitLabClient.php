@@ -45,7 +45,7 @@ final class GitLabClient implements GitProvider
     private function request(string $method,string $path,?array $payload=null,int $limit=4194304,bool $missing=false,bool $rawBody=false):array|string|null{
         if(++$this->requests>650||microtime(true)>$this->deadline)throw new GitHubRemoteException('GitLab sync time/request budget exceeded. Reduce the documentation directory.');
         if($this->transport!==null)return ($this->transport)($method,$path,$payload,$missing,$rawBody);
-        $headers=($rawBody?"Accept: application/octet-stream\r\n":"Accept: application/json\r\n")."User-Agent: CajeerEngineBook/0.3.3\r\n";
+        $headers=($rawBody?"Accept: application/octet-stream\r\n":"Accept: application/json\r\n")."User-Agent: CajeerEngineBook/0.3.4\r\n";
         if($this->token!=='')$headers.='PRIVATE-TOKEN: '.$this->token."\r\n";
         if($payload!==null)$headers.="Content-Type: application/json\r\n";
         $ctx=stream_context_create(['http'=>['method'=>$method,'header'=>$headers,'content'=>$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'timeout'=>min(8,max(0.1,$this->deadline-microtime(true)))],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
@@ -61,7 +61,7 @@ final class GitLabClient implements GitProvider
         }finally{fclose($handle);}
     }
     public function head(string $repo,string $branch):string{return GitHubClient::sha($this->request('GET',$this->base($repo).'/repository/branches/'.rawurlencode(GitHubClient::branch($branch)))['commit']['id']??null);}
-    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null):array{
+    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null,bool $specifications=false):array{
         $base=$this->base($repo).'/repository';GitHubClient::sha($commit);if($root!=='')ImportFiles::path($root);
         $info=$this->request('GET',$base.'/commits/'.$commit);if(($info['id']??null)!==$commit)throw new \DomainException('GitLab returned an unexpected commit.');
         $author=$info['author_name']??'';if(!is_string($author)||strlen($author)>200||!preg_match('//u',$author)||preg_match('/[\x00-\x1f\x7f]/',$author))$author='';
@@ -76,14 +76,14 @@ final class GitLabClient implements GitProvider
                 if($path===$root&&(($e['type']??'')!=='tree'||($e['mode']??'')!=='040000'))throw new \DomainException('Documentation root is not a directory.');if(!str_starts_with($path,$prefix)||$path===$root)continue;$rel=substr($path,strlen($prefix));if($rel==='')continue;
                 if(($e['type']??'')==='tree'&&($e['mode']??'')==='040000')continue;
                 if(($e['type']??'')!=='blob'||!in_array($e['mode']??'',['100644','100755'],true))throw new \DomainException('Documentation directory contains a symlink, submodule or special file.');
-                if(!preg_match('/\.(?:md|markdown|png|jpe?g|gif|webp|pdf|zip|txt|csv)$/i',$rel)){$ignored++;continue;}
-                ImportFiles::path($rel);if(count($entries)>=ImportFiles::MAX_FILES)throw new \DomainException('GitLab documentation exceeds file limit.');$entries[$rel]=['sha'=>GitHubClient::sha($e['id']??null)];
+                if(!preg_match($specifications?'/\.(?:json|ya?ml)$/i':'/\.(?:md|markdown|png|jpe?g|gif|webp|pdf|zip|txt|csv)$/i',$rel)){$ignored++;continue;}
+                ImportFiles::path($rel);if(count($entries)>=ImportFiles::MAX_FILES)throw new \DomainException('GitLab documentation exceeds file limit.');$entries[$rel]=['sha'=>GitHubClient::sha($e['id']??null)];if($specifications&&count($entries)>OpenApiDocument::MAX_FILES)throw new \DomainException('Git specification folder exceeds file limit.');
             }
             if(count($list)<100)break;
         }
-        return GitBlobImport::stage($entries,$cacheDir,function($sha)use($base){
-            return $this->request('GET',$base.'/blobs/'.$sha.'/raw',null,MediaStore::MAX_FILE,false,true);
-        })+['ignored'=>$ignored,'tree'=>$commit,'author'=>$author];
+        return GitBlobImport::stage($entries,$cacheDir,function($sha)use($base,$specifications){
+            return $this->request('GET',$base.'/blobs/'.$sha.'/raw',null,$specifications?OpenApiDocument::MAX_BYTES:MediaStore::MAX_FILE,false,true);
+        },$specifications?OpenApiDocument::MAX_BYTES:ImportFiles::MAX_TOTAL)+['ignored'=>$ignored,'tree'=>$commit,'author'=>$author];
     }
     public function propose(string $repo,string $branch,string $commit,array $changes):string{
         if(!$changes||count($changes)>ImportFiles::MAX_FILES)throw new \DomainException('No tracked local changes to propose.');GitHubClient::sha($commit);if(strlen($this->origin.'/'.$repo)>440)throw new \DomainException('GitLab project URL is too long.');

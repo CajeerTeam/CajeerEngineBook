@@ -42,7 +42,7 @@ final class Permissions
         if(!self::allows($role,'edit'))return false;
         if(in_array($method,['GET','HEAD'],true)){
             if(in_array($path,['/studio/export','/studio/media/backup'],true))return self::allows($role,'export');
-            return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
+            return in_array($path,['/studio','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
         }
         if($method!=='POST')return false;
         $permission=match($path){
@@ -52,6 +52,7 @@ final class Permissions
             '/studio/books'=>match($action){'create'=>'edit','visibility'=>'manage',default=>''},
             '/studio/editor/render'=>'edit',
             '/studio/github','/studio/git'=>match($action){'configure','rotate','disconnect'=>'manage','preview','apply','propose'=>'edit',default=>''},
+            '/studio/openapi'=>in_array($action,['preview','apply','git-preview','restore-preview'],true)?'edit':'',
             '/studio/import'=>in_array($action,['preview','apply'],true)?'edit':'',
             '/studio/history'=>$action==='restore'?'edit':'',
             '/studio/team'=>$action==='read'?'edit':'',

@@ -5,7 +5,7 @@ namespace CajeerBook;
 /** Shared bounded, content-addressed blob staging. Cache is never authoritative. */
 final class GitBlobImport
 {
-    public static function stage(array $entries,?string $cacheDir,callable $load):array{
+    public static function stage(array $entries,?string $cacheDir,callable $load,int $maxTotal=ImportFiles::MAX_TOTAL):array{
         $set=new ImportFiles();$tmp=tempnam(sys_get_temp_dir(),'book-git-');if($tmp===false)throw new \RuntimeException('Cannot stage Git blob.');chmod($tmp,0600);
         $lock=null;$downloaded=0;$cached=0;$total=0;
         try{
@@ -19,10 +19,10 @@ final class GitBlobImport
                 if($cache!==null&&is_file($cache)&&filesize($cache)<=MediaStore::MAX_FILE&&(!isset($e['size'])||filesize($cache)===$e['size'])){$candidate=file_get_contents($cache);if(is_string($candidate)&&sha1('blob '.strlen($candidate)."\0".$candidate)===$e['sha']){$bytes=$candidate;$cached++;}}
                 if($bytes===false){$bytes=$load($e['sha']);
                     if(!is_string($bytes)||strlen($bytes)>MediaStore::MAX_FILE||(isset($e['size'])&&strlen($bytes)!==$e['size'])||sha1('blob '.strlen($bytes)."\0".$bytes)!==$e['sha'])throw new \DomainException('Git blob integrity check failed.');
-                    $downloaded++;if($total+strlen($bytes)>ImportFiles::MAX_TOTAL)throw new \DomainException('Git documentation exceeds import limits.');
+                    $downloaded++;if($total+strlen($bytes)>$maxTotal)throw new \DomainException('Git documentation exceeds import limits.');
                     if($cache!==null)\CajeerEngine\Update\OperationFiles::write($cache,$bytes);
                 }
-                if(($total+=strlen($bytes))>ImportFiles::MAX_TOTAL)throw new \DomainException('Git documentation exceeds import limits.');
+                if(($total+=strlen($bytes))>$maxTotal)throw new \DomainException('Git documentation exceeds import limits.');
                 $entries[$path]['size']=strlen($bytes);
                 if(file_put_contents($tmp,$bytes)!==strlen($bytes))throw new \RuntimeException('Cannot stage Git blob.');clearstatcache(true,$tmp);$set->add($path,$tmp);unset($bytes,$candidate,$blob);
             }

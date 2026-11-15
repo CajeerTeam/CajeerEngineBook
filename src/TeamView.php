@@ -26,6 +26,7 @@ final class TeamView
             if(str_starts_with($e['type'],'page.')&&$e['target']!=='')return self::link(WorkspaceUrls::url('/studio/history?page='.$e['target']),'Page history');
             if(str_starts_with($e['type'],'book.'))return self::link(WorkspaceUrls::url('/studio/books'),'Books');
             if(str_starts_with($e['type'],'media.'))return self::link(WorkspaceUrls::url('/studio/media'),'Media library');
+            if($e['type']==='openapi.import')return self::link(WorkspaceUrls::url('/studio/openapi?spec='.rawurlencode($e['subject'])),'OpenAPI Reference');
             if(str_starts_with($e['type'],'git.'))return self::link(WorkspaceUrls::url('/studio/git'),'Git Sync');
         }elseif($e['type']==='organization.invite')return self::link('/organizations/join','Accept using invitation token');
         elseif($e['organization']!=='')return self::link('/organizations/'.$e['organization'],'Organization');return '';

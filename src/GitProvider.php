@@ -6,6 +6,6 @@ namespace CajeerBook;
 interface GitProvider
 {
     public function head(string $repo,string $branch):string;
-    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null):array;
+    public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null,bool $specifications=false):array;
     public function propose(string $repo,string $branch,string $commit,array $changes):string;
 }
