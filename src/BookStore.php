@@ -102,8 +102,8 @@ final class BookStore {
     public function change(callable $fn,?string $historyAction=null,string $historyNote='',?string $historySource=null): void {
         if($pg=$this->backend()){
             $pg->transaction(true,function(array $db)use($pg,$fn,$historyAction,$historyNote,$historySource){
-                self::validateDatabase($db);$before=$db;$this->mutate($db,$fn,$historyAction,$historyNote,$historySource);
-                self::validateDatabase($db);self::checkSize($db);$pg->write($before,$db);
+                self::validateDatabase($db);$before=$db;$events=$this->mutate($db,$fn,$historyAction,$historyNote,$historySource);
+                self::validateDatabase($db);self::checkSize($db);$pg->write($before,$db,$events);
             });return;
         }
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
@@ -112,8 +112,11 @@ final class BookStore {
         try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $this->mutate($db,$fn,$historyAction,$historyNote,$historySource); if($this->backend())throw new \RuntimeException('Content backend changed; retry after migration.'); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
     }
-    private function mutate(array &$db,callable $fn,?string $historyAction,string $historyNote,?string $historySource):void {
-        $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db);
+    private function mutate(array &$db,callable $fn,?string $historyAction,string $historyNote,?string $historySource):array {
+        $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); $events=ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db);
+        // Worker state transitions are independent of the notification journal and contain no job payload.
+        if($this->backend())foreach($db['automation']['jobs']??[] as $id=>$job){$old=$before['automation']['jobs'][$id]['state']??null;$state=$job['state'];if($state!==$old)$events[]=AuditLog::event('automation.job.'.$state,['id'=>$job['actor']],$id,$state==='dead'?'failure':($state==='cancelled'?'denied':'success'));}
+        return $events;
     }
     public static function checkSize(array $db):void {
         if(strlen(json_encode($db,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n")>self::MAX_DB_BYTES)throw new \DomainException('Book data exceeds 32 MiB; remove content or split the installation.');
@@ -129,6 +132,9 @@ final class BookStore {
             if($old===false||$old<=self::MAX_DB_BYTES||strlen($json)>=$old)throw new \DomainException('Book data exceeds 32 MiB; remove content or split the installation.');
         }
         Files::write($path,$json);
+    }
+    public function auditEvent(string $action,?array $actor=null,string $target=''):void {
+        if($pg=$this->backend())$pg->transaction(true,fn()=> $pg->audit([AuditLog::event($action,$actor,$target)]));
     }
     public function checkReady(): void {
         if($pg=$this->backend())$pg->checkSearch();

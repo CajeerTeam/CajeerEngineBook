@@ -21,11 +21,11 @@ final class App {
         $nav=PageTreeView::reader($pages,$current);$document=$current!==''?($pages[$current]??null):null;
         $lang=$document?Locale::language($document):Locale::ui();$searchLocale=$document?Locale::language($document):(Locale::valid($_GET['locale']??null)?$_GET['locale']:'');
         if($this->workspace&&$this->domainHost===null)$body='<p class="eyebrow"><a href="/workspaces">'.self::t('Workspaces').'</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
-        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead]);
+        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).(getenv('BOOK_PG_DSN')?'<a href="/audit">Audit</a>':'').self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead]);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
-        header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+        header('X-Request-ID: '.AuditLog::beginRequest());header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
         $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);if(!is_string($path)||!str_starts_with($path,'/')){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
@@ -60,13 +60,19 @@ final class App {
                 $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();$this->dispatch($path,$method);});return;
             }
             // Account, control-plane and health routes must remain reachable even when legacy content is private.
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/domains','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/domains','/organizations','/team','/audit','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
             $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
                 $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
                 if(!$visible){$this->unavailable($path,$ctx);return;}$this->dispatch($path,$method);
             });
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
+        finally{
+            // A denial has no business transaction to join. Record a minimal, separate event after locks release.
+            $status=http_response_code();if(getenv('BOOK_PG_DSN')&&$this->domainHost===null&&in_array($status,[401,403,429],true)&&preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/(?:studio|api/v1|webhooks|account|organizations|workspaces|domains|audit)(?:/|$)~D',$path)){
+                try{$this->identityStore->auditFailure($status===429?'access.limited':'access.denied',$status===429?'limited':'denied');}catch(\Throwable){error_log('Audit denial event could not be persisted');}
+            }
+        }
     }
     /** Strict host selection precedes all auth, CI, webhook and workspace dispatch. */
     private function domainGate(string $path,string $method):bool{
@@ -165,7 +171,7 @@ final class App {
                 $store=new BookStore($dir,$w===null);$media=new MediaStore($dir,$store);
                 $visibility=$w?Visibility::workspace($w):'public';
                 WorkspaceUrls::set($w?Workspaces::prefix($w):'');
-                try{return ReleaseArtifact::create($this->root,$store,$media,$admins,$credential,$visibility,$id,$digest,$target,CustomDomains::publicOrigin($w));}
+                try{$result=ReleaseArtifact::create($this->root,$store,$media,$admins,$credential,$visibility,$id,$digest,$target,CustomDomains::publicOrigin($w));$token=CiPublishing::authenticate($store->read(),$credential,$admins);$store->auditEvent('export.ci',$admins[$token['actor']['id']],$id);return $result;}
                 finally{WorkspaceUrls::set('');}
             });
             if($result===null){http_response_code(404);$this->json(['error'=>'Workspace unavailable']);return;}
@@ -288,11 +294,28 @@ final class App {
         if($o['groups']){$r=$this->store->search($this->readerVisibility,$audience==='public'?'none':$this->studioRole,$o);$html.='<p>'.$r['total'].' results · '.self::e($r['match']).' · showing up to '.$o['limit'].'</p>';foreach($r['hits'] as $h)$html.='<div class="result">'.self::link(self::url($h['key']),$h['title']).' <small>Score: '.self::e((string)$h['score']).'</small><p>'.self::e($h['snippet']).'</p></div>';}
         $this->page('Search Inspector',$html);
     }
+    private function audit(string $method):void{
+        header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
+        if($method!=='GET'&&$method!=='POST'){http_response_code(405);header('Allow: GET, POST');return;}
+        try{
+            $filters=AuditLog::filters($method==='POST'?$_POST:$_GET);
+            $format=$method==='POST'?($_POST['format']??''):'';
+            if($method==='POST'&&!in_array($format,['csv','jsonl'],true))throw new \InvalidArgumentException('Unknown export format.');
+            $r=$this->identityStore->enterpriseAudit($this->auth->token(),$filters,$method==='POST'?5000:50,$method==='POST',is_string($_POST['csrf']??null)?$_POST['csrf']:'');
+            if($method==='POST'){
+                $data=AuditView::encode($r['events'],$format);header('Content-Type: '.($format==='csv'?'text/csv; charset=utf-8':'application/x-ndjson; charset=utf-8'));
+                header('Content-Disposition: attachment; filename="book-audit.'.$format.'"');header('X-Audit-Count: '.count($r['events']));if($r['next']!==null)header('X-Audit-Next-Cursor: '.$r['next']);echo $data;return;
+            }
+            $this->page('Enterprise Audit Log',AuditView::render($r,$filters));
+        }catch(OrganizationAccessException $e){http_response_code(403);$this->page('Forbidden','<h1>Audit permission required</h1>');}
+        catch(\InvalidArgumentException|\DomainException $e){http_response_code(422);$this->page('Audit unavailable','<h1>Audit unavailable</h1><p>'.self::e($e->getMessage()).'</p>');}
+    }
     private function dispatch(string $path,string $method):void{
         try{
             if($path==='/diagram-frame'){DiagramFrame::serve($method);return;}
             if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
             if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
+            if($path==='/audit'){$this->audit($method);return;}
             if($path==='/team'){
                 header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
                 try{$mark=$method==='POST'?(is_string($_POST['id']??null)?$_POST['id']:''):null;if($method==='POST'&&($_POST['action']??'')!=='read')throw new \InvalidArgumentException('Unknown team action');
@@ -421,7 +444,7 @@ final class App {
                 try{
                     if(!in_array($_POST['visibility']??null,['public','all'],true))throw new \InvalidArgumentException('Choose an export visibility.');
                     if($private&&($_POST['confirm_private']??'')!=='1')throw new \InvalidArgumentException('Confirm that the ZIP may contain private published documentation.');
-                    (new StaticExport($this->root,$this->store,$this->media,CustomDomains::publicOrigin($this->workspace)))->download($this->readerVisibility,$scope,$private);
+                    (new StaticExport($this->root,$this->store,$this->media,CustomDomains::publicOrigin($this->workspace)))->download($this->readerVisibility,$scope,$private,fn()=> $this->store->auditEvent($private?'export.static.private':'export.static.public',$identity['user']));
                 }catch(\InvalidArgumentException|\DomainException $e){http_response_code(422);$this->page('Static Export',StaticExport::form($this->store->read(),$this->readerVisibility,$csrf,$e->getMessage()));}
                 return;
             }
@@ -562,8 +585,8 @@ final class App {
         if($path==='/studio/media/picker'){$this->mediaController->picker();return;}
         if($path==='/studio/media'){$this->page('Media library',$this->mediaController->markup($csrf,$admin,$this->readerVisibility));return;}
         if(str_starts_with($path,'/studio/media/file/')){$this->mediaController->serve(substr($path,19),true,$method);return;}
-        if($path==='/studio/media/backup'){(new MediaBackup($this->dataDir,$this->store,$this->media))->download($method);return;}
-        $db=$this->store->read();$directPublish=$admin&&!ReviewWorkflow::required($db);if($path==='/studio/tree'){$scope=is_string($_GET['scope']??null)?$_GET['scope']:'';$notice=match($_GET['notice']??''){'published'=>'Tree published. Draft content unchanged.','saved'=>'Draft tree saved.',default=>''};$this->page('Page tree',PageTreeView::studio($db,$csrf,$scope,$notice,$admin),BookStore::published($db));return;}if($path==='/studio/export'){header('Content-Disposition: attachment; filename="cajeerbook-backup.json"');$this->json($db);return;}if($path!=='/studio'){http_response_code(404);return;}
+        if($path==='/studio/media/backup'){if($method!=='HEAD')$this->store->auditEvent('export.media.request',$identity['user']);(new MediaBackup($this->dataDir,$this->store,$this->media))->download($method);return;}
+        $db=$this->store->read();$directPublish=$admin&&!ReviewWorkflow::required($db);if($path==='/studio/tree'){$scope=is_string($_GET['scope']??null)?$_GET['scope']:'';$notice=match($_GET['notice']??''){'published'=>'Tree published. Draft content unchanged.','saved'=>'Draft tree saved.',default=>''};$this->page('Page tree',PageTreeView::studio($db,$csrf,$scope,$notice,$admin),BookStore::published($db));return;}if($path==='/studio/export'){if($method!=='HEAD')$this->store->auditEvent('export.content',$identity['user']);header('Content-Disposition: attachment; filename="cajeerbook-backup.json"');$this->json($db);return;}if($path!=='/studio'){http_response_code(404);return;}
         $edit=is_string($_GET['edit']??null)?$_GET['edit']:'';$entry=$db['pages'][$edit]??null;
         if($edit!==''&&!$entry){if($target=PageTree::draftRedirect($db,$edit)){header('Location: '.WorkspaceUrls::url('/studio?edit='.rawurlencode($target)),true,303);return;}http_response_code(404);$this->page('Page not found','<h1>Page not found</h1><a href="'.WorkspaceUrls::url('/studio/tree').'">Open page tree</a>');return;}$p=$entry['draft']??['title'=>'','section'=>'Getting started','order'=>10,'body'=>''];$parts=$entry?explode('/',$edit,3):[$this->workspace?(string)(array_key_first(BookStore::books($db))??''):'handbook','1.0',''];
         if(!$entry&&is_string($_GET['book']??null)&&isset(BookStore::books($db)[$_GET['book']]))$parts[0]=$_GET['book'];

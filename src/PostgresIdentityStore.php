@@ -125,6 +125,9 @@ final class PostgresIdentityStore
         }
         self::query($pdo,'UPDATE cajeer_book.identity_state SET metadata=CAST(? AS json),owner_anchor=?,revision=revision+1 WHERE installation=?',[self::json($meta),$owner,$this->installation]);
     }
+    public function auditReady(PDO $pdo):void{AuditLog::assertInstallation($pdo,$this->installation);}
+    public function audit(PDO $pdo,array $events):void{AuditLog::append($pdo,$this->installation,'identity',$events);}
+    public function auditFind(PDO $pdo,array $access,array $filters,int $limit):array{return AuditLog::find($pdo,$this->installation,$access,$filters,$limit);}
     /** Import on the same transaction as content or upgrade an existing 0.4.1 SQL installation. */
     public function import(PDO $pdo,array $db):void
     {
@@ -139,5 +142,6 @@ final class PostgresIdentityStore
     public function initializeWorkspace(PDO $pdo,string $scope):void
     {
         (new PostgresContentStore($this->installation,$scope,$this->binding))->initializeInTransaction($pdo,['schema'=>1,'pages'=>[],'media'=>[],'books'=>[]]);
+        AuditLog::initializeScope($pdo,$this->installation,$scope);
     }
 }

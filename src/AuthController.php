@@ -51,7 +51,7 @@ final class AuthController
             $code=is_string($_GET['code']??null)?$_GET['code']:'';$claims=Oidc::exchange($c,$flow,$code);
             $r=$this->store->federatedLogin($c,$claims);if($r['status']!=='ok')throw new \DomainException('SSO access denied.');
             self::issue($r);self::redirect('/auth/oidc/complete');
-        }catch(\Throwable){http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');}
+        }catch(\Throwable){$this->store->auditFailure('oidc.failed');http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');}
     }
     private static function oidcStatus():string{
         try{$c=Oidc::config();return '<h2>Enterprise SSO</h2><p>'.($c?self::e($c['label'].' · '.$c['issuer']).' · '.count($c['groups']).' group mappings':'Not configured').'</p><p>Local login: '.(Oidc::required()?'installation owner only':'enabled for local accounts').'. Configuration is managed by the deployment operator.</p>';}catch(\Throwable){return '<h2>Enterprise SSO</h2><p>Invalid deployment configuration.</p>';}

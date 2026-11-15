@@ -22,6 +22,7 @@
     },
     "scripts": {
         "test": [
+            "@php tests/audit-policy.php",
             "@php tests/domains.php",
             "python3 tests/domains-http.py --full",
             "@php tests/oidc-policy.php",

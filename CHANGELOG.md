@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.8 — Enterprise Audit Log
+
+- PostgreSQL audit streams with transactional identity/content event capture before ActivityJournal trimming, allowlisted metadata, request correlation, SHA-256 chains and SQL immutability checks.
+- Main-host Audit Explorer, live organization/workspace authorization, indexed filters, cursor pagination, CSRF-protected CSV/JSONL export and export events.
+- Offline migration, chain verification, verified prefix archival and retention, portable historical snapshots and backup integration. Existing file-mode installs retain ActivityJournal.
+- Local policy tests and real PostgreSQL integration gate for isolation, rollback, retention and durable history.
+
 ## 0.4.7 — Custom Domains
 
 - Transactional workspace domain registration, exact DNS TXT ownership proof, renewable seven-day leases, daily recheck, global hostname uniqueness, canonical primary/aliases, disable/rotate/remove and activity events. Restore rotates ownership challenges and clears verified state.

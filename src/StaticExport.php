@@ -72,11 +72,11 @@ final class StaticExport
         }
     }
 
-    public function download(string $visibility,string $scope,bool $includePrivate):void
+    public function download(string $visibility,string $scope,bool $includePrivate,?callable $beforeSend=null):void
     {
         $dir=sys_get_temp_dir().'/.book-static-download-'.bin2hex(random_bytes(16));Files::dir($dir);$path=$dir.'/site.zip';
         try{
-            $this->create($path,$visibility,$scope,$includePrivate);
+            $this->create($path,$visibility,$scope,$includePrivate);if($beforeSend!==null)$beforeSend();
             header('Content-Type: application/zip');header('Content-Disposition: attachment; filename="cajeerbook-static.zip"');header('Cache-Control: private, no-store');header('Content-Length: '.filesize($path));
             readfile($path);
         }finally{self::removeStage($dir);}

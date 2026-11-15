@@ -76,6 +76,7 @@ final class InstallationBackup
         if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
         $stage=self::stage($target);
         try{
+            if(getenv('BOOK_PG_DSN'))(new IdentityStore($root))->operatorAudit('backup.request');
             (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage){
                 Workspaces::assertRegistryDirectories($root,$identity);PostgresContentStore::assertRegistry($root,$identity);
                 Files::write($stage.'/identity.json',json_encode($identity,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");$manifest=['format'=>1,'created'=>gmdate('c'),'files'=>['identity.json'=>self::entry($stage.'/identity.json')]];
@@ -86,6 +87,11 @@ final class InstallationBackup
                     if((new StoreAudit($books,$media))->run()['reference_mismatches']!==0)throw new \RuntimeException('Media index mismatch: '.$name);
                     (new MediaBackup($dir,$books,$media))->create($stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);
                 }
+                // Retained SQL audit chains are exported as verified historical evidence. Keep
+                // prior restored snapshots too; old namespaces are never relabelled as new events.
+                $history=$root.'/audit-history';if(is_link($history))throw new \RuntimeException('Invalid audit history directory.');if(is_dir($history))foreach(new \DirectoryIterator($history) as $f){if($f->isDot())continue;$name=$f->getFilename();if(!$f->isFile()||$f->isLink()||!preg_match('/\Aaudit-[a-f0-9]{32}\.jsonl\z/D',$name))throw new \RuntimeException('Invalid audit history member.');$report=AuditSnapshot::verify($f->getPathname());if($name!=='audit-'.$report['installation'].'.jsonl')throw new \RuntimeException('Audit history namespace mismatch.');Files::copy($f->getPathname(),$stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);}
+                if(getenv('BOOK_PG_DSN')){$name='audit-'.PostgresContentStore::namespace().'.jsonl';AuditSnapshot::create($root,$stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);}
+                if(count($manifest['files'])>Workspaces::LIMIT+102)throw new \RuntimeException('Too many historical audit snapshots; move older snapshots to protected archive storage.');
                 Files::json($stage.'/manifest.json',$manifest);
             });
             self::publish($stage,$target);
@@ -96,8 +102,8 @@ final class InstallationBackup
     {
         $bundle=self::path($bundle,$public);$target=self::path($target,$public);self::separate($bundle,$target);
         $manifestFile=Files::path($bundle,'manifest.json');if(!is_file($manifestFile)||filesize($manifestFile)>self::MAX_MANIFEST)throw new \InvalidArgumentException('Invalid installation manifest');
-        $m=Files::read($manifestFile);if(($m['format']??null)!==1||!is_array($m['files']??null)||count($m['files'])>Workspaces::LIMIT+2)throw new \InvalidArgumentException('Invalid installation manifest');
-        $files=$m['files'];foreach($files as $name=>$entry)if(!is_string($name)||!is_array($entry)||!preg_match('/\A(?:identity\.json|legacy\.tar|[a-f0-9]{32}\.tar)\z/D',$name))throw new \InvalidArgumentException('Invalid bundle member');
+        $m=Files::read($manifestFile);if(($m['format']??null)!==1||!is_array($m['files']??null)||count($m['files'])>Workspaces::LIMIT+102)throw new \InvalidArgumentException('Invalid installation manifest');
+        $files=$m['files'];foreach($files as $name=>$entry)if(!is_string($name)||!is_array($entry)||!preg_match('/\A(?:identity\.json|legacy\.tar|[a-f0-9]{32}\.tar|audit-[a-f0-9]{32}\.jsonl)\z/D',$name))throw new \InvalidArgumentException('Invalid bundle member');
         $identity=Files::read(self::verifyFile($bundle,'identity.json',$files['identity.json']??[],self::MAX_IDENTITY));
         $stage=self::stage($target);
         try{
@@ -108,6 +114,7 @@ final class InstallationBackup
                 $registry->checkReady();
             }else $registry->restore($identity);
             $workspaces=$registry->operatorWorkspaces();$expected=['identity.json'=>true,'legacy.tar'=>true];foreach($workspaces as $w)if(!$w['legacy'])$expected[$w['id'].'.tar']=true;
+            foreach($files as $name=>$entry)if(preg_match('/\Aaudit-[a-f0-9]{32}\.jsonl\z/D',$name)){$path=self::verifyFile($bundle,$name,$entry,AuditSnapshot::MAX_BYTES);$report=AuditSnapshot::verify($path);if($name!=='audit-'.$report['installation'].'.jsonl')throw new \RuntimeException('Audit snapshot namespace mismatch.');Files::dir($stage.'/audit-history');Files::copy($path,$stage.'/audit-history/'.$name);$expected[$name]=true;}
             if(array_diff_key($files,$expected)||array_diff_key($expected,$files))throw new \InvalidArgumentException('Bundle does not match workspace registry');
             // The root content TAR restores to its own staging directory, then merges only known content paths.
             $legacy=$stage.'/.legacy';MediaBackup::restore(self::verifyFile($bundle,'legacy.tar',$files['legacy.tar'],self::MAX_TAR),$legacy);

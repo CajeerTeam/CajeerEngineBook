@@ -7,7 +7,7 @@ final class ActivityJournal
 {
     public const MAX_EVENTS=1000;
     public const MAX_BYTES=524288;
-    private const TYPES=['login','logout','account.create','account.enable','account.disable','account.password','account.reset','account.sessions','organization.create','organization.rename','organization.archive','organization.restore','organization.delete','organization.invite','organization.revoke','organization.join','organization.leave','organization.remove','organization.transfer','organization.role','workspace.create','workspace.adopt','workspace.rename','workspace.archive','workspace.restore','workspace.visibility','workspace.role','workspace.domain','page.save','page.publish','page.unpublish','page.delete','page.move','page.duplicate','page.copy','page.publish-tree','page.restore','book.create','book.visibility','media.upload','media.update','media.delete','review.in_review','review.approved','review.changes_requested','review.rejected','review.cancelled','review.stale','review.published','review.comment','review.prune','review.policy','git.connect','git.rotate','git.disconnect','git.sync','git.proposal','git.error','openapi.import','automation.configure','automation.retry','ci.token','ci.build','ci.approve','ci.publish','ci.cancel','ci.prune','ci.rollback'];
+    private const TYPES=['login','login.failed','login.limited','oidc.failed','account.profile','logout','account.create','account.enable','account.disable','account.password','account.reset','account.sessions','organization.create','organization.rename','organization.archive','organization.restore','organization.delete','organization.invite','organization.revoke','organization.join','organization.leave','organization.remove','organization.transfer','organization.role','workspace.create','workspace.adopt','workspace.rename','workspace.archive','workspace.restore','workspace.visibility','workspace.role','workspace.domain','page.save','page.publish','page.unpublish','page.delete','page.move','page.duplicate','page.copy','page.publish-tree','page.restore','book.create','book.visibility','media.upload','media.update','media.delete','review.in_review','review.approved','review.changes_requested','review.rejected','review.cancelled','review.stale','review.published','review.comment','review.prune','review.policy','git.connect','git.rotate','git.disconnect','git.sync','git.proposal','git.error','openapi.import','automation.configure','automation.retry','ci.token','ci.build','ci.approve','ci.publish','ci.cancel','ci.prune','ci.rollback'];
     private static function id(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{32}\z/D',$v)===1;}
     public static function record(array &$db,?array $actor,string $type,string $subject='',string $target='',string $org='',string $workspace='',array $recipients=[],string $detail=''):void
     {
@@ -23,7 +23,7 @@ final class ActivityJournal
             foreach(['subject'=>400,'detail'=>200] as $k=>$max)if(!is_string($e[$k]??null)||strlen($e[$k])>$max||!preg_match('//u',$e[$k])||preg_match('/[\x00-\x1f\x7f]/',$e[$k]))throw new \InvalidArgumentException('Invalid activity text');
             foreach(['target','organization','workspace'] as $k)if(($e[$k]??null)!==''&&!self::id($e[$k]??null))throw new \InvalidArgumentException('Invalid activity scope');
             foreach(['recipients','read'] as $k){$v=$e[$k]??null;if(!is_array($v)||!array_is_list($v)||count($v)>10||count(array_unique($v,SORT_REGULAR))!==count($v))throw new \InvalidArgumentException('Invalid notification state');foreach($v as $u)if(!self::id($u))throw new \InvalidArgumentException('Invalid notification recipient');}
-            $identityType=in_array($e['type'],['login','logout'],true)||str_starts_with($e['type'],'account.')||str_starts_with($e['type'],'organization.')||str_starts_with($e['type'],'workspace.');
+            $identityType=in_array($e['type'],['login','login.failed','login.limited','oidc.failed','logout'],true)||str_starts_with($e['type'],'account.')||str_starts_with($e['type'],'organization.')||str_starts_with($e['type'],'workspace.');
             if((isset($db['users'])&&!$identityType)||isset($db['pages'])&&$identityType||(!$identityType&&($e['organization']!==''||$e['workspace']!==''))||str_starts_with($e['type'],'organization.')&&($e['organization']===''||$e['workspace']!=='')||str_starts_with($e['type'],'workspace.')&&($e['organization']===''||$e['workspace']===''))throw new \InvalidArgumentException('Invalid activity namespace');
             if(isset($db['workspaces'][$e['workspace']])&&$db['workspaces'][$e['workspace']]['organization']!==$e['organization'])throw new \InvalidArgumentException('Activity workspace scope mismatch');
             if(array_diff($e['read'],$e['recipients']))throw new \InvalidArgumentException('Invalid notification receipt');
@@ -41,7 +41,7 @@ final class ActivityJournal
         if(!$db['activity'])unset($db['activity']);
     }
     /** Content changes and notifications share the BookStore commit, including stale review transitions. */
-    public static function content(array $before,array &$db,?array $actor,?string $action):void
+    public static function content(array $before,array &$db,?array $actor,?string $action):array
     {
         if($action!==null){
             // Capture the actual page transaction, independently of history retention.
@@ -66,7 +66,8 @@ final class ActivityJournal
             }
         }
         foreach($db['openapi']??[] as $scope=>$spec){$previous=$before['openapi'][$scope]??null;if(($previous['revision']??0)!==$spec['revision'])self::record($db,$actor,'openapi.import',$scope,$spec['id'],'','',[],'Source revision '.$spec['revision']);}
-        self::trim($db,BookStore::MAX_DB_BYTES,true);
+        $events=array_diff_key($db['activity']??[],$before['activity']??[]);
+        self::trim($db,BookStore::MAX_DB_BYTES,true);return $events;
     }
     public static function inbox(array $events,string $uid):array{return array_values(array_reverse(array_filter($events,fn($e)=>in_array($uid,$e['recipients'],true)),true));}
     public static function mark(array &$db,string $uid,string $id,array $allowed):void

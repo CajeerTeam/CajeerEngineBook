@@ -71,6 +71,8 @@ final class IdentityStore
                 if(file_exists($anchor)&&(!is_file($anchor)||filesize($anchor)!==33||file_get_contents($anchor)!==self::ownerId($db)."\n"))throw new \RuntimeException('Identity anchor mismatch; restore the installation backup.');
                 $flush=function()use(&$db,&$before,$persist,$pg,$pdo):void{
                     if(!$persist||$db===$before)return;
+                    
+                    $pg->audit($pdo,array_diff_key($db['activity']??[],$before['activity']??[]));
                     self::checkedJson($db);$pg->write($pdo,$before,$db);$before=$db;
                 };
                 $this->identityConnection=$pdo;$this->identityBackend=$pg;
@@ -232,15 +234,15 @@ final class IdentityStore
             ActivityJournal::record($db,$u,'login','SSO sign in',$id);return ['status'=>'ok']+$r;
         });
     }
-    public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null)return;$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
+    public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null){$this->identityBackend->auditReady($this->identityConnection);return;}$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
     public function initialized():bool{return $this->transaction(fn($db)=>$db['users']!==[]);}
     public function initialize(string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($username,$name,$email,$password){if($db['users']!==[])throw new \DomainException('Identity already initialized.');$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),true);ActivityJournal::record($db,$u,'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function login(string $username,string $password,string $ip,string $legacyHash=''):array{
         $username=strtolower(trim(substr($username,0,100)));$tooLong=strlen($password)>72;$password=$tooLong?'':$password;
-        return $this->transaction(function(&$db)use($username,$password,$ip,$legacyHash,$tooLong){$now=time();self::prune($db,$now);if(!self::rate($db,'login',$ip,$username,$now))return ['status'=>'limited'];
+        return $this->transaction(function(&$db)use($username,$password,$ip,$legacyHash,$tooLong){$now=time();self::prune($db,$now);if(!self::rate($db,'login',$ip,$username,$now)){ActivityJournal::record($db,null,'login.limited');return ['status'=>'limited'];}
             $u=self::find($db,$username);$legacy=$db['users']===[]&&$username==='admin'&&self::validHash($legacyHash);$hash=$u['hash']??($legacy?$legacyHash:self::DUMMY);
             $ok=!$tooLong&&!str_contains($password,"\0")&&password_verify($password,$hash);
-            if(!$ok||(!$u&&!$legacy)||($u&&(!$u['enabled']||isset($u['oidc'])||(!$u['owner']&&Oidc::required()))))return ['status'=>'invalid'];
+            if(!$ok||(!$u&&!$legacy)||($u&&(!$u['enabled']||isset($u['oidc'])||(!$u['owner']&&Oidc::required())))){ActivityJournal::record($db,null,'login.failed');return ['status'=>'invalid'];}
             if($legacy)$u=self::add($db,'admin','Administrator','',$legacyHash,true);
             if(strlen($password)<=72&&password_needs_rehash($u['hash'],PASSWORD_DEFAULT)){$u['hash']=password_hash($password,PASSWORD_DEFAULT);$db['users'][$u['id']]=$u;}
             unset($db['attempts'][hash('sha256','login:account:'.$username)]);ActivityJournal::record($db,$u,'login','Sign in',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);
@@ -253,7 +255,7 @@ final class IdentityStore
     public function logout(string $token):void{$this->transaction(function(&$db)use($token){$s=$db['sessions'][hash('sha256',$token)]??null;if($s){ActivityJournal::record($db,$db['users'][$s['user']],'logout','Sign out',$s['user']);unset($db['sessions'][hash('sha256',$token)]);}});}
     public function sessions(string $token):array{return $this->transaction(function(&$db)use($token){self::prune($db,time());$s=self::requireSession($db,$token);return array_values(array_map(fn($r)=>array_diff_key($r,['csrf'=>true]),array_filter($db['sessions'],fn($r)=>$r['user']===$s['user'])));});}
     public function revokeSession(string $token,string $id):void{$this->transaction(function(&$db)use($token,$id){$s=self::requireSession($db,$token);$n=0;foreach($db['sessions'] as $k=>$r)if($r['user']===$s['user']&&($id==='all'||$r['id']===$id)){unset($db['sessions'][$k]);$n++;}if($n)ActivityJournal::record($db,$db['users'][$s['user']],'account.sessions','Sessions revoked',$s['user'],'','',[],$n.' session(s)');});}
-    public function profile(string $token,string $name,string $email):void{$this->transaction(function(&$db)use($token,$name,$email){$s=self::requireSession($db,$token);$name=self::name($name);$email=self::email($email);foreach($db['users'] as $id=>$u)if($id!==$s['user']&&$u['email']===$email)throw new \DomainException('Email already exists.');$db['users'][$s['user']]['name']=$name;$db['users'][$s['user']]['email']=$email;});}
+    public function profile(string $token,string $name,string $email):void{$this->transaction(function(&$db)use($token,$name,$email){$s=self::requireSession($db,$token);$name=self::name($name);$email=self::email($email);foreach($db['users'] as $id=>$u)if($id!==$s['user']&&$u['email']===$email)throw new \DomainException('Email already exists.');$db['users'][$s['user']]['name']=$name;$db['users'][$s['user']]['email']=$email;ActivityJournal::record($db,$db['users'][$s['user']],'account.profile','Profile updated',$s['user']);});}
     public function changePassword(string $token,string $old,string $new,string $ip):array{return $this->transaction(function(&$db)use($token,$old,$new,$ip){$now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];if(isset($u['oidc']))return ['status'=>'invalid'];if(!self::rate($db,'password',$ip,$u['id'],$now))return ['status'=>'limited'];if(strlen($old)>72||str_contains($old,"\0")||!password_verify($old,$u['hash']))return ['status'=>'invalid'];$u['hash']=self::password($new);$db['users'][$u['id']]=$u;self::revoke($db,$u['id']);ActivityJournal::record($db,$u,'account.password','Password changed',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);});}
     private static function owner(array $db,string $token):void{$s=self::requireSession($db,$token);if(!$db['users'][$s['user']]['owner'])throw new \DomainException('Owner permission required.');}
     public function users(string $token):array{return $this->transaction(function(&$db)use($token){self::owner($db,$token);return array_values(array_map(self::safe(...),$db['users']));});}
@@ -427,6 +429,26 @@ final class IdentityStore
         });
     }
     /** Backup includes organizations and memberships; never live sessions, reset or invitation credentials. */
+    /** Authorize and query/export while the identity lock pins current memberships. */
+    public function enterpriseAudit(string $token,array $filters,int $limit=50,bool $export=false,string $csrf=''):array{
+        return $this->transaction(function(&$db)use($token,$filters,$limit,$export,$csrf){
+            try{$s=self::requireSession($db,$token);}catch(\DomainException){throw new OrganizationAccessException('Audit sign-in required.');}$uid=$s['user'];$access=AuditLog::access($db,$uid);
+            if(!$access['owner']&&!$access['orgs']&&!$access['workspaces'])throw new OrganizationAccessException('Audit permission required.');
+            if($export&&!hash_equals($s['csrf'],$csrf))throw new OrganizationAccessException('Invalid CSRF token.');
+            if(!$this->identityConnection||!$this->identityBackend)throw new \DomainException('Enterprise audit requires PostgreSQL.');
+            $result=$this->identityBackend->auditFind($this->identityConnection,$access,$filters,$limit);
+            if($export)$this->identityBackend->audit($this->identityConnection,[AuditLog::event('audit.export',$db['users'][$uid])]);
+            return $result+['csrf'=>$s['csrf']];
+        });
+    }
+    public function auditFailure(string $action,string $outcome='denied'):void{
+        if(!getenv('BOOK_PG_DSN'))return;
+        $this->transaction(function(&$db)use($action,$outcome){$this->identityBackend->audit($this->identityConnection,[AuditLog::event($action,null,'',$outcome)]);});
+    }
+    public function operatorAudit(string $action):void{
+        if(!getenv('BOOK_PG_DSN'))return;
+        $this->transaction(function(&$db)use($action){$this->identityBackend->audit($this->identityConnection,[AuditLog::event($action)]);});
+    }
     private static function backupState(array $db):array{return ['schema'=>4,'users'=>$db['users'],'organizations'=>$db['organizations'],'workspaces'=>$db['workspaces'],'activity'=>$db['activity']??[]];}
     public function backup():array{return $this->transaction(fn($db)=>self::backupState($db));}
     /** Operator-only consistent installation snapshot. Lock order is identity -> content, as in HTTP. */

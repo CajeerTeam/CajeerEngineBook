@@ -25,9 +25,9 @@ try{
     $oldIdentity=(new IdentityStore($root,true))->migrationSnapshot(fn($d)=>$d);$oldFile=file_get_contents($root.'/identity/identity.json');
     $content=['legacy'=>$legacy->read(),$oid.'/'.$wid=>$store->read(),$other['id'].'/'.$w2['id']=>(new BookStore(Workspaces::directory($root,$w2),false))->read()];
     // Reproduce actual 0.4.1 SQL content + file identity: no identity_state row, same schema/binding.
-    putenv('BOOK_PG_DSN='.$dsn);$pdo=PostgresContentStore::connect();$pdo->exec(file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql'));
+    putenv('BOOK_PG_DSN='.$dsn);$pdo=PostgresContentStore::connect();$pdo->exec(file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql'));CajeerBook\AuditLog::schema($pdo);$pdo->exec(file_get_contents(dirname(__DIR__).'/sql/postgres-identity.sql'));
     $pdo->beginTransaction();$q=$pdo->prepare('INSERT INTO cajeer_book.content_installation(installation,binding) VALUES(?,?)');$q->execute([$ns,$binding]);
-    foreach($content as $scope=>$data)(new PostgresContentStore($ns,$scope,$binding))->initializeInTransaction($pdo,$data);$pdo->commit();Files::write($root.'/postgres.required',$ns.':'.$binding."\n");
+    foreach($content as $scope=>$data)(new PostgresContentStore($ns,$scope,$binding))->initializeInTransaction($pdo,$data);CajeerBook\AuditLog::initialize($pdo,$ns);$pdo->commit();Files::write($root.'/postgres.required',$ns.':'.$binding."\n");
     $sqlContent=new BookStore(Workspaces::directory($root,$w),false);$sqlContent->createBook('sql-only','SQL only');$sqlBefore=$sqlContent->read();
     deny(fn()=>$s->current($ot),'0.4.1 installation requires explicit identity upgrade; no stale JSON login');
     PostgresContentStore::migrate($root);ok($sqlContent->read()===$sqlBefore,'0.4.1 upgrade does not overwrite newer PostgreSQL content');

@@ -257,14 +257,16 @@ final class PostgresContentStore
         $q=$pdo->prepare('SELECT scope FROM cajeer_book.content_store WHERE installation=? ORDER BY scope FOR UPDATE');$q->execute([$id]);$scopes=$q->fetchAll(PDO::FETCH_COLUMN);if(!in_array('legacy',$scopes,true))throw new \RuntimeException('Missing legacy scope.');
         $report=[];foreach($scopes as $scope){$store=new self($id,$scope,$binding);$data=$store->load($pdo);BookStore::validateDatabase($data);PostgresSearch::sync($pdo,[$id,$scope],[],$data,true);$report[$scope]=count(BookStore::published($data));}ksort($report);return $report;
     }
-    public function write(array $before,array $after):void
+    public function write(array $before,array $after,array $events=[]):void
     {
         $pdo=$this->db();if(!$pdo->inTransaction())throw new \LogicException('Content write outside transaction.');
+        if($events)AuditLog::append($pdo,$this->namespace,$this->scope,$events);
         if($before!==$after){$this->persist($pdo,$before,$after);
             foreach($after['automation']['jobs']??[] as $id=>$job){$old=$before['automation']['jobs'][$id]??null;
                 if($job['state']==='queued'&&(($old['state']??null)!=='queued'||($old['due']??null)!==$job['due'])){$this->wake=true;break;}}
         }
     }
+    public function audit(array $events):void {AuditLog::append($this->db(),$this->namespace,$this->scope,$events);}
     private function insert(PDO $pdo,array $data,bool $verifyExisting):void
     {
         $n=$this->query($pdo,'INSERT INTO cajeer_book.content_store(installation,scope) VALUES(?,?) ON CONFLICT DO NOTHING',$this->params())->rowCount();
@@ -307,7 +309,7 @@ final class PostgresContentStore
         try{
             // Serialize schema creation across installation namespaces in a shared database.
             $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');$pdo->exec($sql);
-            $identitySql=file_get_contents(dirname(__DIR__).'/sql/postgres-identity.sql');if($identitySql===false)throw new \RuntimeException('Missing PostgreSQL identity schema.');$pdo->exec($identitySql);
+            $identitySql=file_get_contents(dirname(__DIR__).'/sql/postgres-identity.sql');if($identitySql===false)throw new \RuntimeException('Missing PostgreSQL identity schema.');$pdo->exec($identitySql);AuditLog::schema($pdo);
             if((int)$pdo->query('SELECT version FROM cajeer_book.content_format WHERE singleton=true')->fetchColumn()!==1)throw new \RuntimeException('Unsupported PostgreSQL content format.');
             $pdo->commit();
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
@@ -332,7 +334,7 @@ final class PostgresContentStore
                     $report=[];
                     foreach($dirs as $dir=>$seed){$store=new BookStore($dir,$seed);$audit=(new StoreAudit($store,new MediaStore($dir,$store)))->run();if($audit['reference_mismatches']!==0)throw new \RuntimeException('Repair media references before identity migration.');$data=$store->read();BookStore::checkSize($data);$report[self::scope($root,$dir)]=['pages'=>count($data['pages']),'media'=>count($data['media']??[]),'history'=>count($data['history']??[])];}
                     self::rebuildInstallation($pdo,$id,$marker[1]);
-                    (new PostgresIdentityStore($id,$marker[1]))->import($pdo,$identity);$pdo->commit();
+                    (new PostgresIdentityStore($id,$marker[1]))->import($pdo,$identity);AuditLog::initialize($pdo,$id);$pdo->commit();
                     Files::write($root.'/'.self::IDENTITY_MARKER,$id.':'.$marker[1]."\n");return $report;
                 }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
             });
@@ -369,7 +371,7 @@ final class PostgresContentStore
                     });
                 }
                 self::rebuildInstallation($pdo,$id,$binding);
-                (new PostgresIdentityStore($id,$binding))->import($pdo,$identity);
+                (new PostgresIdentityStore($id,$binding))->import($pdo,$identity);AuditLog::initialize($pdo,$id);
                 $pdo->commit();
             }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
             // If marker creation fails after commit, rerun offline; existing rows must match exactly.

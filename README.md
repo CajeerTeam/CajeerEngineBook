@@ -1,6 +1,35 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.8 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.8 — Enterprise Audit Log
+
+Enterprise audit requires PostgreSQL. Stop **all** web/worker writers and back up the existing 0.4.7 installation with its old code. Keep the namespace, data directory and credentials, overlay 0.4.8, then run:
+
+```sh
+php bin/audit.php migrate --offline
+php bin/audit.php check
+```
+
+In Compose use the same configured overlays and `docker compose run --rm --no-deps --user www-data book php bin/audit.php migrate --offline` (then `check`). Fresh PostgreSQL migration initializes audit automatically. No search reindex is needed. Do not run old writers against the upgraded installation. File-mode deployments retain their bounded ActivityJournal; migrate to PostgreSQL to enable the enterprise ledger. Recording begins at migration, with `audit.started`; old notification entries are not promoted to verified audit history.
+
+Open **Audit** (`/audit`) on the main host. The installation owner sees installation-wide identity events and scopes they administer; organization/workspace administrators see authorized organization/workspace history, with explicit workspace restrictions enforced on every read/export. Editor/viewer privileges alone do not grant audit access. The Explorer filters by action, actor ID, organization ID, workspace ID, outcome and UTC date range; pages have 50 results. CSV/JSONL POST exports require CSRF, record the export, and return up to 5000 rows plus `X-Audit-Next-Cursor` when more exist. Use `before` with the same filters to continue. Events contain IDs, fixed codes, timestamps, outcome and request correlation (`X-Request-ID`), not passwords, credentials, arbitrary detail or Markdown. Anonymous denied requests may have no actor/target. Generic HTTP denial recording is best effort; database-backed business events commit atomically with the corresponding changes.
+
+The SQL ledger is independent of ActivityJournal trimming. Each identity/content stream has a SHA-256 chain, monotonic sequence and archive anchor; ordinary SQL event updates and unarchived deletes are rejected. `check` verifies all retained chains and reports anchors and heads. This is tamper-evident, **not** tamper-proof against a database owner or privileged operator; periodically preserve the reported heads in an independent protected system. Restrict SQL access and archive access; use encrypted storage and immutable/off-site copies according to your policy.
+
+Retention is explicit operator-controlled (no automatic destructive purge). Example, with an existing private directory outside the data/public tree:
+
+```sh
+php bin/audit.php archive identity 365 /secure/audit/identity-2026-11.jsonl
+php bin/audit.php verify-archive /secure/audit/identity-2026-11.jsonl
+php bin/audit.php check
+php bin/audit.php snapshot /secure/audit/retained.jsonl
+php bin/audit.php verify-snapshot /secure/audit/retained.jsonl
+```
+
+Use `legacy` or `ORG_ID/WORKSPACE_ID` for content streams. Archive processes at most 10,000 consecutive eligible records per call, writes and verifies a new protected file, then advances the anchor and deletes the archived prefix in one SQL transaction. It never skips a newer event or overwrites a file. Schedule repeated calls with unique names and monitor results if automated retention is needed. If a commit fails after file publication, the file can remain while SQL rows remain intact; verify and reconcile before retrying. Retain earlier archive files and verify adjacent boundary hashes against the current anchor. Archived rows no longer appear in live Explorer. Local JSONL archives are not encrypted by the application.
+
+Portable installation backups contain a verified snapshot of the retained ledger (up to 4 GiB); restore preserves it in private `audit-history/` without rewriting old hashes as new events. A new namespace starts its own chain. Historical snapshots are checked with `verify-snapshot`, not imported into the live Explorer. Preserve already-pruned archives separately. For continuity of the original live ledger use a coordinated native PostgreSQL backup/restore and matching data/media directory, with writers stopped. Keep independent copies of all external archive files and deployment secrets. The existing installation backup command records a backup request, not proof of successful external storage. 
 
 ## 0.4.7 — Custom Domains
 
