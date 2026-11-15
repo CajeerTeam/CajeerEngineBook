@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 — PostgreSQL Identity & Migration
+
+- SQL-authoritative users, sessions, reset digests, rate limits, organizations, invitations, workspaces, memberships, organization roles, workspace overrides and identity activity; existing login and permission flows use the new backend. Installation-scoped constraints and immutable owner binding preserve isolation.
+- Installation row locking serializes authorization, role changes and identity mutations. New workspace registry and content scope commit together; SQL failures leave neither orphan scope nor filesystem directory.
+- Offline upgrade of existing 0.4.1 PostgreSQL installations without rewriting content; direct migration of file installations transfers identity schemas 1–4 and content schemas 1–6 in one transaction with exact round-trip checks. Existing credentials and IDs survive migration; portable restore invalidates transient credentials. No stale file fallback.
+- PostgreSQL-aware full backup/restore, readiness and existing operator CLI. New regression/real SQL integration tests cover upgrade, RBAC, session revocation, failure rollback, concurrency and restore; HTTP CI now reads current SQL identity.
+
 ## 0.4.1 — PostgreSQL Content Storage
 
 - Optional PostgreSQL 16 content backend used by the existing Reader, Studio, API, review, CI, Git/OpenAPI, automation, media and Static Export workflows. Page records, book registry, media metadata, history, reviews, CI builds/tokens, activity and automation jobs are independently stored in scoped relational rows; JSON values preserve exact snapshot ordering and digest compatibility.

@@ -134,4 +134,5 @@ jobs:
             -c "CREATE ROLE book_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'book_app_test_only'" \
             -c "ALTER DATABASE book_test OWNER TO book_app"
       - run: php tests/postgres-content.php
+      - run: php tests/postgres-identity.php
       - run: python3 tests/ci-http.py --postgres

@@ -9,6 +9,8 @@ require_once __DIR__.'/Workspaces.php';
 require_once __DIR__.'/Permissions.php';
 require_once __DIR__.'/Visibility.php';
 require_once __DIR__.'/ActivityJournal.php';
+require_once __DIR__.'/PostgresContentStore.php';
+require_once __DIR__.'/PostgresIdentityStore.php';
 
 /** Private, versioned identity state. All mutations (including rate limits) serialize on one lock. */
 final class IdentityStore
@@ -20,7 +22,9 @@ final class IdentityStore
     private const RESET_TTL=1800;
     private const DUMMY='$2y$12$DpzqfIAI7BeOso89k9BBBuHsphbrZMkYKhXVXARXfTDkjhp6ihHSu';
     private readonly string $dir;
-    public function __construct(string $dataDir){$this->dir=rtrim($dataDir,'/').'/identity';}
+    private ?\PDO $identityConnection=null;
+    private ?PostgresIdentityStore $identityBackend=null;
+    public function __construct(string $dataDir,private readonly bool $portable=false){$this->dir=rtrim($dataDir,'/').'/identity';}
     private static function empty():array{return ['schema'=>4,'users'=>[],'sessions'=>[],'resets'=>[],'attempts'=>[],'organizations'=>[],'invitations'=>[],'workspaces'=>[]];}
     /** A root-level marker survives loss of the identity directory. It binds the installation to its first owner. */
     private static function ownerId(array $db):?string{
@@ -38,28 +42,70 @@ final class IdentityStore
             throw new \RuntimeException('Workspace data exists without initialized identity; restore the installation backup.');
         }
     }
+    private static function upgrade(array $db):array
+    {
+        if(($db['schema']??null)===1){$db['schema']=2;$db['organizations']=[];$db['invitations']=[];}
+        if(($db['schema']??null)===2)$db['schema']=3;
+        $db['workspaces']??=[];
+        if(($db['schema']??null)===3){$db['schema']=4;foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}
+        self::validate($db);return $db;
+    }
+    private static function checkedJson(array &$db):string
+    {
+        ActivityJournal::trim($db,self::MAX_BYTES);self::validate($db);
+        $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+        if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');return $json;
+    }
     private function transaction(callable $fn,bool $persist=true):mixed
+    {
+        $root=dirname($this->dir);
+        if(!$this->portable&&($pg=PostgresIdentityStore::forDirectory($root))!==null){
+            return $pg->transaction(function(array $db,\PDO $pdo)use($pg,$fn,$persist,$root){
+                self::validate($db);$before=$db;
+                if(strlen(json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE))+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');
+                // Existing file anchors remain a check on migrated installations. PostgreSQL also
+                // maintains its own immutable owner anchor, so new SQL users need no file write.
+                $anchor=Files::path($root,'identity.required');
+                if(file_exists($anchor)&&(!is_file($anchor)||filesize($anchor)!==33||file_get_contents($anchor)!==self::ownerId($db)."\n"))throw new \RuntimeException('Identity anchor mismatch; restore the installation backup.');
+                $flush=function()use(&$db,&$before,$persist,$pg,$pdo):void{
+                    if(!$persist||$db===$before)return;
+                    self::checkedJson($db);$pg->write($pdo,$before,$db);$before=$db;
+                };
+                $this->identityConnection=$pdo;$this->identityBackend=$pg;
+                try{$result=$fn($db,$flush);$flush();return $result;}
+                finally{$this->identityConnection=null;$this->identityBackend=null;}
+            });
+        }
+        return $this->fileTransaction($fn,$persist);
+    }
+    private function fileTransaction(callable $fn,bool $persist):mixed
     {
         Files::dir($this->dir);$lock=Files::path($this->dir,'identity.lock');$path=Files::path($this->dir,'identity.json');$root=dirname($this->dir);
         $h=fopen($lock,'c+b');if(!$h)throw new \RuntimeException('Identity lock unavailable');
         try{
             if(!chmod($lock,0600)||!flock($h,LOCK_EX))throw new \RuntimeException('Identity lock unavailable');
+            // Recheck after acquiring the file lock so a racing cutover cannot permit stale writes.
+            if(!$this->portable&&PostgresIdentityStore::forDirectory($root)!==null)throw new \RuntimeException('Identity backend changed; retry after migration.');
             $exists=file_exists($path);if($exists&&(!is_file($path)||filesize($path)>self::MAX_BYTES))throw new \RuntimeException('Invalid identity store');
-            $db=$exists?Files::read($path):self::empty();$before=$db;
-            if(($db['schema']??null)===1){$db['schema']=2;$db['organizations']=[];$db['invitations']=[];}
-            if(($db['schema']??null)===2)$db['schema']=3;
-            $db['workspaces']??=[];if(($db['schema']??null)===3){$db['schema']=4;foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);
+            $db=$exists?Files::read($path):self::empty();$before=$db;$db=self::upgrade($db);
             self::assertIdentityAnchor($root,$db);
             $flush=function()use(&$db,&$before,$persist,$path,$root):void{
                 if(!$persist||$db===$before)return;
-                ActivityJournal::trim($db,self::MAX_BYTES);self::validate($db);
-                $json=json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
-                if(strlen($json)+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');
-                // Anchor precedes the first identity commit. An interrupted initialization fails closed.
+                $json=self::checkedJson($db);
                 self::assertIdentityAnchor($root,$db);Files::write($path,$json."\n");$before=$db;
             };
             $result=$fn($db,$flush);$flush();return $result;
         }finally{flock($h,LOCK_UN);fclose($h);}
+    }
+    /** Offline migration only: full validated source, including hashed sessions/invitations/resets. */
+    public function migrationSnapshot(callable $fn):mixed
+    {
+        if(!$this->portable)throw new \LogicException('Migration requires explicit portable source.');
+        return $this->fileTransaction(function($db)use($fn){
+            // Do not trim or mutate source state during migration; refuse oversize legacy data.
+            if(strlen(json_encode($db,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE))+1>self::MAX_BYTES)throw new \RuntimeException('Identity store quota exceeded');
+            return $fn($db);
+        },false);
     }
     private static function hex(string $s,int $length):bool{return strlen($s)===$length&&ctype_xdigit($s)&&strtolower($s)===$s;}
     public static function username(string $s):string{$s=strtolower(trim($s));if(!preg_match('/\A[a-z][a-z0-9_.-]{2,39}\z/D',$s))throw new \InvalidArgumentException('Username must be 3–40 characters (letters, digits, dot, underscore, hyphen).');return $s;}
@@ -112,7 +158,7 @@ final class IdentityStore
         if(!$s||$s['expires']<=$now||$s['seen']<=$now-self::IDLE||!($db['users'][$s['user']]['enabled']??false))throw new \DomainException('Session expired. Sign in again.');return $s;
     }
     private static function revoke(array &$db,string $id):void{foreach($db['sessions'] as $k=>$s)if($s['user']===$id)unset($db['sessions'][$k]);foreach($db['resets'] as $k=>$r)if($r['user']===$id)unset($db['resets'][$k]);}
-    public function checkReady():void{$this->transaction(function($db){$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
+    public function checkReady():void{$this->transaction(function($db){if($this->identityConnection!==null)return;$probe=$this->dir.'/.ready-'.bin2hex(random_bytes(12));try{Files::write($probe,'ready');}finally{if(is_file($probe))Files::remove($probe);}});}
     public function initialized():bool{return $this->transaction(fn($db)=>$db['users']!==[]);}
     public function initialize(string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($username,$name,$email,$password){if($db['users']!==[])throw new \DomainException('Identity already initialized.');$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),true);ActivityJournal::record($db,$u,'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function login(string $username,string $password,string $ip,string $legacyHash=''):array{
@@ -149,7 +195,10 @@ final class IdentityStore
     public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
     public function createWorkspace(string $token,string $org,string $name,string $slug,bool $legacy=false):array{return $this->transaction(function(&$db)use($token,$org,$name,$slug,$legacy){$uid=self::requireSession($db,$token)['user'];$w=Workspaces::create($db,$uid,$org,$name,$slug,$legacy);ActivityJournal::record($db,$db['users'][$uid],$legacy?'workspace.adopt':'workspace.create',$w['name'],$w['id'],$org,$w['id']);
         if($legacy){$root=dirname($this->dir);$store=new BookStore($root);$store->materialize();}
-        if(!$legacy){$dir=Workspaces::directory(dirname($this->dir),$w);if(file_exists($dir)||is_link($dir))throw new \RuntimeException('Workspace directory already exists');Files::dir($dir);(new BookStore($dir,false))->initialize();}
+        if(!$legacy){$dir=Workspaces::directory(dirname($this->dir),$w);if(file_exists($dir)||is_link($dir))throw new \RuntimeException('Workspace directory already exists');
+            if($this->identityConnection!==null){$this->identityBackend->initializeWorkspace($this->identityConnection,$org.'/'.$w['id']);}
+            else{Files::dir($dir);(new BookStore($dir,false))->initialize();}
+        }
         return $w;});}
     public function mutateWorkspace(string $token,string $id,int $rev,string $action,string $name,string $slug):void{$this->transaction(function(&$db)use($token,$id,$rev,$action,$name,$slug){$uid=self::requireSession($db,$token)['user'];Workspaces::mutate($db,$uid,$id,$rev,$action,$name,$slug);$w=$db['workspaces'][$id];ActivityJournal::record($db,$db['users'][$uid],'workspace.'.$action,$w['name'],$id,$w['organization'],$id,[],$action==='visibility'?$w['visibility']:'');});}
     public function assignWorkspaceRole(string $token,string $id,int $rev,string $target,string $role):void{
@@ -191,7 +240,7 @@ final class IdentityStore
             $w=Workspaces::access($db,$uid,$org,$id);
             if(!$w&&$publishedRead)$w=Workspaces::publicAccess($db,$uid,$org,$id);
             if($ctx&&$w&&Permissions::allows($w['role'],'edit')){$ctx['review_users']=self::reviewUsers($db,$db['workspaces'][$id]);$ctx['team_members']=self::reviewUsers($db,$db['workspaces'][$id],'read');}
-            // Commit session heartbeat/migration before content dispatch can emit a response.
+            // Flush session heartbeat before dispatch; SQL keeps the identity lock through content dispatch.
             $flush();return $fn($ctx,$w);
         });
     }
@@ -247,5 +296,5 @@ final class IdentityStore
     public function backup():array{return $this->transaction(fn($db)=>self::backupState($db));}
     /** Operator-only consistent installation snapshot. Lock order is identity -> content, as in HTTP. */
     public function installationSnapshot(callable $fn):mixed{return $this->transaction(fn($db)=>$fn(self::backupState($db)),false);}
-    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2,3,4],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)!==1&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']!==1?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];$db['activity']=$backup['activity']??[];if($backup['schema']!==4){foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);});}
+    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($this->identityConnection!==null)throw new \DomainException('Use full installation restore into a new directory, then migrate to PostgreSQL.');if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2,3,4],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)!==1&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']!==1?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];$db['activity']=$backup['activity']??[];if($backup['schema']!==4){foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);});}
 }

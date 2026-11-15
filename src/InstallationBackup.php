@@ -62,12 +62,12 @@ final class InstallationBackup
     public static function audit(string $root,string $public,bool $portable=false):array
     {
         $root=DataDirectory::resolve($root,$public);if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
-        return (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$portable){
+        return (new IdentityStore($root,$portable))->installationSnapshot(function(array $identity)use($root,$portable){
             Workspaces::assertRegistryDirectories($root,$identity);if(!$portable)PostgresContentStore::assertRegistry($root,$identity);$out=[];$legacy=new BookStore($root,Workspaces::legacy($identity)===null,$portable);
             $out['legacy']=(new StoreAudit($legacy,new MediaStore($root,$legacy)))->run();
             foreach($identity['workspaces'] as $w){if($w['legacy'])continue;$dir=Workspaces::directory($root,$w);$books=new BookStore($dir,false,$portable);$out[$w['id']]=(new StoreAudit($books,new MediaStore($dir,$books)))->run();}
             foreach($out as $id=>$r)if($r['reference_mismatches']!==0)throw new \RuntimeException('Media index mismatch in '.$id.'; run verify-data.php with explicit repair before backup');
-            return ['identity_schema'=>$identity['schema'],'users'=>count($identity['users']),'organizations'=>count($identity['organizations']),'stores'=>$out];
+            return ['identity_schema'=>$identity['schema'],'identity_backend'=>!$portable&&getenv('BOOK_PG_DSN')?'postgresql':'file','users'=>count($identity['users']),'organizations'=>count($identity['organizations']),'stores'=>$out];
         });
     }
     public static function create(string $root,string $target,string $public):void
@@ -102,7 +102,7 @@ final class InstallationBackup
         $stage=self::stage($target);
         try{
             // Restore validates membership, roles, visibility and registry before using any path.
-            $registry=new IdentityStore($stage);
+            $registry=new IdentityStore($stage,true);
             if(($identity['users']??null)===[]){
                 if(($identity['schema']??null)!==4||($identity['organizations']??null)!==[]||($identity['workspaces']??null)!==[])throw new \InvalidArgumentException('Invalid uninitialized identity');
                 $registry->checkReady();

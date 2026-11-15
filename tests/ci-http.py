@@ -13,7 +13,10 @@ def exercise(base,data,env):
     for name,c in [('manager',admin),('writer',editor),('reader',viewer),('outsider',outsider)]:
         post(owner,'/account/users','create',username=name,name=name,email=name+'@example.org',password='password-'+name+'-123');c.login(name,'password-'+name+'-123')
     org=post(owner,'/organizations','create',name='CI Team',slug='ci-team')[0]['Location'];oid=org.split('/')[-1]
-    def identity():return json.loads((data/'identity/identity.json').read_text())
+    def identity():
+        if POSTGRES:
+            return json.loads(subprocess.check_output(['php','-r','require "bootstrap.php"; echo json_encode((new CajeerBook\\IdentityStore(getenv("BOOK_DATA_DIR")))->backup(),JSON_THROW_ON_ERROR);'],cwd=ROOT,env=env,text=True))
+        return json.loads((data/'identity/identity.json').read_text())
     def rev():return str(identity()['organizations'][oid]['revision'])
     def uid(name):return next(u['id'] for u in identity()['users'].values() if u['username']==name)
     for name,c in [('manager',admin),('writer',editor),('reader',viewer)]:

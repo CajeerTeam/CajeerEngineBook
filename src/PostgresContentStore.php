@@ -5,11 +5,12 @@ namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
 use PDO;
 
-/** PostgreSQL content storage. Identity and immutable media bytes remain on disk in 0.4.1. */
+/** PostgreSQL content storage. Immutable media bytes remain on disk; identity shares the installation binding. */
 final class PostgresContentStore
 {
     private const MARKER='postgres.required';
     private const PENDING='postgres.migrating';
+    private const IDENTITY_MARKER='postgres.identity.required';
     private const CHILDREN=['ci'=>['tokens','builds'],'automation'=>['jobs','receipts']];
     private ?PDO $connection=null;
     public function __construct(private readonly string $namespace,private readonly string $scope,private readonly string $binding) {}
@@ -39,17 +40,33 @@ final class PostgresContentStore
         return [$m[1],$m[2]];
     }
     public static function marker(string $root):?string{return self::markerData($root)[0]??null;}
+    public static function installationBinding(string $root):?array
+    {
+        $root=rtrim($root,'/');
+        if(!getenv('BOOK_PG_DSN')){
+            if(self::markerData($root)!==null||self::markerData($root,self::PENDING)!==null||self::markerData($root,self::IDENTITY_MARKER)!==null)throw new \RuntimeException('PostgreSQL is required or migration is incomplete; configure BOOK_PG_DSN.');
+            return null;
+        }
+        if($root!==self::configuredRoot())throw new \RuntimeException('PostgreSQL root must match BOOK_DATA_DIR.');
+        $marker=self::markerData($root);
+        if($marker===null||$marker[0]!==self::namespace())throw new \RuntimeException('PostgreSQL installation not initialized; run bin/postgres-content.php migrate --offline.');
+        return $marker;
+    }
+    /** Separate cutover marker distinguishes 0.4.1 from a damaged 0.4.2 identity database. */
+    public static function identityBinding(string $root):?array
+    {
+        $binding=self::installationBinding($root);if($binding===null)return null;
+        if(self::markerData($root,self::IDENTITY_MARKER)!==$binding)throw new \RuntimeException('PostgreSQL identity cutover incomplete or binding mismatch; run offline migration or restore the matched backup.');
+        return $binding;
+    }
     public static function forDirectory(string $dir):?self
     {
         $dir=rtrim($dir,'/');
         if(!getenv('BOOK_PG_DSN')){
-            if(self::markerData($dir)!==null||self::markerData(self::rootOf($dir))!==null||self::markerData($dir,self::PENDING)!==null||self::markerData(self::rootOf($dir),self::PENDING)!==null)throw new \RuntimeException('PostgreSQL content is required or migration is incomplete; configure BOOK_PG_DSN.');
-            return null;
+            self::installationBinding($dir);self::installationBinding(self::rootOf($dir));return null;
         }
-        $root=self::configuredRoot();$scope=self::scope($root,$dir);
-        $id=self::namespace();$marker=self::markerData($root);
-        if($marker===null||$marker[0]!==$id)throw new \RuntimeException('PostgreSQL content is not initialized for this installation; run bin/postgres-content.php migrate offline.');
-        return new self($id,$scope,$marker[1]);
+        $root=self::configuredRoot();$scope=self::scope($root,$dir);$marker=self::installationBinding($root);
+        return new self($marker[0],$scope,$marker[1]);
     }
     private static function scope(string $root,string $dir):string
     {
@@ -184,6 +201,14 @@ final class PostgresContentStore
         $this->persist($pdo,[],$data);
         if($this->load($pdo)!==$data)throw new \RuntimeException('PostgreSQL import round-trip mismatch.');
     }
+    /** Create a scope on the identity transaction, never on a separate connection. */
+    public function initializeInTransaction(PDO $pdo,array $data):void
+    {
+        if(!$pdo->inTransaction())throw new \LogicException('Workspace initialization outside transaction.');
+        $q=$this->query($pdo,'SELECT binding FROM cajeer_book.content_installation WHERE installation=?',[$this->namespace]);
+        if($q->fetchColumn()!==$this->binding)throw new \RuntimeException('PostgreSQL installation binding mismatch.');
+        $this->insert($pdo,$data,false);
+    }
     public function initialize(array $data):void
     {
         $pdo=$this->db();$pdo->beginTransaction();
@@ -202,21 +227,49 @@ final class PostgresContentStore
     public static function migrate(string $root):array
     {
         if($root!==self::configuredRoot())throw new \RuntimeException('Migration root must match BOOK_DATA_DIR.');
-        $id=self::namespace();$marker=self::marker($root);
-        if($marker!==null)throw new \RuntimeException('Installation already switched to PostgreSQL; use installation check, not migration.');
+        $id=self::namespace();$marker=self::markerData($root);
+        if($marker!==null&&$marker[0]!==$id)throw new \RuntimeException('PostgreSQL namespace mismatch.');
         $pdo=self::connect();
         $sql=file_get_contents(dirname(__DIR__).'/sql/postgres-content.sql');if($sql===false)throw new \RuntimeException('Missing PostgreSQL schema.');
         $pdo->beginTransaction();
         try{
             // Serialize schema creation across installation namespaces in a shared database.
             $pdo->exec('SELECT pg_advisory_xact_lock(1128416305, 1)');$pdo->exec($sql);
+            $identitySql=file_get_contents(dirname(__DIR__).'/sql/postgres-identity.sql');if($identitySql===false)throw new \RuntimeException('Missing PostgreSQL identity schema.');$pdo->exec($identitySql);
             if((int)$pdo->query('SELECT version FROM cajeer_book.content_format WHERE singleton=true')->fetchColumn()!==1)throw new \RuntimeException('Unsupported PostgreSQL content format.');
             $pdo->commit();
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
-        $report=(new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$id,$pdo){
+        // 0.4.1 already has SQL content. Never import its stale books.json again.
+        if($marker!==null){
+            $check=$pdo->prepare('SELECT binding FROM cajeer_book.content_installation WHERE installation=?');$check->execute([$id]);
+            if($check->fetchColumn()!==$marker[1])throw new \RuntimeException('PostgreSQL installation binding mismatch.');
+            $identityMarker=self::markerData($root,self::IDENTITY_MARKER);
+            if($identityMarker!==null){
+                if($identityMarker!==$marker)throw new \RuntimeException('PostgreSQL identity binding mismatch.');
+                throw new \RuntimeException('PostgreSQL identity already migrated; use installation check or restore the matched backup.');
+            }
+            return (new IdentityStore($root,true))->migrationSnapshot(function(array $identity)use($root,$id,$pdo,$marker){
+                if(self::markerData($root,self::IDENTITY_MARKER)!==null)throw new \RuntimeException('PostgreSQL identity already migrated.');
+                Workspaces::assertRegistryDirectories($root,$identity);self::assertRegistry($root,$identity);
+                $pdo->beginTransaction();
+                try{
+                    $guard=$pdo->prepare('SELECT pg_advisory_xact_lock(hashtextextended(?,1128416305))');$guard->execute([$id]);
+                    // Validate current SQL content and media, not legacy JSON, before importing identity.
+                    $dirs=[$root=>Workspaces::legacy($identity)===null];
+                    foreach($identity['workspaces'] as $w)if(!$w['legacy'])$dirs[Workspaces::directory($root,$w)]=false;
+                    $report=[];
+                    foreach($dirs as $dir=>$seed){$store=new BookStore($dir,$seed);$audit=(new StoreAudit($store,new MediaStore($dir,$store)))->run();if($audit['reference_mismatches']!==0)throw new \RuntimeException('Repair media references before identity migration.');$data=$store->read();BookStore::checkSize($data);$report[self::scope($root,$dir)]=['pages'=>count($data['pages']),'media'=>count($data['media']??[]),'history'=>count($data['history']??[])];}
+                    (new PostgresIdentityStore($id,$marker[1]))->import($pdo,$identity);$pdo->commit();
+                    Files::write($root.'/'.self::IDENTITY_MARKER,$id.':'.$marker[1]."\n");return $report;
+                }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+            });
+        }
+        $report=(new IdentityStore($root,true))->migrationSnapshot(function(array $identity)use($root,$id,$pdo){
             if(self::markerData($root)!==null)throw new \RuntimeException('Installation already switched to PostgreSQL.');
             Workspaces::assertRegistryDirectories($root,$identity);
             $pending=self::markerData($root,self::PENDING);
+            $identityMarker=self::markerData($root,self::IDENTITY_MARKER);
+            if($identityMarker!==null&&$identityMarker!==$pending)throw new \RuntimeException('Incomplete migration identity marker mismatch; restore matched backup.');
             if($pending!==null&&$pending[0]!==$id)throw new \RuntimeException('Unfinished PostgreSQL migration uses a different namespace.');
             $binding=$pending[1]??bin2hex(random_bytes(16));
             if($pending===null)Files::write($root.'/'.self::PENDING,$id.':'.$binding."\n");
@@ -242,9 +295,11 @@ final class PostgresContentStore
                         return ['pages'=>count($data['pages']),'media'=>count($data['media']??[]),'history'=>count($data['history']??[])];
                     });
                 }
+                (new PostgresIdentityStore($id,$binding))->import($pdo,$identity);
                 $pdo->commit();
             }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
             // If marker creation fails after commit, rerun offline; existing rows must match exactly.
+            Files::write($root.'/'.self::IDENTITY_MARKER,$id.':'.$binding."\n");
             Files::write($root.'/'.self::MARKER,$id.':'.$binding."\n");
             try{Files::remove($root.'/'.self::PENDING);}catch(\Throwable $e){error_log('PostgreSQL migration marker cleanup: '.$e->getMessage());}
             return $report;

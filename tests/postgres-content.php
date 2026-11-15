@@ -30,6 +30,8 @@ try{
     $pdo=PostgresContentStore::connect();$q=$pdo->prepare('SELECT count(*) FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);ok((int)$q->fetchColumn()===0&&!file_exists($root.'/postgres.required'),'failed multi-workspace migration rolls back all content and leaves no cutover marker');
     file_put_contents($media->blob($mid),'PostgreSQL attachment');clearstatcache(true,$media->blob($mid));
     $report=PostgresContentStore::migrate($root);ok(count($report)===2&&$report[$org['id'].'/'.$w['id']]['media']===1,'all registered scopes migrated together');
+    ok($identity->current($session)!==null&&$identity->backup()['workspaces'][$w['id']]['id']===$w['id'],'direct migration preserves SQL identity and live session');
+    unlink($root.'/identity/identity.json');ok($identity->current($session)!==null,'direct migration no longer reads file identity');
     $store=new BookStore($workspace,false);$pgMedia=new MediaStore($workspace,$store);
     ok($store->read()===$original&&(new BookStore($root))->read()===$legacyData,'exact PHP snapshot and legacy CI digest round-trip');
     $pdo=PostgresContentStore::connect();$q=$pdo->prepare('SELECT count(*) FROM cajeer_book.pages WHERE installation=? AND scope=?');$q->execute([$ns,$org['id'].'/'.$w['id']]);ok((int)$q->fetchColumn()===1,'page persisted as an independent PostgreSQL row');
