@@ -1,6 +1,57 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.6 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.4.7 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.4.7 — Custom Domains
+
+Custom domains are opt-in for **active, public, non-legacy workspaces**. The main host remains the only control plane (Studio, login, OIDC, organizations, CI and webhooks). Every request on a custom host is anonymous, even if it supplies a valid main-host session. Only public published books/pages, their referenced media, Reader search, language aliases and read-only page/search API are served. Private books, drafts, other workspaces and all mutations are inaccessible. Unknown, pending, disabled or expired hosts fail closed; changing workspace/organization visibility or archival is enforced on the next request. No DNS request is made on each page view.
+
+### Upgrade and configure HTTPS
+
+Stop all web/worker replicas, back up with 0.4.6 (`php bin/installation.php backup /secure/book-046-backup`), then overlay 0.4.7. Keep the PostgreSQL namespace and media volume. No new SQL migration or search reindex is needed for a working 0.4.6 installation: domain records are persisted in the existing transactional workspace records in PostgreSQL (or the existing file backend for single-host installations). Do not run 0.4.6 writers alongside 0.4.7 after registering domains; old code cannot enforce host isolation.
+
+The production Compose overlay replaces the internal Nginx proxy with Caddy 2.10.2, automatically issues/renews ACME certificates on demand, and load-balances the private PHP replicas. Configure in a protected `.env` (in addition to the existing PostgreSQL/Redis settings):
+
+```dotenv
+BOOK_PRIMARY_HOST=book.example.com
+BOOK_ACME_EMAIL=admin@example.com
+BOOK_DOMAIN_EDGE_SECRET=<64-lowercase-hex-characters>
+```
+
+Generate the ingress secret using `openssl rand -hex 32`. Use your actual DNS host and email. Point the main hostname's A/AAAA records to the ingress, open inbound TCP ports 80 and 443, and allow outbound DNS/HTTPS for ACME. The supplied Caddy config uses a persistent `/data` and `/config` volume; do not discard them when updating. The backend, PostgreSQL and Redis must not be published directly. Secure host-only session cookies are enforced in custom-domain mode. The gateway replaces incoming edge headers, authenticates its HTTPS assertion with the ingress secret, and only the private gateway IP can call the certificate/host permission endpoints. The main host is reserved; the proxy rejects TLS SNI/Host mismatches. HTTP requests for recognized hosts redirect to HTTPS (unsafe plaintext methods are rejected). Use the existing main-host HTTPS OIDC redirect URI, not a custom domain.
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.postgres.yaml:compose.redis.yaml:compose.distributed.yaml:compose.domains.yaml
+docker compose --profile automation build book worker domain-check
+docker compose up -d --wait postgres redis
+docker compose run --rm --no-deps --user www-data book php bin/postgres-content.php check
+docker compose --profile automation up -d --wait --scale book=2 --scale worker=2
+```
+
+Use Docker Compose 2.24.4+ for the overlay merge tags. If starting with the old proxy, stop it before binding the new public ports. For a fresh database, run the existing `postgres-content.php migrate --offline` before starting the app. For other ingress implementations, terminate TLS in Apache directly or pass `X-Book-Edge-Proto: https` and `X-Book-Edge-Secret` from a private trusted proxy; strip client-supplied versions of those headers. Do not expose internal permission routes; `BOOK_DOMAIN_ASK_IP` defaults to the supplied edge address `172.30.44.10`. Only the gateway should be able to reach the app. A deployment with no `BOOK_PRIMARY_HOST` retains the previous routing and does not enable custom domains.
+
+### Register and verify a domain
+
+1. On the main host, open **Workspaces**, select an active public workspace as Owner/Admin, then **Custom Domains**. Add a fully qualified DNS hostname, e.g. `docs.company.com`. Enter IDNs in their ASCII IDNA A-label (`xn--…`) form; no wildcards, IP literals, schemes or arbitrary ports. Each workspace can register up to five hostnames, and a hostname cannot be registered to two workspaces.
+2. Create the exact DNS TXT record `_cajeer-book.docs.company.com` with the displayed `cajeer-book=<random challenge>` value. Keep this record for periodic ownership verification. Add a CNAME to the main host (or A/AAAA to the public ingress). The TXT record proves ownership; ACME independently verifies reachability/control when issuing a certificate. DNS propagation and the first TLS handshake may take time.
+3. Click **Verify DNS**. The server resolves the exact TXT record through its configured system resolver, compares the full challenge and rechecks the administrator's current authority and workspace revision before committing. DNS requests run outside the identity transaction. A failed check cannot activate a new domain. A successful check makes the host eligible for routing and certificate issuance; Caddy obtains the certificate on the first HTTPS connection. Use **Open Reader** to test it. A verified status is DNS ownership, not a claim that ACME issuance has completed; inspect the proxy logs for certificate failures.
+4. Select **Make primary** to designate the canonical host. Aliases serve the same public workspace; canonical/hreflang URLs and sitemap use the selected active primary. `robots.txt` references the canonical sitemap. Original `/w/ORG/WORKSPACE/docs/...` URLs continue to work; public documents emit the active custom canonical. Existing `/l/en|ru/docs/...` links and published media work on each domain without a workspace prefix. Public static exports include optional `source.json` with `source_origin`; relative offline links and existing CI bundle digest are unchanged.
+5. Use **Disable** for immediate suspension, **Rotate proof / enable** to create a new challenge, or **Remove** to release the hostname. A different tenant must register a new challenge and prove ownership. Previously issued TLS certificates may remain valid at the edge until expiration, but every data request and protected asset request is denied after disable/removal. Never keep an old application deployment accessible after reassignment.
+
+### DNS renewal and operations
+
+The supplied `domain-check` service runs an hourly check; successful proof is valid for seven days, and previously verified domains are rechecked at most daily. A confirmed missing TXT record invalidates routing immediately; a resolver error does not extend the lease (the previous proof expires normally). Pending/disabled domains are not automatically activated. The `domain-check` service and manual CLI share transactional claim protection and cannot resurrect a rotated/removed binding. Keep your DNS resolver reliable and trusted (DNSSEC-validating recursive resolver recommended). For non-Compose installations run `php bin/domains.php recheck` hourly via your scheduler and alert on errors. A DNS verification failure is not a certificate revocation; remove obsolete DNS and certificates through your normal operational process.
+
+```sh
+php bin/domains.php status
+php bin/domains.php recheck
+```
+
+Domain registrations and audit events are included in the portable installation backup. Restore deliberately rotates all proof tokens, clears verification and preserves disabled state; reverify before exposing restored domains. Certificates and private keys are stored separately in the persistent Caddy volumes and should be handled by the operator's protected backup policy. Never restore old domain ownership directly into a live installation; use isolated restore and fresh proof. PostgreSQL remains authoritative, and no Redis cache can bypass domain registry, RBAC or visibility checks. Domain routing uses the existing identity transaction/lock (bounded workspace and domain quotas); no extra service or database schema is required.
+
+### Validation
+
+`composer test` includes domain policy and real two-node HTTP tests. `tests/domains.php --postgres` and `tests/domains-http.py --postgres --full` cover the existing SQL backend, Markdown, search and static export. `sh tests/domains-edge.sh` is the disposable Docker release gate with real DNS TXT lookup, Caddy HTTPS using a **test-only local CA**, two Apache replicas, PostgreSQL and Redis; it also validates the production Caddyfile. Live public ACME issuance requires operator-controlled public DNS/ports and must be checked in the target deployment.
 
 ## 0.4.6 — Multilingual Documentation
 

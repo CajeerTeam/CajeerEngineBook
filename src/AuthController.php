@@ -7,7 +7,7 @@ final class AuthController
 {
     public function __construct(private readonly IdentityStore $store){}
     private static function e(string $s):string{return htmlspecialchars($s,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');}
-    private static function secure():bool{return getenv('BOOK_SECURE_COOKIE')!=='0'||(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off');}
+    private static function secure():bool{return CustomDomains::primary()!==null||getenv('BOOK_SECURE_COOKIE')!=='0'||(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off');}
     private static function cookieName(string $name):string{return (self::secure()?'__Host-':'').'book_'.$name;}
     private static function cookie(string $name,string $value,int $expires=0):void{
         if(!setcookie(self::cookieName($name),$value,['expires'=>$expires,'path'=>'/','secure'=>self::secure(),'httponly'=>true,'samesite'=>'Strict']))throw new \RuntimeException('Cannot set authentication cookie');

@@ -1,0 +1,24 @@
+# Test-only local CA and controlled DNS resolver; never use in production.
+services:
+  book:
+    dns:
+      - 172.30.44.12
+  proxy:
+    volumes: !override
+      - ${BOOK_TEST_CADDYFILE:?Set test Caddyfile}:/etc/caddy/Caddyfile:ro
+      - book-tls:/data
+      - book-tls-config:/config
+  dns-fixture:
+    image: python:3.12-alpine
+    command: [python, /fixture/dns.py]
+    networks:
+      book-edge:
+        ipv4_address: 172.30.44.12
+    volumes:
+      - ./tests/domains-dns.py:/fixture/dns.py:ro
+      - ${BOOK_TEST_DNS_DIR:?Set DNS records directory}:/records:ro
+    healthcheck:
+      test: [CMD, python, -c, 'import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(2); s.sendto(bytes.fromhex("12340100000100000000000001610000100001"),("127.0.0.1",53)); assert s.recv(512)[:2]==bytes.fromhex("1234")']
+      interval: 2s
+      timeout: 3s
+      retries: 20

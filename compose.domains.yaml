@@ -1,0 +1,46 @@
+# Requires base + postgres + redis + distributed overlays, Compose >= 2.24.4.
+# Replaces internal Nginx with a public HTTPS Caddy edge; app/DB/Redis stay private.
+services:
+  book:
+    environment:
+      BOOK_PRIMARY_HOST: ${BOOK_PRIMARY_HOST:?Set the public primary application hostname}
+      BOOK_DOMAIN_EDGE_SECRET: ${BOOK_DOMAIN_EDGE_SECRET:?Generate a 64-character lowercase hex ingress secret}
+      BOOK_DOMAIN_ASK_IP: '172.30.44.10'
+      BOOK_SECURE_COOKIE: '1'
+  worker:
+    environment:
+      BOOK_PRIMARY_HOST: ${BOOK_PRIMARY_HOST:?Set the public primary application hostname}
+  proxy:
+    image: caddy:2.10.2-alpine
+    ports: !override
+      - '80:80'
+      - '443:443'
+    environment:
+      BOOK_ACME_EMAIL: ${BOOK_ACME_EMAIL:?Set an ACME contact email}
+      BOOK_DOMAIN_EDGE_SECRET: ${BOOK_DOMAIN_EDGE_SECRET:?Generate a 64-character lowercase hex ingress secret}
+    volumes: !override
+      - ./deploy/book-Caddyfile:/etc/caddy/Caddyfile:ro
+      - book-tls:/data
+      - book-tls-config:/config
+  domain-check:
+    build: .
+    user: www-data
+    init: true
+    command: [sh, -ec, 'while true; do php bin/domains.php recheck || echo "Domain DNS check failed" >&2; sleep 3600; done']
+    healthcheck:
+      disable: true
+    environment:
+      BOOK_PRIMARY_HOST: ${BOOK_PRIMARY_HOST:?Set the public primary application hostname}
+      BOOK_PG_DSN: 'pgsql:host=postgres;port=5432;dbname=book;connect_timeout=5'
+      BOOK_PG_USER: book
+      BOOK_PG_PASSWORD: ${BOOK_PG_PASSWORD:?Set BOOK_PG_PASSWORD}
+      BOOK_PG_NAMESPACE: ${BOOK_PG_NAMESPACE:?Set BOOK_PG_NAMESPACE}
+    volumes:
+      - book-data:/var/lib/cajeerbook
+    depends_on:
+      book:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  book-tls:
+  book-tls-config:

@@ -5,7 +5,7 @@ use CajeerEngine\Template\{CajeerTemplateEngine,TemplateSandbox};
 use CajeerEngine\Runtime\ServiceContainer;
 final class App {
     private BookStore $store; private MediaStore $media; private MediaController $mediaController; private CajeerTemplateEngine $view;
-    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $githubPrepared=null; private ?array $openApiPrepared=null; private ?string $openApiError=null; private ?string $githubError=null; private ?array $githubFailure=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore; private string $documentHead='';
+    private string $dataDir; private readonly string $installationDir; private ?array $workspace=null; private ?array $githubPrepared=null; private ?array $openApiPrepared=null; private ?string $openApiError=null; private ?string $githubError=null; private ?array $githubFailure=null; private ?array $scopedIdentity=null; private string $studioRole='none'; private string $readerVisibility='public'; private AuthController $auth; private IdentityStore $identityStore; private string $documentHead=''; private ?string $domainHost=null; private ?string $domainCanonical=null;
     public function __construct(private readonly string $root,private readonly ?\Closure $githubClientFactory=null){
         $this->installationDir=$this->dataDir=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
         $c=new ServiceContainer();$c->set('store',fn()=>new BookStore($this->dataDir));$this->store=$c->get('store');
@@ -20,8 +20,8 @@ final class App {
     private function page(string $title,string $body,array $pages=[],string $current='',string $toc='',string $query=''):void{
         $nav=PageTreeView::reader($pages,$current);$document=$current!==''?($pages[$current]??null):null;
         $lang=$document?Locale::language($document):Locale::ui();$searchLocale=$document?Locale::language($document):(Locale::valid($_GET['locale']??null)?$_GET['locale']:'');
-        if($this->workspace)$body='<p class="eyebrow"><a href="/workspaces">'.self::t('Workspaces').'</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
-        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead]);
+        if($this->workspace&&$this->domainHost===null)$body='<p class="eyebrow"><a href="/workspaces">'.self::t('Workspaces').'</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
+        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead]);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
@@ -34,6 +34,7 @@ final class App {
         if(in_array($method,['GET','HEAD'],true)&&Locale::valid($_GET['ui']??null)){$ui=$_GET['ui'];setcookie('book_ui',$ui,['expires'=>time()+31536000,'path'=>'/','secure'=>getenv('BOOK_SECURE_COOKIE')!=='0','httponly'=>true,'samesite'=>'Lax']);}
         Locale::setUi($ui);
         try{
+            if($this->domainGate($path,$method))return;
             if(!$this->runtimeLimit($path,$method))return;
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/webhooks/(github|gitlab)\z~D',$path,$hook)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->receiveWebhook($hook);return;}
@@ -59,7 +60,7 @@ final class App {
                 $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();$this->dispatch($path,$method);});return;
             }
             // Account, control-plane and health routes must remain reachable even when legacy content is private.
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/domains','/organizations','/team','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
             $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
                 $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
@@ -67,6 +68,45 @@ final class App {
             });
         }catch(\Throwable $e){error_log('Book request failed: '.get_class($e).': '.$e->getMessage());if(!headers_sent()){http_response_code(503);header('Content-Type: text/plain; charset=utf-8');header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');echo 'Service unavailable';}}
     }
+    /** Strict host selection precedes all auth, CI, webhook and workspace dispatch. */
+    private function domainGate(string $path,string $method):bool{
+        $primary=CustomDomains::primary();if($primary===null){if($path==='/domains'||in_array($path,['/.well-known/book-domain-ask','/.well-known/book-domain-host'],true)){http_response_code(404);return true;}return false;}
+        $raw=$_SERVER['HTTP_HOST']??'';$host=CustomDomains::requestHost($raw);$ip=$_SERVER['REMOTE_ADDR']??'';
+        $uri=$_SERVER['REQUEST_URI']??'/';if(!is_string($uri)||!str_starts_with($uri,'/')||str_starts_with($uri,'//')||preg_match('/[\x00-\x20\x7f\\\\]/',$uri)){http_response_code(400);return true;}
+        // Container health check uses loopback; TLS permission is accessible only directly from the gateway.
+        if(in_array($raw,['127.0.0.1','127.0.0.1:80','localhost'],true)&&in_array($ip,['127.0.0.1','::1'],true)&&in_array($path,['/health/live','/health/ready'],true)&&in_array($method,['GET','HEAD'],true))return false;
+        if(in_array($path,['/.well-known/book-domain-ask','/.well-known/book-domain-host'],true)){
+            header('Cache-Control: no-store');header('Content-Type: text/plain; charset=utf-8');
+            if($ip!==(getenv('BOOK_DOMAIN_ASK_IP')?:'172.30.44.10')||$method!=='GET'){http_response_code(404);return true;}
+            if($path==='/.well-known/book-domain-ask'){if(!in_array($raw,['book','book:80'],true)){http_response_code(404);return true;}$ask=is_string($_GET['domain']??null)?CustomDomains::requestHost($_GET['domain']):null;}else $ask=$host;
+            if($ask===null){http_response_code(403);return true;}
+            $allowed=$ask===$primary||$this->identityStore->withDomain($ask,fn($w)=>$w!==null);http_response_code($allowed?204:($path==='/.well-known/book-domain-host'?421:403));return true;
+        }
+        if($host===null){http_response_code(421);return true;}
+        if($host===$primary){return $this->requireDomainHttps($host,$method);}
+        // The custom domain never consumes main-host credentials, including an injected cookie.
+        $this->identityStore->withDomain($host,function($w)use($host,$path,$method){
+            if(!$w){http_response_code(421);header('X-Robots-Tag: noindex, nofollow');return;}
+            if(!in_array($method,['GET','HEAD'],true)){http_response_code(405);header('Allow: GET, HEAD');return;}
+            if(!CustomDomains::readerPath($path)){http_response_code(404);header('X-Robots-Tag: noindex, nofollow');return;}
+            if($this->requireDomainHttps($host,$method))return;
+            $this->domainHost=$host;$this->domainCanonical=CustomDomains::canonical($w,$host);
+            $this->workspace=$w+['role'=>'none','owner'=>false];$this->studioRole='none';$this->scopedIdentity=null;$this->readerVisibility='public';
+            WorkspaceUrls::set('');$this->dataDir=Workspaces::directory($this->installationDir,$w);$this->store=new BookStore($this->dataDir,false);$this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
+            if(!$this->runtimeLimit($path,$method))return;
+            $this->dispatch($path,$method);
+        });return true;
+    }
+    private function requireDomainHttps(string $host,string $method):bool{
+        $secret=getenv('BOOK_DOMAIN_EDGE_SECRET');$provided=$_SERVER['HTTP_X_BOOK_EDGE_SECRET']??'';
+        // A direct TLS server or the authenticated private ingress may assert HTTPS.
+        $direct=!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off';
+        $edge=is_string($secret)&&preg_match('/\A[a-f0-9]{64}\z/D',$secret)&&is_string($provided)&&hash_equals($secret,$provided)&&($_SERVER['HTTP_X_BOOK_EDGE_PROTO']??'')==='https';
+        if($direct||$edge){header('Strict-Transport-Security: max-age=31536000');return false;}
+        if(!in_array($method,['GET','HEAD'],true)){http_response_code(403);return true;}
+        header('Location: https://'.$host.($_SERVER['REQUEST_URI']??'/'),true,308);return true;
+    }
+    private function canonicalUrl(string $path):string{if($this->domainCanonical===null)return $path;$prefix=WorkspaceUrls::prefix();if($prefix!==''&&str_starts_with($path,$prefix.'/'))$path=substr($path,strlen($prefix));return 'https://'.$this->domainCanonical.$path;}
     /** Shared ingress limits supplement (never replace) durable identity throttling. */
     private function runtimeLimit(string $path,string $method):bool{
         if(!RedisRuntime::enabled())return true;
@@ -125,7 +165,7 @@ final class App {
                 $store=new BookStore($dir,$w===null);$media=new MediaStore($dir,$store);
                 $visibility=$w?Visibility::workspace($w):'public';
                 WorkspaceUrls::set($w?Workspaces::prefix($w):'');
-                try{return ReleaseArtifact::create($this->root,$store,$media,$admins,$credential,$visibility,$id,$digest,$target);}
+                try{return ReleaseArtifact::create($this->root,$store,$media,$admins,$credential,$visibility,$id,$digest,$target,CustomDomains::publicOrigin($w));}
                 finally{WorkspaceUrls::set('');}
             });
             if($result===null){http_response_code(404);$this->json(['error'=>'Workspace unavailable']);return;}
@@ -260,6 +300,7 @@ final class App {
                     if(!$ctx){$this->unavailable($path,null);return;}if($method==='POST'){header('Location: /team',true,303);return;}$this->page('Team Studio',TeamView::global($ctx,$_GET));
                 }catch(OrganizationAccessException|\InvalidArgumentException $e){http_response_code($e instanceof OrganizationAccessException?403:422);$this->page('Team request failed','<h1>Team request failed</h1><p>'.self::e($e->getMessage()).'</p><a href="/team">Return to Team Studio</a>');}return;
             }
+            if($path==='/domains'){(new DomainController($this->identityStore,$this->auth))->dispatch($method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/workspaces'){(new WorkspaceController($this->identityStore,$this->auth))->dispatch($method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/organizations'||str_starts_with($path,'/organizations/')){(new OrganizationController($this->identityStore,$this->auth))->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/studio'||str_starts_with($path,'/studio/')){$this->studio($path,$method);return;}
@@ -273,6 +314,8 @@ final class App {
             }
             if($path==='/search'||$path==='/api/v1/search'){$this->search($path==='/api/v1/search');return;}
             $db=$this->store->read();$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
+            if($this->domainHost!==null&&$path==='/robots.txt'){header('Content-Type: text/plain; charset=utf-8');echo 'User-agent: *'."\n".'Allow: /'."\n".'Sitemap: https://'.$this->domainCanonical.'/sitemap.xml'."\n";return;}
+            if($this->domainHost!==null&&$path==='/sitemap.xml'){if($this->domainCanonical!==$this->domainHost){header('Location: https://'.$this->domainCanonical.'/sitemap.xml',true,302);return;}header('Content-Type: application/xml; charset=utf-8');echo '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';foreach($pages as $key=>$p)echo '<url><loc>'.htmlspecialchars($this->canonicalUrl('/docs/'.$key),ENT_XML1|ENT_QUOTES,'UTF-8').'</loc></url>';echo '</urlset>';return;}
             if(preg_match('~\A/l/(en|ru)/docs/(.+)\z~D',$path,$localized)){
                 $key=$localized[2];if(!isset($pages[$key]))$key=PageTree::redirect($db,$key)??$key;
                 $variants=Locale::variants($pages,$key);$target=$variants[$localized[1]]??null;
@@ -315,18 +358,20 @@ final class App {
             if(str_starts_with($path,'/docs/')){
                 $key=substr($path,6);
                 if(isset($pages[$key])){
-                    $p=$pages[$key];$lang=Locale::language($p);header('Content-Language: '.$lang);
+                    $p=$pages[$key];
+                    if($this->domainHost===null&&$this->workspace&&CustomDomains::primary()!==null&&$this->readerVisibility==='public'&&Visibility::publicBook(BookStore::books($db)[explode('/',$key,2)[0]]??[],'public')){$preferred=CustomDomains::canonical($this->workspace,'');if($preferred!=='')$this->domainCanonical=$preferred;}
+                    $lang=Locale::language($p);header('Content-Language: '.$lang);
                     $r=$this->renderPublished($p,$key,$db,$pages);$toc='<div class="side-label">'.self::t('On this page').'</div>';foreach($r['toc'] as $h)$toc.=self::link('#'.$h['id'],$h['title'],'toc-level-'.$h['level']);
                     [$b,$v]=explode('/',$key);$prefix="$b/$v/";$localizedPages=Locale::pages($pages,$lang);$siblings=array_filter($localizedPages,fn($k)=>str_starts_with($k,$prefix),ARRAY_FILTER_USE_KEY);
                     $keys=array_keys($siblings);$i=array_search($key,$keys,true);$pager='<div class="pager">';if($i>0)$pager.=self::link(self::url($keys[$i-1]),'← '.$siblings[$keys[$i-1]]['title']);if(isset($keys[$i+1]))$pager.=self::link(self::url($keys[$i+1]),$siblings[$keys[$i+1]]['title'].' →');
                     $versions=[];foreach($localizedPages as $k=>$vp){[$vb,$vv]=explode('/',$k);if($vb===$b&&!isset($versions[$vv]))$versions[$vv]=$k;}
                     $switch='<div class="versions">'.self::t('Versions').': ';foreach($versions as $vv=>$k)$switch.=self::link(self::url(isset($localizedPages["$b/$vv/".substr($key,strlen($prefix))])?"$b/$vv/".substr($key,strlen($prefix)):$k),$vv,$vv===$v?'active':'');$switch.='</div>';
                     $variants=Locale::variants($pages,$key);$switch.='<nav class="versions" aria-label="'.self::t('Language').'">'.self::t('Language').': ';
-                    $this->documentHead='<link rel="canonical" href="'.self::e(self::url($key)).'">';
+                    $this->documentHead='<link rel="canonical" href="'.self::e($this->canonicalUrl(self::url($key))).'">';
                     foreach($variants as $code=>$dest){$href=self::e(self::url($dest));$switch.='<a href="'.$href.'" lang="'.$code.'" hreflang="'.$code.'"'.($code===$lang?' class="active" aria-current="page"':'').'>'.self::e(Locale::LANGUAGES[$code]).'</a> ';
-                        $this->documentHead.='<link rel="alternate" hreflang="'.$code.'" href="'.$href.'">';}
+                        $this->documentHead.='<link rel="alternate" hreflang="'.$code.'" href="'.self::e($this->canonicalUrl(self::url($dest))).'">';}
                     $switch.='</nav>';
-                    $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.(ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article lang="'.$lang.'">'.$r['html'].'</article>'.$pager.'</div>';
+                    $html=$switch.'<div class="eyebrow">'.self::e("$b / $v / ".$p['section']).'</div><h1>'.self::e($p['title']).'</h1>'.($this->domainHost===null&&ApiPlayground::published($db,$pages,$key)?'<p class="actions">'.self::link('/playground?key='.rawurlencode($key),'Try API in Playground').' '.self::link('/sdk?key='.rawurlencode($key),'SDK & Code Examples').'</p>':'').'<article lang="'.$lang.'">'.$r['html'].'</article>'.$pager.'</div>';
                     $this->page($p['title'],$html,$siblings,$key,$toc);return;
                 }
                 if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/docs/'.$target);return;}
@@ -376,7 +421,7 @@ final class App {
                 try{
                     if(!in_array($_POST['visibility']??null,['public','all'],true))throw new \InvalidArgumentException('Choose an export visibility.');
                     if($private&&($_POST['confirm_private']??'')!=='1')throw new \InvalidArgumentException('Confirm that the ZIP may contain private published documentation.');
-                    (new StaticExport($this->root,$this->store,$this->media))->download($this->readerVisibility,$scope,$private);
+                    (new StaticExport($this->root,$this->store,$this->media,CustomDomains::publicOrigin($this->workspace)))->download($this->readerVisibility,$scope,$private);
                 }catch(\InvalidArgumentException|\DomainException $e){http_response_code(422);$this->page('Static Export',StaticExport::form($this->store->read(),$this->readerVisibility,$csrf,$e->getMessage()));}
                 return;
             }

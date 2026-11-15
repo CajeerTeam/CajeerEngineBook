@@ -12,6 +12,7 @@ require_once __DIR__.'/ActivityJournal.php';
 require_once __DIR__.'/PostgresContentStore.php';
 require_once __DIR__.'/PostgresIdentityStore.php';
 require_once __DIR__.'/Oidc.php';
+require_once __DIR__.'/CustomDomains.php';
 
 /** Private, versioned identity state. All mutations (including rate limits) serialize on one lock. */
 final class IdentityStore
@@ -132,7 +133,7 @@ final class IdentityStore
         foreach($db['attempts'] as $k=>$a)if(!is_string($k)||!self::hex($k,64)||!is_array($a)||!is_int($a['count']??null)||!is_int($a['until']??null)||$a['count']<1)throw new \RuntimeException('Invalid rate limit');
         $flows=$db['oidc_flows']??[];if(!is_array($flows)||count($flows)>500)throw new \RuntimeException('Invalid OIDC flow state');
         foreach($flows as $key=>$f)if(!is_string($key)||!self::hex($key,64)||!is_array($f)||!is_string($f['browser']??null)||!self::hex($f['browser'],64)||!is_string($f['policy']??null)||!self::hex($f['policy'],64)||!is_int($f['expires']??null)||!is_string($f['nonce']??null)||!preg_match('/\A[A-Za-z0-9_-]{43}\z/D',$f['nonce'])||!is_string($f['verifier']??null)||!preg_match('/\A[A-Za-z0-9_-]{64}\z/D',$f['verifier']))throw new \RuntimeException('Invalid OIDC flow');
-        Organizations::validate($db);Workspaces::validate($db);ActivityJournal::validate($db);
+        Organizations::validate($db);Workspaces::validate($db);CustomDomains::validate($db);ActivityJournal::validate($db);
     }
     private static function safe(array $u):array{return array_intersect_key($u,array_flip(['id','username','name','email','owner','enabled','created']))+(isset($u['oidc'])?['federated'=>true]:[]);}
     private static function find(array $db,string $username):?array{foreach($db['users'] as $u)if($u['username']===$username)return $u;return null;}
@@ -263,6 +264,67 @@ final class IdentityStore
     public function reset(string $token,string $password,string $ip):string{return $this->transaction(function(&$db)use($token,$password,$ip){$now=time();self::prune($db,$now);$key=hash('sha256',substr($token,0,128));if(!self::rate($db,'reset',$ip,$key,$now))return 'limited';$r=self::hex($token,64)?($db['resets'][$key]??null):null;if(!$r||!$db['users'][$r['user']]['enabled']||isset($db['users'][$r['user']]['oidc']))return 'invalid';$db['users'][$r['user']]['hash']=self::password($password);self::revoke($db,$r['user']);ActivityJournal::record($db,$db['users'][$r['user']],'account.reset','Password recovered',$r['user']);return 'ok';});}
     /** Trusted operator only: no credentials or membership records returned. */
     public function legacyWorkspaceAvailable(string $token):bool{return $this->transaction(fn($db)=>($db['users'][self::requireSession($db,$token)['user']]['owner']??false)&&Workspaces::legacy($db)===null);}
+    /** Domain management shares the identity lock and current workspace RBAC. */
+    private static function domainManager(array $db,string $token,string $csrf,string $id):string{
+        $session=self::requireSession($db,$token);$uid=$session['user'];$w=$db['workspaces'][$id]??null;$o=$w?$db['organizations'][$w['organization']]:null;
+        if(!hash_equals($session['csrf'],$csrf)||!$o||$o['archived']||$w['legacy']||!Permissions::allows(Permissions::workspace($o,$w,$uid),'manage'))throw new OrganizationAccessException('Domain management denied.');
+        return $uid;
+    }
+    public function mutateDomain(string $token,string $csrf,string $id,string $host,string $action,int $rev):void{
+        $host=CustomDomains::name($host);$primary=CustomDomains::primary();if($primary===null)throw new \DomainException('Configure BOOK_PRIMARY_HOST first.');
+        if($host===$primary)throw new \InvalidArgumentException('Primary application host is reserved.');
+        $this->transaction(function(&$db)use($token,$csrf,$id,$host,$action,$rev){
+            $uid=self::domainManager($db,$token,$csrf,$id);$w=&$db['workspaces'][$id];if($w['revision']!==$rev)throw new \DomainException('Workspace changed. Reload.');
+            $domains=$w['domains']??[];
+            if($action==='add'){
+                if(!CustomDomains::eligible($db,$w))throw new \DomainException('Only active public workspaces support domains.');
+                foreach($db['workspaces'] as $other)if(isset($other['domains'][$host]))throw new \DomainException('Domain already registered.');
+                if(count($domains)>=CustomDomains::LIMIT)throw new \DomainException('Domain quota reached.');$domains[$host]=CustomDomains::record();
+            }else{
+                if(!isset($domains[$host]))throw new \InvalidArgumentException('Unknown domain.');
+                if($action==='remove'){unset($domains[$host]);if(($w['primary_domain']??null)===$host)unset($w['primary_domain']);}
+                elseif($action==='disable'){$domains[$host]=CustomDomains::record();$domains[$host]['disabled']=true;}
+                elseif($action==='reset')$domains[$host]=CustomDomains::record();
+                elseif($action==='primary'){if(!CustomDomains::eligible($db,$w)||!CustomDomains::active($domains[$host]))throw new \DomainException('Verify domain first.');$w['primary_domain']=$host;}
+                else throw new \InvalidArgumentException('Unknown domain operation.');
+            }
+            $w['domains']=$domains;$w['revision']++;ActivityJournal::record($db,$db['users'][$uid],'workspace.domain',$host,$id,$w['organization'],$id,[],$action);
+        });
+    }
+    /** Capture proof under lock, resolve DNS outside it, then compare/re-authorize on commit. */
+    public function verifyDomain(string $token,string $csrf,string $id,string $host,int $rev,?callable $lookup=null):bool{
+        $host=CustomDomains::name($host);
+        $capture=$this->transaction(function(&$db)use($token,$csrf,$id,$host,$rev){
+            self::domainManager($db,$token,$csrf,$id);$w=&$db['workspaces'][$id];$r=$w['domains'][$host]??null;
+            if(CustomDomains::primary()===null||$host===CustomDomains::primary()||$w['revision']!==$rev||!CustomDomains::eligible($db,$w)||!$r||$r['disabled'])throw new \DomainException('Domain unavailable or workspace changed.');
+            if($r['checked']>time()-30)throw new \DomainException('Wait 30 seconds before checking DNS again.');
+            $w['domains'][$host]['checked']=time();return $r['token'];
+        });
+        $proof=CustomDomains::proof($host,$capture,$lookup);
+        return $this->transaction(function(&$db)use($token,$csrf,$id,$host,$capture,$proof,$rev){
+            $uid=self::domainManager($db,$token,$csrf,$id);$w=&$db['workspaces'][$id];$r=$w['domains'][$host]??null;
+            if($w['revision']!==$rev||!CustomDomains::eligible($db,$w)||!$r||$r['disabled']||!hash_equals($r['token'],$capture))throw new \DomainException('Domain changed during DNS verification.');
+            if($proof!==null)$w['domains'][$host]['verified']=$proof?time():0;
+            if($proof===true&&!isset($w['primary_domain']))$w['primary_domain']=$host;
+            $w['revision']++;ActivityJournal::record($db,$db['users'][$uid],'workspace.domain',$host,$id,$w['organization'],$id,[],$proof===true?'verified':($proof===false?'proof missing':'DNS unavailable'));
+            return $proof===true;
+        });
+    }
+    /** Periodic renewal of previously verified claims. Never activates pending claims. */
+    public function recheckDomains(?callable $lookup=null):array{
+        if(CustomDomains::primary()===null)return ['checked'=>0,'valid'=>0,'failed'=>0];
+        $items=$this->transaction(function($db){$out=[];foreach($db['workspaces'] as $w)if(CustomDomains::eligible($db,$w))foreach($w['domains']??[] as $host=>$r)if(!$r['disabled']&&$r['verified']>0&&$r['checked']<=time()-CustomDomains::RECHECK)$out[]=[$w['id'],$host,$r['token']];return $out;},false);
+        $result=['checked'=>0,'valid'=>0,'failed'=>0];
+        foreach($items as [$id,$host,$challenge]){
+            $claimed=$this->transaction(function(&$db)use($id,$host,$challenge){$w=$db['workspaces'][$id]??null;$r=$w['domains'][$host]??null;if(!$w||!CustomDomains::eligible($db,$w)||!$r||$r['disabled']||$r['verified']===0||$r['checked']>time()-CustomDomains::RECHECK||!hash_equals($r['token'],$challenge))return false;$db['workspaces'][$id]['domains'][$host]['checked']=time();return $db['workspaces'][$id]['domains'][$host]['checked'];});
+            if(!$claimed)continue;$result['checked']++;$proof=CustomDomains::proof($host,$challenge,$lookup);
+            $this->transaction(function(&$db)use($id,$host,$challenge,$proof,$claimed){$w=$db['workspaces'][$id]??null;$r=$w['domains'][$host]??null;if(!$w||!CustomDomains::eligible($db,$w)||!$r||$r['disabled']||$r['checked']!==$claimed||!hash_equals($r['token'],$challenge))return;if($proof!==null)$db['workspaces'][$id]['domains'][$host]['verified']=$proof?time():0;if($proof===false){$db['workspaces'][$id]['revision']++;ActivityJournal::record($db,null,'workspace.domain',$host,$id,$w['organization'],$id,[],'DNS proof lost');}});
+            $result[$proof===true?'valid':'failed']++;
+        }
+        return $result;
+    }
+    /** Always anonymous, even if a caller supplies a valid main-host session cookie. */
+    public function withDomain(string $host,callable $fn):mixed{return $this->transaction(fn($db)=>$fn(CustomDomains::find($db,$host)),false);}
     public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
     public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){Workspaces::assertRegistryDirectories($root,$db);PostgresContentStore::assertRegistry($root,$db);(new BookStore($root,Workspaces::legacy($db)===null))->checkReady();foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();});}
     public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
@@ -369,5 +431,5 @@ final class IdentityStore
     public function backup():array{return $this->transaction(fn($db)=>self::backupState($db));}
     /** Operator-only consistent installation snapshot. Lock order is identity -> content, as in HTTP. */
     public function installationSnapshot(callable $fn):mixed{return $this->transaction(fn($db)=>$fn(self::backupState($db)),false);}
-    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($this->identityConnection!==null)throw new \DomainException('Use full installation restore into a new directory, then migrate to PostgreSQL.');if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2,3,4],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)!==1&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']!==1?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];$db['activity']=$backup['activity']??[];if($backup['schema']!==4){foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);});}
+    public function restore(array $backup):void{$this->transaction(function(&$db)use($backup){if($this->identityConnection!==null)throw new \DomainException('Use full installation restore into a new directory, then migrate to PostgreSQL.');if($db['users']!==[])throw new \DomainException('Identity already initialized.');if(!in_array($backup['schema']??null,[1,2,3,4],true)||!is_array($backup['users']??null)||$backup['users']===[]||(($backup['schema']??null)!==1&&!is_array($backup['organizations']??null)))throw new \InvalidArgumentException('Invalid identity backup.');$db=self::empty();$db['users']=$backup['users'];$db['organizations']=$backup['schema']!==1?$backup['organizations']:[];$db['workspaces']=$backup['workspaces']??[];$db['activity']=$backup['activity']??[];if($backup['schema']!==4){foreach($db['workspaces'] as &$w)$w['visibility']??=Visibility::workspace($w);unset($w);}self::validate($db);CustomDomains::resetRestored($db);});}
 }

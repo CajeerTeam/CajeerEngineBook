@@ -1,0 +1,92 @@
+{
+    admin off
+    email {$BOOK_ACME_EMAIL}
+    auto_https disable_redirects
+    on_demand_tls {
+        ask http://book:80/.well-known/book-domain-ask
+    }
+    servers {
+        strict_sni_host on
+    }
+    # Do not log OIDC authorization codes or request query strings on proxy errors.
+    log {
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers>X-Book-Edge-Secret delete
+            }
+        }
+    }
+}
+
+# Shared host authorization for static assets and plaintext redirects. Only the
+# private edge can reach the permission endpoints, never external requests.
+(book_host_gate) {
+    forward_auth book:80 {
+        uri /.well-known/book-domain-host
+        header_up -X-Book-Client-IP
+        header_up -Cookie
+        header_up -Authorization
+    }
+}
+
+http:// {
+    route {
+        @internal path /.well-known/book-domain-ask /.well-known/book-domain-host
+        respond @internal 404
+        @unsafe not method GET HEAD
+        respond @unsafe 403
+        import book_host_gate
+        redir https://{host}{uri} 308
+    }
+}
+
+https:// {
+    tls {
+        on_demand
+    }
+    route {
+        @internal path /.well-known/book-domain-ask /.well-known/book-domain-host
+        respond @internal 404
+        @assets path /assets/*
+        handle @assets {
+            import book_host_gate
+            reverse_proxy {
+                dynamic a book 80 {
+                    refresh 5s
+                    resolvers 127.0.0.11
+                    versions ipv4
+                }
+                header_up X-Book-Client-IP {remote_host}
+                header_up X-Book-Edge-Proto https
+                header_up X-Book-Edge-Secret {$BOOK_DOMAIN_EDGE_SECRET}
+                header_up -X-Forwarded-Host
+                header_up -X-Forwarded-For
+                header_up -X-Forwarded-Proto
+            }
+        }
+        handle {
+            request_body {
+                max_size 72MB
+            }
+            reverse_proxy {
+                dynamic a book 80 {
+                    refresh 5s
+                    resolvers 127.0.0.11
+                    versions ipv4
+                }
+                lb_policy round_robin
+                header_up X-Book-Client-IP {remote_host}
+                header_up X-Book-Edge-Proto https
+                header_up X-Book-Edge-Secret {$BOOK_DOMAIN_EDGE_SECRET}
+                header_up -X-Forwarded-Host
+                header_up -X-Forwarded-For
+                header_up -X-Forwarded-Proto
+                transport http {
+                    response_header_timeout 130s
+                }
+            }
+        }
+    }
+}

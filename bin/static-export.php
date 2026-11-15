@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/bootstrap.php';
-use CajeerBook\{BookStore,DataDirectory,IdentityStore,MediaStore,StaticExport,Visibility,Workspaces,WorkspaceUrls};
+use CajeerBook\{BookStore,CustomDomains,DataDirectory,IdentityStore,MediaStore,StaticExport,Visibility,Workspaces,WorkspaceUrls};
 try{
     $root=dirname(__DIR__);$data=DataDirectory::resolve(getenv('BOOK_DATA_DIR')?:$root.'/var',$root.'/public');
     $target=$argv[1]??'';$scope='';$workspace='';$private=false;
@@ -22,7 +22,7 @@ try{
         if($w&&(($w['archived']??false)||!$admins))throw new InvalidArgumentException('Archived workspace cannot be exported');
         $dir=$w?Workspaces::directory($data,$w):$data;$store=new BookStore($dir,$w===null);
         WorkspaceUrls::set($w?Workspaces::prefix($w):'');
-        try{return (new StaticExport($root,$store,new MediaStore($dir,$store)))->create($target,$w?Visibility::workspace($w):'public',$scope,$private);}finally{WorkspaceUrls::set('');}
+        try{return (new StaticExport($root,$store,new MediaStore($dir,$store),CustomDomains::publicOrigin($w)))->create($target,$w?Visibility::workspace($w):'public',$scope,$private);}finally{WorkspaceUrls::set('');}
     });
     if($result===null)throw new RuntimeException('Workspace unavailable');
     echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES)."\n";

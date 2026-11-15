@@ -144,6 +144,8 @@ jobs:
             -c "ALTER DATABASE book_test OWNER TO book_app"
       - run: php tests/postgres-content.php
       - run: php tests/postgres-identity.php
+      - run: php tests/domains.php --postgres
+      - run: python3 tests/domains-http.py --postgres --full
       - run: python3 tests/oidc-http.py --postgres
       - run: php tests/multilingual.php --postgres
       - run: python3 tests/multilingual-http.py --postgres
@@ -204,3 +206,11 @@ jobs:
       - name: Remove disposable distributed deployment
         if: always()
         run: docker compose -p book-distributed-test -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml -f compose.distributed.yaml --profile automation down -v
+
+  domains-edge:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: DNS and HTTPS custom-domain release gate
+        run: sh tests/domains-edge.sh

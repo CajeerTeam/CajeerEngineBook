@@ -12,7 +12,7 @@ final class StaticExport
     private const MIME_EXT = ['image/png'=>'png','image/jpeg'=>'jpg','image/gif'=>'gif','image/webp'=>'webp','application/pdf'=>'pdf','application/zip'=>'zip','text/plain'=>'txt'];
     private const CSP = "default-src 'none'; script-src 'self' file:; style-src 'self' file:; img-src 'self' file: data: blob:; frame-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self' file:";
 
-    public function __construct(private readonly string $root,private readonly BookStore $store,private readonly MediaStore $media) {}
+    public function __construct(private readonly string $root,private readonly BookStore $store,private readonly MediaStore $media,private readonly ?string $sourceOrigin=null) {}
 
     public static function form(array $db,string $visibility,string $csrf,string $error=''):string
     {
@@ -167,6 +167,7 @@ final class StaticExport
             if($library===false||$frame===false)throw new \RuntimeException('Cannot read Mermaid runtime');
             $write('assets/diagram-frame.html',self::diagramFrame($library,$frame));$addFile('assets/mermaid-LICENSE.txt',$mermaid.'LICENSE.txt');
         }
+        if(!$includePrivate&&$this->sourceOrigin!==null){$host=parse_url($this->sourceOrigin,PHP_URL_HOST);if(!is_string($host)||$this->sourceOrigin!=='https://'.CustomDomains::name($host))throw new \InvalidArgumentException('Invalid static source origin');$write('source.json',json_encode(['source_origin'=>$this->sourceOrigin],JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");}
         if($release!==null)$write('release.json',json_encode($release,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");
         $write('README.txt',"CajeerEngine Book static site\n\nExtract every file and open index.html, or deploy the directory to a static HTTP host.\nNo server or CDN is required. JavaScript enables offline search, tabs and Mermaid.\nOnly published snapshots and referenced local media are included.\n".($includePrivate?"WARNING: This export can contain private documentation. Keep it in a protected location.\n":"Public published content only.\n")."External images and unavailable internal links are omitted; external links still require a network.\nPages: ".count($pages)."\nMedia: ".count($mediaPaths)."\nOmitted link/image references: $omitted\n");
         return ['pages'=>count($pages),'media'=>count($mediaPaths),'redirects'=>$redirects,'omitted'=>$omitted];

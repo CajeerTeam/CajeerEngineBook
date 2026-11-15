@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.7 — Custom Domains
+
+- Transactional workspace domain registration, exact DNS TXT ownership proof, renewable seven-day leases, daily recheck, global hostname uniqueness, canonical primary/aliases, disable/rotate/remove and activity events. Restore rotates ownership challenges and clears verified state.
+- Main-host-only control plane, strict Host routing before auth and CI, anonymous public Reader/API/search/media on custom hosts, live visibility checks, secure host-only authentication cookies and ingress-authenticated HTTPS. Unknown, inactive and expired hosts fail closed; no cross-workspace URL or cookie bypass.
+- Production Caddy ACME ingress, on-demand issuance permission gate, SNI/Host enforcement, HTTPS redirects, shared TLS volumes, dynamic load balancing and automated DNS checker. Canonical/hreflang, sitemap/robots and optional public static source-origin metadata.
+- Domain policy, HTTP, PostgreSQL and disposable Docker/Caddy TLS/DNS integration release gates.
+
 ## 0.4.6 — Multilingual Documentation
 
 - English/Russian document locales, independent translation drafts and published snapshots, stable source identity, exact source-change tracking, duplicate-language validation, retagging standalone originals, history/review/CI preservation and version-copy remapping.

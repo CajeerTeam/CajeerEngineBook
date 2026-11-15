@@ -5,13 +5,13 @@ namespace CajeerBook;
 /** Export only the public publication represented by an approved and deployed CI bundle. */
 final class ReleaseArtifact
 {
-    public static function create(string $root,BookStore $store,MediaStore $media,array $admins,string $credential,string $visibility,string $id,string $digest,string $target):array
+    public static function create(string $root,BookStore $store,MediaStore $media,array $admins,string $credential,string $visibility,string $id,string $digest,string $target,?string $sourceOrigin=null):array
     {
         $token=CiPublishing::authenticate($store->read(),$credential,$admins);
         if(!$token['publish'])throw new OrganizationAccessException('Release export requires a publish token.');
         $scope=$token['scope'];
         if($visibility!=='public')throw new OrganizationAccessException('CI release export is public-only.');
-        return (new StaticExport($root,$store,$media))->create($target,$visibility,$scope,false,
+        return (new StaticExport($root,$store,$media,$sourceOrigin))->create($target,$visibility,$scope,false,
             function(array $db,array $pages)use($admins,$credential,$scope,$id,$digest){
                 $token=CiPublishing::authenticate($db,$credential,$admins);
                 if(!$token['publish']||$token['scope']!==$scope)throw new OrganizationAccessException('Release export denied.');
