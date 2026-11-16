@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 — Administrator Documentation
+
+- Current administrator handbook with deployment/owner initialization, topology, settings, maintenance, incident response, recovery and update procedures; indexes all existing specialist guides.
+- New operator CLI `bin/admin.php report|check` performs real runtime, configuration, storage, identity, SQL binding/schema, workspace, Redis and key checks; optional deep integrity/credential/audit, OIDC discovery and monitoring. Redacted fixed remediation hints and nonzero health exit status.
+- Executable documentation/reference checks and isolated administrator CLI runbook added to the existing release gate. PostgreSQL workflow exercised in dedicated disposable CI database. No SQL schema change (3).
+- Historical guide version contexts clarified; no certification claimed without a successful infrastructure gate.
+
 ## 0.8.1 — Secure Update Manager
 
 - Verified GitHub HTTPS asset downloads, pinned Ed25519 trust and Cosign verification; bounded ZIP extraction and immutable staged deployment trees.

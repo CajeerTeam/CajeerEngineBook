@@ -149,12 +149,15 @@ def postgres(g):
             '-c','ALTER DATABASE book_test OWNER TO book_app','-c','REVOKE CONNECT ON DATABASE book_test FROM PUBLIC',
             '-c','CREATE DATABASE book_drill OWNER book_drill','-c','REVOKE CONNECT ON DATABASE book_drill FROM PUBLIC',
             '-c','CREATE DATABASE book_migrations OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_migrations FROM PUBLIC',
-            '-c','CREATE DATABASE book_benchmark OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_benchmark FROM PUBLIC'])
+            '-c','CREATE DATABASE book_benchmark OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_benchmark FROM PUBLIC',
+            '-c','CREATE DATABASE book_admin_runbook OWNER book_app','-c','REVOKE CONNECT ON DATABASE book_admin_runbook FROM PUBLIC'])
         port=capture(['docker','port',pg,'5432/tcp'],g.env).rsplit(':',1)[1]
         rport=capture(['docker','port',redis,'6379/tcp'],g.env).rsplit(':',1)[1]
         g.env.update(BOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_test;connect_timeout=5',BOOK_PG_USER='book_app',BOOK_PG_PASSWORD='book_app_test_only')
         migration_env=dict(g.env,BOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_migrations;connect_timeout=5',BOOK_MIGRATION_TEST='1')
         g.run('postgres-migrations',['php','tests/postgres-migrations.php'],1200,migration_env)
+        admin_env=dict(g.env,BOOK_ADMIN_RUNBOOK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_admin_runbook;connect_timeout=5',BOOK_ADMIN_RUNBOOK_REDIS_PORT=rport)
+        g.run('administrator-runbook-postgres',['python3','tests/admin-runbook.py','--postgres'],1200,admin_env)
         g.run('upgrade-050',['php','tests/upgrade-050.php','--postgres'])
         for name in ('postgres-content','postgres-identity','postgres-audit'):
             g.run(name,['php',f'tests/{name}.php'])

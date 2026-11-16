@@ -23,6 +23,8 @@
     },
     "scripts": {
         "test": [
+            "python3 tests/admin-docs.py",
+            "python3 tests/admin-runbook.py",
             "python3 tests/release-signing.py",
             "python3 tests/update-manager.py",
             "@php tests/pitr-policy.php",

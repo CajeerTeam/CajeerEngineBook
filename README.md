@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.8.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.8.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.8.2 — Administrator Documentation
+
+Start with the [Administrator handbook](docs/admin/README.md): current installation/topology procedures, configuration reference, incident runbook, security/recovery/update guides and executable verification. `php bin/admin.php report` gives a redacted local summary; `check` returns nonzero on failures. Optional `--deep`, `--oidc` and `--monitoring` exercise integrity, credential/audit, IdP and monitoring dependencies. Run as the runtime user. Schema 3 remains unchanged; for signed deployment use the official verified release, not a changed-files patch. See [verification](docs/admin/verification.md) for the documentation and real CLI workflow gates. Full infrastructure qualification remains required.
 
 ## 0.8.1 — Secure Update Manager
 
