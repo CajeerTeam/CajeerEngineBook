@@ -41,3 +41,28 @@ tests:
       - eval_time: 4m
         alertname: BookDependencyUnavailable
         exp_alerts: []
+  - interval: 30s
+    input_series:
+      - series: 'book_http_requests_total{route="reader",method="GET",status="2xx"}'
+        values: '0+100x30'
+      - series: 'book_http_requests_total{route="reader",method="GET",status="429"}'
+        values: '0+1x30'
+      - series: 'book_http_requests_total{route="reader",method="GET",status="4xx"}'
+        values: '0+1000x30'
+      - series: 'book_http_request_duration_seconds_bucket{route="reader",le="1"}'
+        values: '0+90x30'
+      - series: 'book_http_request_duration_seconds_bucket{route="reader",le="2"}'
+        values: '0+101x30'
+      - series: 'book_http_request_duration_seconds_bucket{route="reader",le="+Inf"}'
+        values: '0+101x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: BookPublicReadAvailabilitySLO
+        exp_alerts:
+          - exp_labels: {route: reader, severity: warning}
+            exp_annotations: {summary: 'Public read error budget exceeded: reader'}
+      - eval_time: 12m
+        alertname: BookPublicReadTailLatency
+        exp_alerts:
+          - exp_labels: {route: reader, severity: warning}
+            exp_annotations: {summary: 'Public read p99 exceeds 1 second: reader'}

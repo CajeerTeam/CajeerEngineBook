@@ -22,4 +22,8 @@ try{
     deny(fn()=>$r->check(),'readiness refuses unavailable Redis');
     $r->notify('legacy');$r->heartbeat(1);ok(true,'queue notifications and metrics are best effort on outage');
     deny(fn()=>$r->stats(),'operator status does not claim Redis is healthy');
+    ok(RedisRuntime::keyspaceCounts("# Keyspace\r\ndb0:keys=10,expires=7,avg_ttl=100\r\ndb2:keys=4,expires=1,avg_ttl=10\r\n")===['keys'=>14,'expiring_keys'=>8],'Redis keyspace aggregates bounded counts without keys');
+    ok(RedisRuntime::keyspaceCounts("# Keyspace\r\n")===['keys'=>0,'expiring_keys'=>0],'empty Redis keyspace valid');
+    deny(fn()=>RedisRuntime::keyspaceCounts("# Keyspace\r\ndb0:keys=1,expires=2,avg_ttl=0\r\n"),'invalid Redis resource counts rejected');
+
 }finally{putenv('BOOK_REDIS_HOST');putenv('BOOK_REDIS_PORT');rmdir($dir);}

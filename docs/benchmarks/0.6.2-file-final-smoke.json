@@ -1,0 +1,1495 @@
+{
+  "source_digest": "7c636b9ce621fdb42a00d57b89ba3e6a9f481e4ebf163ea4e8ce733bde924b38",
+  "format": 1,
+  "release": "0.6.2",
+  "profile": {
+    "pages": 100,
+    "per_workspace": 50,
+    "requests_per_phase": 120,
+    "concurrency": 8,
+    "nodes": 2,
+    "seed": 42,
+    "backend": "file",
+    "redis": false,
+    "full": false,
+    "telemetry": true,
+    "rate": 0,
+    "engine": "php-cli-server",
+    "maintenance": false,
+    "qualification": {
+      "phase_seconds": 2,
+      "soak_seconds": 4,
+      "offered_rps": 10.0,
+      "stress_multiplier": 3.0,
+      "p99_ms": 1000,
+      "error_budget": 0.001,
+      "min_samples": 3,
+      "rss_growth_mib": 128,
+      "source_ips": 1,
+      "sample_seconds": 1,
+      "background_maintenance": false,
+      "maintenance_interval": 3600,
+      "maintenance_timeout": 3600,
+      "pg_max_connections": 0,
+      "redis_max_memory_mib": 0,
+      "redis_max_keys": 0,
+      "latency_limits": {
+        "api": 300,
+        "media": 300,
+        "isolation": 300,
+        "reader": 300,
+        "search": 200,
+        "publish": 500,
+        "save": 500
+      }
+    }
+  },
+  "environment": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "cpu_count": 5,
+    "php": "8.4.24",
+    "python": "3.13.5",
+    "kernel": "6.18.57",
+    "php_extensions": "[\"Core\",\"date\",\"libxml\",\"openssl\",\"pcre\",\"zlib\",\"filter\",\"hash\",\"json\",\"pcntl\",\"random\",\"Reflection\",\"SPL\",\"session\",\"standard\",\"sodium\",\"PDO\",\"calendar\",\"ctype\",\"exif\",\"FFI\",\"fileinfo\",\"ftp\",\"gettext\",\"iconv\",\"Phar\",\"posix\",\"readline\",\"shmop\",\"sockets\",\"sysvmsg\",\"sysvsem\",\"sysvshm\",\"tokenizer\",\"Zend OPcache\"]",
+    "cpu_quota": "400000 100000",
+    "memory_quota": "4294967296",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "status": "passed",
+  "phases": [
+    {
+      "phase": "steady",
+      "requests": 20,
+      "concurrency": 8,
+      "rate_limit_rps": 10.0,
+      "ramp_from_rps": null,
+      "offered_seconds": 2,
+      "seconds": 2.001,
+      "throughput_rps": 9.995,
+      "successful_rps": 9.995,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.597,
+      "operations": {
+        "api": {
+          "requests": 7,
+          "completed": 7,
+          "dropped": 0,
+          "successes": 7,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 7
+          },
+          "response_bytes": 19245,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 5,
+          "p99_ms": 5,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 7,
+          "completed": 7,
+          "dropped": 0,
+          "successes": 7,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 7
+          },
+          "response_bytes": 154,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 6,
+          "p99_ms": 6,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 6,
+          "completed": 6,
+          "dropped": 0,
+          "successes": 6,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 6
+          },
+          "response_bytes": 126,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 6,
+          "p99_ms": 6,
+          "service_p95_ms": 5,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 2,
+          "operations": {
+            "api": {
+              "requests": 7,
+              "completed": 7,
+              "dropped": 0,
+              "successes": 7,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 7
+              },
+              "response_bytes": 19245,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 5,
+              "p99_ms": 5,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 7,
+              "completed": 7,
+              "dropped": 0,
+              "successes": 7,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 7
+              },
+              "response_bytes": 154,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 6,
+              "p99_ms": 6,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 6,
+              "completed": 6,
+              "dropped": 0,
+              "successes": 6,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 6
+              },
+              "response_bytes": 126,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 6,
+              "p99_ms": 6,
+              "service_p95_ms": 5,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": false,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.16,
+          "read_bytes": 0,
+          "write_bytes": 49152,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.22,
+          "read_bytes": 0,
+          "write_bytes": 204800,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.001,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.16,
+            "read_bytes": 0,
+            "write_bytes": 49152,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.02,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.19,
+            "read_bytes": 0,
+            "write_bytes": 131072,
+            "processes": 2,
+            "offered": 11,
+            "completed": 10,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.22,
+            "read_bytes": 0,
+            "write_bytes": 204800,
+            "processes": 2,
+            "offered": 20,
+            "completed": 20,
+            "dropped": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "ramp",
+      "requests": 30,
+      "concurrency": 8,
+      "rate_limit_rps": 20.0,
+      "ramp_from_rps": 10.0,
+      "offered_seconds": 2,
+      "seconds": 2.001,
+      "throughput_rps": 14.992,
+      "successful_rps": 14.992,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.491,
+      "operations": {
+        "api": {
+          "requests": 10,
+          "completed": 10,
+          "dropped": 0,
+          "successes": 10,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 10
+          },
+          "response_bytes": 29736,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 5,
+          "p99_ms": 5,
+          "service_p95_ms": 5,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 10,
+          "completed": 10,
+          "dropped": 0,
+          "successes": 10,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 10
+          },
+          "response_bytes": 220,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 4,
+          "p99_ms": 4,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 10,
+          "completed": 10,
+          "dropped": 0,
+          "successes": 10,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 10
+          },
+          "response_bytes": 210,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 8,
+          "p99_ms": 8,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 2,
+          "operations": {
+            "api": {
+              "requests": 10,
+              "completed": 10,
+              "dropped": 0,
+              "successes": 10,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 10
+              },
+              "response_bytes": 29736,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 5,
+              "p99_ms": 5,
+              "service_p95_ms": 5,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 10,
+              "completed": 10,
+              "dropped": 0,
+              "successes": 10,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 10
+              },
+              "response_bytes": 220,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 4,
+              "p99_ms": 4,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 10,
+              "completed": 10,
+              "dropped": 0,
+              "successes": 10,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 10
+              },
+              "response_bytes": 210,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 8,
+              "p99_ms": 8,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": true,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.23,
+          "read_bytes": 0,
+          "write_bytes": 221184,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.30000000000000004,
+          "read_bytes": 0,
+          "write_bytes": 466944,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.23,
+            "read_bytes": 0,
+            "write_bytes": 221184,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.007,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.26,
+            "read_bytes": 0,
+            "write_bytes": 327680,
+            "processes": 2,
+            "offered": 13,
+            "completed": 12,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.30000000000000004,
+            "read_bytes": 0,
+            "write_bytes": 466944,
+            "processes": 2,
+            "offered": 30,
+            "completed": 30,
+            "dropped": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "spike",
+      "requests": 60,
+      "concurrency": 8,
+      "rate_limit_rps": 30.0,
+      "ramp_from_rps": null,
+      "offered_seconds": 2,
+      "seconds": 2.001,
+      "throughput_rps": 29.979,
+      "successful_rps": 29.979,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.752,
+      "operations": {
+        "api": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 20
+          },
+          "response_bytes": 51084,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 4,
+          "p99_ms": 5,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 20
+          },
+          "response_bytes": 440,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 4,
+          "p99_ms": 11,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 20
+          },
+          "response_bytes": 420,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 5,
+          "p99_ms": 5,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 2,
+          "operations": {
+            "api": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 20
+              },
+              "response_bytes": 51084,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 4,
+              "p99_ms": 5,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 20
+              },
+              "response_bytes": 440,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 4,
+              "p99_ms": 11,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 20
+              },
+              "response_bytes": 420,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 5,
+              "p99_ms": 5,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": true,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.30000000000000004,
+          "read_bytes": 0,
+          "write_bytes": 483328,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.47,
+          "read_bytes": 0,
+          "write_bytes": 974848,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.30000000000000004,
+            "read_bytes": 0,
+            "write_bytes": 483328,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.02,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.39,
+            "read_bytes": 0,
+            "write_bytes": 737280,
+            "processes": 2,
+            "offered": 31,
+            "completed": 30,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.47,
+            "read_bytes": 0,
+            "write_bytes": 974848,
+            "processes": 2,
+            "offered": 60,
+            "completed": 60,
+            "dropped": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "stress",
+      "requests": 60,
+      "concurrency": 8,
+      "rate_limit_rps": 30.0,
+      "ramp_from_rps": null,
+      "offered_seconds": 2,
+      "seconds": 2.001,
+      "throughput_rps": 29.983,
+      "successful_rps": 29.983,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.161,
+      "operations": {
+        "api": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 20
+          },
+          "response_bytes": 49139,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 6,
+          "p99_ms": 7,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 20
+          },
+          "response_bytes": 440,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 5,
+          "p99_ms": 8,
+          "service_p95_ms": 5,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 20,
+          "completed": 20,
+          "dropped": 0,
+          "successes": 20,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 20
+          },
+          "response_bytes": 420,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 6,
+          "p99_ms": 6,
+          "service_p95_ms": 5,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 2,
+          "operations": {
+            "api": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 20
+              },
+              "response_bytes": 49139,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 6,
+              "p99_ms": 7,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 20
+              },
+              "response_bytes": 440,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 5,
+              "p99_ms": 8,
+              "service_p95_ms": 5,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 20,
+              "completed": 20,
+              "dropped": 0,
+              "successes": 20,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 20
+              },
+              "response_bytes": 420,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 6,
+              "p99_ms": 6,
+              "service_p95_ms": 5,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": true,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.47,
+          "read_bytes": 0,
+          "write_bytes": 991232,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.63,
+          "read_bytes": 0,
+          "write_bytes": 1482752,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.47,
+            "read_bytes": 0,
+            "write_bytes": 991232,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.56,
+            "read_bytes": 0,
+            "write_bytes": 1236992,
+            "processes": 2,
+            "offered": 31,
+            "completed": 30,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.63,
+            "read_bytes": 0,
+            "write_bytes": 1482752,
+            "processes": 2,
+            "offered": 60,
+            "completed": 60,
+            "dropped": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "recovery",
+      "requests": 20,
+      "concurrency": 8,
+      "rate_limit_rps": 10.0,
+      "ramp_from_rps": null,
+      "offered_seconds": 2,
+      "seconds": 2.002,
+      "throughput_rps": 9.992,
+      "successful_rps": 9.992,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.191,
+      "operations": {
+        "api": {
+          "requests": 7,
+          "completed": 7,
+          "dropped": 0,
+          "successes": 7,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 7
+          },
+          "response_bytes": 16942,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 19,
+          "p99_ms": 19,
+          "service_p95_ms": 19,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 7,
+          "completed": 7,
+          "dropped": 0,
+          "successes": 7,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 7
+          },
+          "response_bytes": 154,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 4,
+          "p99_ms": 4,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 6,
+          "completed": 6,
+          "dropped": 0,
+          "successes": 6,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 6
+          },
+          "response_bytes": 126,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 8,
+          "p99_ms": 8,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 2,
+          "operations": {
+            "api": {
+              "requests": 7,
+              "completed": 7,
+              "dropped": 0,
+              "successes": 7,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 7
+              },
+              "response_bytes": 16942,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 19,
+              "p99_ms": 19,
+              "service_p95_ms": 19,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 7,
+              "completed": 7,
+              "dropped": 0,
+              "successes": 7,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 7
+              },
+              "response_bytes": 154,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 4,
+              "p99_ms": 4,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 6,
+              "completed": 6,
+              "dropped": 0,
+              "successes": 6,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 6
+              },
+              "response_bytes": 126,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 8,
+              "p99_ms": 8,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": false,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.64,
+          "read_bytes": 0,
+          "write_bytes": 1499136,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.71,
+          "read_bytes": 0,
+          "write_bytes": 1662976,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.64,
+            "read_bytes": 0,
+            "write_bytes": 1499136,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.67,
+            "read_bytes": 0,
+            "write_bytes": 1581056,
+            "processes": 2,
+            "offered": 11,
+            "completed": 10,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.71,
+            "read_bytes": 0,
+            "write_bytes": 1662976,
+            "processes": 2,
+            "offered": 20,
+            "completed": 20,
+            "dropped": 0
+          }
+        ]
+      }
+    },
+    {
+      "phase": "soak",
+      "requests": 40,
+      "concurrency": 8,
+      "rate_limit_rps": 10.0,
+      "ramp_from_rps": null,
+      "offered_seconds": 4,
+      "seconds": 4.002,
+      "throughput_rps": 9.996,
+      "successful_rps": 9.996,
+      "max_inflight": 1,
+      "max_scheduler_lag_ms": 0.25,
+      "operations": {
+        "api": {
+          "requests": 14,
+          "completed": 14,
+          "dropped": 0,
+          "successes": 14,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 14
+          },
+          "response_bytes": 35729,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 4,
+          "p99_ms": 4,
+          "service_p95_ms": 4,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "media": {
+          "requests": 13,
+          "completed": 13,
+          "dropped": 0,
+          "successes": 13,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "200": 13
+          },
+          "response_bytes": 286,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 7,
+          "p99_ms": 7,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        },
+        "isolation": {
+          "requests": 13,
+          "completed": 13,
+          "dropped": 0,
+          "successes": 13,
+          "errors": 0,
+          "integrity_errors": 0,
+          "scheduler_dropped": 0,
+          "capacity_dropped": 0,
+          "status_counts": {
+            "404": 13
+          },
+          "response_bytes": 273,
+          "error_fraction": 0.0,
+          "p50_ms": 4,
+          "p95_ms": 8,
+          "p99_ms": 8,
+          "service_p95_ms": 6,
+          "p95_limit_ms": 300,
+          "p99_limit_ms": 1000,
+          "min_samples": 3,
+          "passed": true
+        }
+      },
+      "windows": [
+        {
+          "start_seconds": 0,
+          "seconds": 4,
+          "operations": {
+            "api": {
+              "requests": 14,
+              "completed": 14,
+              "dropped": 0,
+              "successes": 14,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 14
+              },
+              "response_bytes": 35729,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 4,
+              "p99_ms": 4,
+              "service_p95_ms": 4,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "media": {
+              "requests": 13,
+              "completed": 13,
+              "dropped": 0,
+              "successes": 13,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "200": 13
+              },
+              "response_bytes": 286,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 7,
+              "p99_ms": 7,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            },
+            "isolation": {
+              "requests": 13,
+              "completed": 13,
+              "dropped": 0,
+              "successes": 13,
+              "errors": 0,
+              "integrity_errors": 0,
+              "scheduler_dropped": 0,
+              "capacity_dropped": 0,
+              "status_counts": {
+                "404": 13
+              },
+              "response_bytes": 273,
+              "error_fraction": 0.0,
+              "p50_ms": 4,
+              "p95_ms": 8,
+              "p99_ms": 8,
+              "service_p95_ms": 6,
+              "p95_limit_ms": 300,
+              "p99_limit_ms": 1000,
+              "min_samples": 1,
+              "passed": true
+            }
+          },
+          "enforced": false,
+          "passed": true
+        }
+      ],
+      "slo_passed": true,
+      "exploratory_overload": false,
+      "passed": true,
+      "php_resources": {
+        "peak_rss_bytes": 42438656,
+        "rss_growth_bytes": 0,
+        "peak_growth_bytes": 0,
+        "passed": true,
+        "initial": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.71,
+          "read_bytes": 0,
+          "write_bytes": 1679360,
+          "processes": 2
+        },
+        "final": {
+          "rss_bytes": 42438656,
+          "cpu_seconds": 0.81,
+          "read_bytes": 0,
+          "write_bytes": 2007040,
+          "processes": 2
+        },
+        "samples": [
+          {
+            "elapsed_seconds": 0.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.71,
+            "read_bytes": 0,
+            "write_bytes": 1679360,
+            "processes": 2,
+            "offered": 0,
+            "completed": 0,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 1.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.73,
+            "read_bytes": 0,
+            "write_bytes": 1761280,
+            "processes": 2,
+            "offered": 11,
+            "completed": 10,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 2.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.77,
+            "read_bytes": 0,
+            "write_bytes": 1843200,
+            "processes": 2,
+            "offered": 21,
+            "completed": 20,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 3.02,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.79,
+            "read_bytes": 0,
+            "write_bytes": 1933312,
+            "processes": 2,
+            "offered": 31,
+            "completed": 30,
+            "dropped": 0
+          },
+          {
+            "elapsed_seconds": 4.0,
+            "rss_bytes": 42438656,
+            "cpu_seconds": 0.81,
+            "read_bytes": 0,
+            "write_bytes": 2007040,
+            "processes": 2,
+            "offered": 40,
+            "completed": 40,
+            "dropped": 0
+          }
+        ]
+      }
+    }
+  ],
+  "corpus": {
+    "published_pages": 100,
+    "workspace_count": 2,
+    "per_workspace": 50,
+    "translations": 10,
+    "body_bytes": 238292,
+    "history_samples": 2,
+    "seed": 42,
+    "seconds": 0.47338231
+  },
+  "qualification_limits": {
+    "api": 300,
+    "media": 300,
+    "isolation": 300
+  },
+  "qualification_complete": true,
+  "target_corpus_and_duration": false,
+  "production_certified": false,
+  "telemetry_delta": {
+    "http_requests_total{route=\"health\",method=\"GET\",status=\"2xx\"}": 0,
+    "http_request_duration_seconds_count{route=\"health\"}": 0,
+    "http_request_duration_seconds_sum{route=\"health\"}": 0.0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.005\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.01\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.025\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.05\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.3\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"0.5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"1\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"2\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"5\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"10\"}": 0,
+    "http_request_duration_seconds_bucket{route=\"health\",le=\"+Inf\"}": 0,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"2xx\"}": 81,
+    "http_request_duration_seconds_count{route=\"api\"}": 163,
+    "http_request_duration_seconds_sum{route=\"api\"}": 0.28671,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.005\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.01\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.025\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.05\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.1\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.2\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.3\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"0.5\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"1\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"2\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"5\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"10\"}": 163,
+    "http_request_duration_seconds_bucket{route=\"api\",le=\"+Inf\"}": 163,
+    "operation_duration_seconds_count{operation=\"media_verify\",outcome=\"ok\"}": 78,
+    "operation_duration_seconds_sum{operation=\"media_verify\",outcome=\"ok\"}": 0.003985,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.005\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.01\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.025\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.05\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.1\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.2\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.3\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"0.5\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"1\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"2\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"5\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"10\"}": 78,
+    "operation_duration_seconds_bucket{operation=\"media_verify\",outcome=\"ok\",le=\"+Inf\"}": 78,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"2xx\"}": 78,
+    "http_request_duration_seconds_count{route=\"media\"}": 84,
+    "http_request_duration_seconds_sum{route=\"media\"}": 0.150568,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.005\"}": 83,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.01\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.025\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.05\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.1\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.2\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.3\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"0.5\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"1\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"2\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"5\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"10\"}": 84,
+    "http_request_duration_seconds_bucket{route=\"media\",le=\"+Inf\"}": 84,
+    "http_requests_total{route=\"api\",method=\"GET\",status=\"4xx\"}": 82,
+    "http_requests_total{route=\"media\",method=\"GET\",status=\"4xx\"}": 6
+  }
+}

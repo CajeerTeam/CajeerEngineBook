@@ -116,6 +116,8 @@ def native(g):
         if args[0] == '@php': args[0] = 'php'
         g.run(f'composer-{i+1:02d}-{Path(args[1]).stem}', args)
     g.run('performance-policy',['python3','tests/performance-policy.py'])
+    g.run('load-qualification-policy',['python3','tests/load-qualification-policy.py'])
+    g.run('load-qualification-file',['python3','tests/performance-benchmark.py','--qualify','--pages','100','--per-workspace','50','--concurrency','8','--offered-rps','8','--phase-seconds','8','--soak-seconds','20','--min-samples','3','--telemetry','--report-dir',str(g.report/'load-qualification-file')],300)
     g.run('performance-file',['python3','tests/performance-benchmark.py','--pages','100','--per-workspace','50','--requests','20','--concurrency','4','--full','--telemetry','--report-dir',str(g.report/'performance-file')],1200)
     g.run('monitoring-rules', ['docker','run','--rm','--entrypoint','/bin/promtool','-v',str(ROOT/'deploy/monitoring/alerts.yml')+':/rules/alerts.yml:ro','-v',str(ROOT/'tests/monitoring-rules.yml')+':/rules/tests.yml:ro','prom/prometheus:v3.5.0','test','rules','/rules/tests.yml'], 600)
     g.run('s3-https', ['bash','tests/recovery-s3.sh'], 1200)
@@ -167,6 +169,7 @@ def postgres(g):
         g.run('redis-http',['python3','tests/redis-http.py'])
         benchmark_env=dict(g.env,BOOK_BENCHMARK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_benchmark;connect_timeout=5',BOOK_BENCHMARK_PG_USER='book_app',BOOK_BENCHMARK_PG_PASSWORD='book_app_test_only',BOOK_BENCHMARK_REDIS_HOST='127.0.0.1',BOOK_BENCHMARK_REDIS_PORT=rport)
         g.run('performance-postgres',['python3','tests/performance-benchmark.py','--postgres','--redis','--full','--telemetry','--maintenance','--pages','1000','--per-workspace','500','--requests','60','--concurrency','8','--report-dir',str(g.report/'performance-postgres')],1800,benchmark_env)
+        g.run('load-qualification-postgres',['python3','tests/performance-benchmark.py','--qualify','--postgres','--redis','--full','--telemetry','--pages','1000','--per-workspace','500','--concurrency','8','--source-ips','16','--offered-rps','8','--phase-seconds','10','--soak-seconds','30','--min-samples','3','--background-maintenance','--maintenance-interval','600','--maintenance-timeout','600','--report-dir',str(g.report/'load-qualification-postgres')],900,benchmark_env)
     finally:
         for container in (pg,redis):
             # Preserve service diagnostics before cleanup if a test failed.

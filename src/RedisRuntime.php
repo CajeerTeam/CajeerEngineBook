@@ -158,7 +158,24 @@ LUA;
         $result=[];foreach(['memory'=>['used_memory','maxmemory'],'stats'=>['evicted_keys','rejected_connections'],'clients'=>['connected_clients']] as $section=>$keys){
             $raw=$this->command('INFO',$section);if(!is_string($raw))throw new \RuntimeException('Redis INFO unavailable.');
             foreach($keys as $k){if(!preg_match('/^'.preg_quote($k,'/').':([0-9]+)\r?$/m',$raw,$m))throw new \RuntimeException('Redis INFO field missing.');$result[$k]=(int)$m[1];}
-        }return $result;
+        }
+        // INFO keyspace is bounded by configured Redis databases and exposes only counts,
+        // not key names, tenant identifiers or values. Useful for long-running soak tests.
+        $raw=$this->command('INFO','keyspace');if(!is_string($raw))throw new \RuntimeException('Redis keyspace INFO unavailable.');
+        return $result+self::keyspaceCounts($raw);
+    }
+    public static function keyspaceCounts(string $raw):array
+    {
+        if(strlen($raw)>1024*1024||!preg_match('/^# Keyspace\r?$/m',$raw))throw new \RuntimeException('Invalid Redis keyspace INFO.');
+        $keys=0;$expires=0;$seen=[];
+        foreach(preg_split('/\r?\n/',$raw) as $line){
+            if($line===''||str_starts_with($line,'#'))continue;
+            if(!preg_match('/\Adb([0-9]+):keys=([0-9]+),expires=([0-9]+),avg_ttl=[0-9]+(?:,[a-z_]+=[0-9]+)*\z/D',$line,$m)||isset($seen[$m[1]]))throw new \RuntimeException('Invalid Redis keyspace row.');
+            $k=filter_var($m[2],FILTER_VALIDATE_INT,['options'=>['min_range'=>0]]);$e=filter_var($m[3],FILTER_VALIDATE_INT,['options'=>['min_range'=>0]]);
+            if($k===false||$e===false||$e>$k||$k>PHP_INT_MAX-$keys||$e>PHP_INT_MAX-$expires)throw new \RuntimeException('Invalid Redis keyspace counts.');
+            $keys+=$k;$expires+=$e;$seen[$m[1]]=true;
+        }
+        return ['keys'=>$keys,'expiring_keys'=>$expires];
     }
     private function pruneConsumers(string $stream):void
     {

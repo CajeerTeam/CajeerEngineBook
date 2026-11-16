@@ -107,3 +107,20 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Book rejected a damaged or unavailable media blob"
+
+      # Public-read availability excludes ordinary 4xx (authorization/validation),
+      # but includes throttling and server errors. Client-side drops require the load runner.
+      - record: book:public_read_requests_per_second:rate5m
+        expr: sum by (route) (rate(book_http_requests_total{route=~"reader|search|api|media",method=~"GET|HEAD",status=~"2xx|3xx|429|5xx"}[5m]))
+      - record: book:public_read_unavailable_ratio:rate5m
+        expr: sum by (route) (rate(book_http_requests_total{route=~"reader|search|api|media",method=~"GET|HEAD",status=~"429|5xx"}[5m])) / clamp_min(book:public_read_requests_per_second:rate5m, 0.000001)
+      - alert: BookPublicReadAvailabilitySLO
+        expr: book:public_read_unavailable_ratio:rate5m > 0.001 and book:public_read_requests_per_second:rate5m >= 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Public read error budget exceeded: {{ $labels.route }}'}
+      - alert: BookPublicReadTailLatency
+        expr: histogram_quantile(0.99, sum by (route,le) (rate(book_http_request_duration_seconds_bucket{route=~"reader|search|api|media"}[5m]))) > 1 and book:public_read_requests_per_second:rate5m >= 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Public read p99 exceeds 1 second: {{ $labels.route }}'}

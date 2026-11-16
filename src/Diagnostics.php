@@ -47,7 +47,7 @@ final class Diagnostics
             foreach(['cache_hits','cache_misses','rate_denied','notifications','jobs_processed'] as $k)$this->metrics['redis_'.$k.'_total']=(int)($s['metrics'][$k]??0);
             $this->metrics['redis_stream_length']=$s['stream_length'];$this->metrics['redis_workers_recent']=$s['workers_recent'];
         });
-        if($redis)$this->probe('redis_resources',function()use($root){if(!$root)throw new \RuntimeException('Storage unavailable');$r=RedisRuntime::forRoot($root);if(!$r)throw new \RuntimeException('Redis unavailable');$s=$r->resources();foreach(['used_memory'=>'memory_used_bytes','maxmemory'=>'memory_limit_bytes','evicted_keys'=>'evicted_keys_total','rejected_connections'=>'rejected_connections_total','connected_clients'=>'connected_clients'] as $k=>$name)$this->metrics['redis_'.$name]=$s[$k];});
+        if($redis)$this->probe('redis_resources',function()use($root){if(!$root)throw new \RuntimeException('Storage unavailable');$r=RedisRuntime::forRoot($root);if(!$r)throw new \RuntimeException('Redis unavailable');$s=$r->resources();foreach(['used_memory'=>'memory_used_bytes','maxmemory'=>'memory_limit_bytes','evicted_keys'=>'evicted_keys_total','rejected_connections'=>'rejected_connections_total','connected_clients'=>'connected_clients','keys'=>'keys','expiring_keys'=>'expiring_keys'] as $k=>$name)$this->metrics['redis_'.$name]=$s[$k];});
         if(getenv('BOOK_MONITOR_TLS')==='1')$this->probe('tls',function(){
             $host=CustomDomains::primary();if(!$host)throw new \RuntimeException('Primary host missing');
             $ctx=stream_context_create(['ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'peer_name'=>$host,'SNI_enabled'=>true,'capture_peer_cert'=>true]]);

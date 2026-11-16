@@ -26,6 +26,7 @@ if($action==='ci-fixture'){
 if($action==='stats'){
     $pdo=PostgresContentStore::runtimeConnect();
     $out=['postgres'=>$pdo->query("SELECT blks_read,blks_hit,temp_bytes,xact_commit,xact_rollback,deadlocks FROM pg_stat_database WHERE datname=current_database()")->fetch(PDO::FETCH_ASSOC)];
+    $out['postgres']+= $pdo->query("SELECT count(*) AS connections,count(*) FILTER (WHERE wait_event_type='Lock') AS lock_waiters FROM pg_stat_activity WHERE datname=current_database()")->fetch(PDO::FETCH_ASSOC);
     if(CajeerBook\RedisRuntime::enabled()){$r=CajeerBook\RedisRuntime::forRoot($root);$out['redis']=['stats'=>$r->stats(),'resources'=>$r->resources()];}
     echo json_encode($out,JSON_THROW_ON_ERROR);exit;
 }

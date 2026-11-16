@@ -1,0 +1,32 @@
+name: Book 24h load qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qualification:
+    # Dedicated isolated Linux test host, never a production machine. Hosted runners
+    # cannot execute a 24h soak in one job. No pull-request execution on self-hosted.
+    runs-on: [self-hosted, linux, book-load]
+    timeout-minutes: 1800
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify preinstalled toolchain
+        run: |
+          php -v
+          composer --version
+          docker info
+          node --version
+          python3 --version
+      - name: Prepare dependencies
+        run: |
+          composer install --no-interaction --prefer-dist
+          sh bin/install-mermaid.sh
+      - name: Run full 24h qualification
+        run: sh tests/qualification-gate.sh "$RUNNER_TEMP/book-load-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: book-24h-qualification
+          path: ${{ runner.temp }}/book-load-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error

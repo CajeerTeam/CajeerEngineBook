@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.6.2 — Load & Stress Qualification
+
+Timed open-loop load with explicit admission drops, strict per-operation p95/p99/error SLOs, minute-window soak checks, exploratory ramp/spike/stress and mandatory recovery, real mixed Reader/API/search/Studio workloads, optional concurrent worker/backup/restore, SQL/Redis resource caps and comparable baseline checks. Redis diagnostics include aggregate keyspace counts; live SLO alerts cover public reads. Short disposable CI and a dedicated 24h PostgreSQL/Redis workflow are provided. Schema remains 3. See [Load qualification](docs/admin/load-qualification.md) and measured file-mode reports; 24h SQL/Redis qualification and production certification remain unverified until actually run.
 
 ## 0.6.1 — Distributed Reliability
 

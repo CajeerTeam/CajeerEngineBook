@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2 — Load & Stress Qualification
+
+- Real timed open-loop arrival scheduling, bounded in-flight work, counted capacity/scheduler drops, per-operation latency/error SLOs and minute-window soak checks. Stress safety and stress SLO are reported separately; strict recovery is required.
+- Full mixed Reader/search/Studio/API/media/privacy workload, actual post-load integrity checks, optional concurrent worker scans and portable backup/restore, and sampled PHP/PostgreSQL/Redis resource limits.
+- Redis keyspace counters, public-read availability and p99 alerts, CI smoke and isolated 24-hour PostgreSQL/Redis test workflow. Actual local file-mode reports preserve saturation findings. Schema remains 3; full SQL/Redis 24h qualification is not yet verified.
+
 ## 0.6.1 — Distributed Reliability
 
 - Optional Redis Sentinel majority discovery with separate credentials, TLS peer verification, primary role validation, monotonic reconnect backoff and no automatic replay of ambiguous Redis commands. SQL queue reconciliation and fail-closed rate limiting retained.
