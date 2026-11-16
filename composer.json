@@ -23,6 +23,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/pitr-policy.php",
+            "python3 tests/pitr-policy.py",
             "@php tests/security-lifecycle.php",
             "python3 tests/security-lifecycle-http.py",
             "@php tests/security-hardening.php --require-zip",

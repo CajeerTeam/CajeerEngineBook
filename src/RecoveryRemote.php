@@ -7,12 +7,12 @@ use CajeerEngine\Update\OperationFiles as Files;
 final class RecoveryRemote
 {
     private string $directory='';private string $s3='';private string $endpoint='';
-    public function __construct(string $root,string $spool,string $public){
+    public function __construct(string $root,string $spool,string $public,bool $readOnly=false){
         $dir=getenv('BOOK_BACKUP_REMOTE_DIR')?:'';$s3=getenv('BOOK_BACKUP_S3_URI')?:'';
         if($dir!==''&&$s3!=='')throw new \InvalidArgumentException('Select one backup remote.');
         if($dir!==''){
             $this->directory=DataDirectory::resolve($dir,$public);self::separate($root,$this->directory);self::separate($spool,$this->directory);
-            if(!is_dir($this->directory)||!is_writable($this->directory))throw new \RuntimeException('Remote backup directory unavailable.');
+            if(!is_dir($this->directory)||!is_readable($this->directory)||(!$readOnly&&!is_writable($this->directory)))throw new \RuntimeException('Remote backup directory unavailable.');
         }
         if($s3!==''){
             if(!preg_match('~\As3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](?:/[a-zA-Z0-9][a-zA-Z0-9_-]{0,63})*/?\z~D',$s3))throw new \InvalidArgumentException('Invalid S3 backup URI.');

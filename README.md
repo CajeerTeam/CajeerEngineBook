@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.7.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.7.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.7.2 — Disaster Recovery & PITR
+
+Optional PostgreSQL 16 physical backups and WAL archiving through pgBackRest, paired named restore points and authenticated encrypted application/media sidecars, independent repository readback, offline isolated recovery with exact replay LSN and timeline checks, SQL/content/audit comparison and session revocation. The Compose cycle records verified WAL/sidecar receipts and checks their age. Existing portable backups and schema 3 remain unchanged. See [Disaster recovery and PITR](docs/admin/disaster-recovery.md) for deployment, scheduling, source-loss drill, cutover and recovery limitations. Full physical PostgreSQL qualification must pass on the infrastructure before production use.
 
 ## 0.7.1 — Enterprise Security Lifecycle
 

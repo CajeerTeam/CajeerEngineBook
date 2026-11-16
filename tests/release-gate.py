@@ -160,6 +160,7 @@ def postgres(g):
             g.run(name,['php',f'tests/{name}.php'])
         g.run('postgres-reader',['php','tests/postgres-reader.php','--postgres'])
         g.run('security-lifecycle-postgres',['php','tests/security-lifecycle.php','--postgres'])
+        g.run('physical-pitr',['bash','tests/pitr-gate.sh'],1800)
         drill=dict(g.env,BOOK_BACKUP_DRILL_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_drill;connect_timeout=5',BOOK_BACKUP_DRILL_PG_USER='book_drill',BOOK_BACKUP_DRILL_PG_PASSWORD='book_drill_test_only')
         g.run('postgres-recovery',['php','tests/recovery.php','--postgres'],1200,drill)
         for name, args in [('domains',['php','tests/domains.php','--postgres']),('domains-http',['python3','tests/domains-http.py','--postgres','--full']),('oidc-http',['python3','tests/oidc-http.py','--postgres']),('multilingual',['php','tests/multilingual.php','--postgres']),('multilingual-http',['python3','tests/multilingual-http.py','--postgres']),('postgres-search',['php','tests/postgres-search.php']),('search-http',['python3','tests/search-http.py','--postgres']),('ci-http',['python3','tests/ci-http.py','--postgres'])]:

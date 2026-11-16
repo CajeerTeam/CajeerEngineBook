@@ -84,16 +84,16 @@ final class InstallationBackup
         }finally{foreach($locks as $h)fclose($h);}
     }
 
-    public static function create(string $root,string $target,string $public):void
+    public static function create(string $root,string $target,string $public,?callable $checkpoint=null):void
     {
         $root=DataDirectory::resolve($root,$public);$target=self::path($target,$public);self::separate($root,$target);
         if(!is_dir($root))throw new \InvalidArgumentException('Installation does not exist');
         $stage=self::stage($target);
         try{
             if(getenv('BOOK_PG_DSN'))(new IdentityStore($root))->operatorAudit('backup.request');
-            (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage){
+            (new IdentityStore($root))->installationSnapshot(function(array $identity)use($root,$stage,$checkpoint){
                 Workspaces::assertRegistryDirectories($root,$identity);PostgresContentStore::assertRegistry($root,$identity);
-                self::frozen($root,$identity,function()use($root,$stage,$identity){
+                self::frozen($root,$identity,function()use($root,$stage,$identity,$checkpoint){
                 Files::write($stage.'/identity.json',json_encode($identity,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n");$manifest=['format'=>1,'created'=>gmdate('c'),'files'=>['identity.json'=>self::entry($stage.'/identity.json')]];
                 $stores=['legacy.tar'=>[$root,Workspaces::legacy($identity)===null]];
                 foreach($identity['workspaces'] as $w)if(!$w['legacy'])$stores[$w['id'].'.tar']=[Workspaces::directory($root,$w),false];
@@ -107,6 +107,8 @@ final class InstallationBackup
                 $history=$root.'/audit-history';if(is_link($history))throw new \RuntimeException('Invalid audit history directory.');if(is_dir($history))foreach(new \DirectoryIterator($history) as $f){if($f->isDot())continue;$name=$f->getFilename();if(!$f->isFile()||$f->isLink()||!preg_match('/\Aaudit-[a-f0-9]{32}\.jsonl\z/D',$name))throw new \RuntimeException('Invalid audit history member.');$report=AuditSnapshot::verify($f->getPathname());if($name!=='audit-'.$report['installation'].'.jsonl')throw new \RuntimeException('Audit history namespace mismatch.');Files::copy($f->getPathname(),$stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);}
                 if(getenv('BOOK_PG_DSN')){$name='audit-'.PostgresContentStore::namespace().'.jsonl';AuditSnapshot::create($root,$stage.'/'.$name);$manifest['files'][$name]=self::entry($stage.'/'.$name);}
                 if(count($manifest['files'])>Workspaces::LIMIT+102)throw new \RuntimeException('Too many historical audit snapshots; move older snapshots to protected archive storage.');
+                // The optional physical restore point is taken before releasing either lock.
+                if($checkpoint!==null)$manifest['pitr']=$checkpoint();
                 Files::json($stage.'/manifest.json',$manifest);
                 });
             });

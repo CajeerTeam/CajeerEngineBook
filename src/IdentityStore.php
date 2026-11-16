@@ -490,6 +490,16 @@ final class IdentityStore
         if(!getenv('BOOK_PG_DSN'))return;
         $this->transaction(function(&$db)use($action){$this->identityBackend->audit($this->identityConnection,[AuditLog::event($action)]);});
     }
+    /** Only invoked on an isolated, verified physical restore before exposure. */
+    public function invalidateRecoveredAccess():void{
+        $this->transaction(function(&$db){
+            if($this->identityConnection===null)throw new \LogicException('Physical recovery requires PostgreSQL.');
+            foreach(['sessions','resets','invitations','oidc_flows','attempts'] as $key)$db[$key]=[];
+            foreach($db['users'] as &$u)if(isset($u['oidc']))$u['oidc']['logout_at']=max(time(),$u['oidc']['logout_at']??0);unset($u);
+            CustomDomains::resetRestored($db);
+            $this->identityBackend->audit($this->identityConnection,[AuditLog::event('backup.restored')]);
+        });
+    }
     private static function backupState(array $db):array{return ['schema'=>4,'users'=>$db['users'],'organizations'=>$db['organizations'],'workspaces'=>$db['workspaces'],'activity'=>$db['activity']??[]];}
     public function backup():array{return $this->transaction(fn($db)=>self::backupState($db));}
     /** Operator-only consistent installation snapshot. Lock order is identity -> content, as in HTTP. */

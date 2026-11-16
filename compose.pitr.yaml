@@ -1,0 +1,43 @@
+# Add after compose.postgres.yaml. PostgreSQL restart is required to enable WAL archiving.
+# The repository configuration and credentials are operator-managed, outside this checkout.
+services:
+  postgres:
+    image: cajeer-book-postgres-pitr:16
+    build:
+      context: .
+      dockerfile: deploy/pitr/Dockerfile
+    command: [postgres, -c, wal_level=replica, -c, archive_mode=on, -c, 'archive_command=pgbackrest --stanza=book archive-push %p', -c, archive_timeout=60]
+    volumes:
+      - ${BOOK_PITR_CONFIG_PATH:?Set private pgBackRest config}:/etc/pgbackrest/pgbackrest.conf:ro
+      - ${BOOK_PITR_REPOSITORY_PATH:?Set independent repository mount (or scratch for S3 config)}:/repo
+  pitr-sidecar:
+    build:
+      context: .
+      target: production
+    profiles: [pitr]
+    user: www-data
+    init: true
+    command: [php, bin/pitr.php, inspect]
+    healthcheck:
+      disable: true
+    environment:
+      BOOK_PG_DSN: 'pgsql:host=postgres;port=5432;dbname=book;connect_timeout=5'
+      BOOK_PG_USER: book
+      BOOK_PG_PASSWORD: ${BOOK_PG_PASSWORD:?Set application database password}
+      BOOK_PG_NAMESPACE: ${BOOK_PG_NAMESPACE:?Set installation namespace}
+      BOOK_PITR_PG_USER: ${BOOK_PITR_PG_USER:?Set dedicated PITR control role}
+      BOOK_PITR_PG_PASSWORD: ${BOOK_PITR_PG_PASSWORD:?Set PITR control role password}
+      BOOK_PITR_DIR: /var/lib/cajeerpitr
+      BOOK_BACKUP_KEY_FILE: /run/secrets/book-backup-key
+      BOOK_BACKUP_S3_URI: ${BOOK_PITR_S3_URI:-}
+      BOOK_BACKUP_S3_ENDPOINT: ${BOOK_BACKUP_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      - book-data:/var/lib/cajeerbook
+      - book-pitr:/var/lib/cajeerpitr
+      - ${BOOK_BACKUP_KEY_PATH:?Set private backup key file readable by uid 33}:/run/secrets/book-backup-key:ro
+volumes:
+  book-pitr:

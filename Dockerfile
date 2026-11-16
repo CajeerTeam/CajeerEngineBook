@@ -25,7 +25,7 @@ COPY src/ src/
 COPY templates/ templates/
 COPY --from=mermaid-assets /build/public/assets/mermaid/ public/assets/mermaid/
 RUN printf "upload_max_filesize=20M\npost_max_size=72M\nmax_file_uploads=200\nmemory_limit=256M\nmax_execution_time=120\ndisplay_errors=Off\nlog_errors=On\nexpose_php=Off\n" > /usr/local/etc/php/conf.d/book-media.ini
-RUN mkdir -p /var/lib/cajeerbook /var/lib/cajeerbackup && chmod 0700 /var/lib/cajeerbackup && chown www-data:www-data /var/lib/cajeerbook /var/lib/cajeerbackup \
+RUN mkdir -p /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr && chmod 0700 /var/lib/cajeerbackup /var/lib/cajeerpitr && chown www-data:www-data /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr \
  && a2enmod rewrite remoteip setenvif headers \
  && sed -i 's|/var/www/html|/opt/cajeerbook/public|g' /etc/apache2/sites-available/000-default.conf \
  && printf 'TraceEnable Off\nServerTokens Prod\nServerSignature Off\n<Directory /opt/cajeerbook/public>\nRequire all granted\nSetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1\nAllowOverride None\nFallbackResource /index.php\nOptions -Indexes -FollowSymLinks\nHeader always setifempty X-Content-Type-Options "nosniff"\n</Directory>\n' > /etc/apache2/conf-available/book.conf \

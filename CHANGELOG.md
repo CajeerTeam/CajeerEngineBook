@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2 — Disaster Recovery & PITR
+
+- PostgreSQL 16 pgBackRest physical full/differential/incremental backups, encrypted repository, WAL archiving, named restore-point recovery and actual archive-get verification.
+- Authenticated encrypted remote sidecars pair media, identity, documents and audit evidence with the WAL point under installation snapshot locks; retryable remote publication and private staging.
+- Isolated promoted-cluster validation (system identifier, namespace, binding, replay LSN, timeline), content/audit comparison, session invalidation and atomic publication of a recovered data directory. No SQL reimport.
+- Compose integration, cycle receipts and age health check, administrator runbook, policy tests and disposable source-loss PITR gate. Schema remains 3; physical qualification requires a successful PostgreSQL/pgBackRest run.
+
 ## 0.7.1 — Enterprise Security Lifecycle
 
 - Private file-based Git/automation/backup keyrings, bounded retained keys, active-key verification and offline credential rewrap across registered workspaces without changing durable jobs.
