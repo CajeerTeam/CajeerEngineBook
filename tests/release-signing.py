@@ -88,7 +88,7 @@ class Signing(unittest.TestCase):
     def test_wrong_key(self):
         self.assemble(); k=self.base/'other.pem'; p=self.base/'other.pub'; self.make_key(k,p); self.rejected(**{'public-key':p}); self.rejected('assemble',output=self.base/'other-output',**{'public-key':p})
     def test_wrong_version_repo_commit(self):
-        self.assemble(); self.rejected(version='1.0.0'); self.rejected(repository='Other/Book'); self.rejected(commit='a'*40)
+        self.assemble(); self.rejected(version='0.0.0' if self.version!='0.0.0' else '9.9.9'); self.rejected(repository='Other/Book'); self.rejected(commit='a'*40)
     def test_extra_artifact(self):
         self.assemble(); (self.out/'untrusted.zip').write_bytes(b'extra'); self.rejected()
     def test_missing_artifact(self):

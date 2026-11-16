@@ -32,7 +32,7 @@ final class AuthController
         if(!setcookie('__Host-book_oidc',$value,['expires'=>$expires,'path'=>'/','secure'=>true,'httponly'=>true,'samesite'=>'Lax']))throw new \RuntimeException('Cannot set OIDC cookie');
     }
     private function oidc(string $path,string $method,callable $page):void{
-        header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
+        header('Referrer-Policy: same-origin');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
         if($path==='/auth/oidc/backchannel-logout'){
             if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}
             try{$c=Oidc::config();if(!$c||($c['backchannel_logout']??false)!==true){http_response_code(404);return;}

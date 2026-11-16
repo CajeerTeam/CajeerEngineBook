@@ -9,6 +9,22 @@ final class MediaBackup
 {
     private const MAX_DB = BookStore::MAX_DB_BYTES;
     public function __construct(private readonly string $dir,private readonly BookStore $books,private readonly MediaStore $media) {}
+    /** Capture a consistent portable store in a private staging directory. Blobs are immutable;
+     * hard links pin their inode even after a concurrent delete. Cross-device backups copy instead. */
+    public function capture(string $target): void
+    {
+        if(file_exists($target)||is_link($target)||!mkdir($target,0700))throw new \RuntimeException('Cannot allocate backup capture');
+        $this->books->snapshot(function(array $db)use($target){
+            BookStore::checkSize($db);
+            Files::json($target.'/books.json',$db);
+            foreach($db['media']??[] as $id=>$item){
+                $source=$this->media->blob($id);$dest=$target.'/media/'.$id.'.blob';
+                if(is_link($source)||!is_file($source)||filesize($source)!==($item['size']??null))throw new \RuntimeException('Missing or damaged media: '.$id);
+                Files::dir(dirname($dest));
+                if(!@link($source,$dest))Files::copy($source,$dest);
+            }
+        });
+    }
     public function create(string $target): void
     {
         if(!str_ends_with($target,'.tar') || file_exists($target) || is_link($target)) throw new \InvalidArgumentException('Backup destination must be a new .tar file');

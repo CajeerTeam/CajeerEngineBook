@@ -71,15 +71,16 @@ final class ImportFiles
             foreach($seen as $path=>$dir){$parent=dirname((string)$path);while($parent!=='.'){if(isset($seen[$parent])&&!$seen[$parent])throw new \InvalidArgumentException('ZIP file/directory collision');$parent=dirname($parent);}}
         }catch(\Throwable $e){foreach($staged as $dest)@unlink($dest);$this->files=$before;$this->bytes=$beforeBytes;throw $e;}finally{$zip->close();}
     }
-    public static function uploads(array $uploads,string $mode):self{
+    public static function uploads(array $uploads,string $mode,?array $paths=null):self{
         $set=new self();
         if(!in_array($mode,['files','directory','zip'],true)||!isset($uploads['name'])||!is_array($uploads['name']))throw new \InvalidArgumentException('Select import files');
         if(count($uploads['name'])>self::MAX_FILES||($mode==='zip'&&count($uploads['name'])!==1))throw new \InvalidArgumentException('Invalid upload count');
+        if($paths!==null&&($mode!=='directory'||!array_is_list($paths)||!array_is_list($uploads['name'])||count($paths)!==count($uploads['name'])))throw new \InvalidArgumentException('Invalid directory upload paths');
         $root=null;
         foreach($uploads['name'] as $i=>$name){
-            $tmp=$uploads['tmp_name'][$i]??null;$path=$mode==='directory'?($uploads['full_path'][$i]??null):$name;
+            $tmp=$uploads['tmp_name'][$i]??null;$path=$mode==='directory'?($paths!==null?$paths[$i]:($uploads['full_path'][$i]??null)):$name;
             if(!is_string($name)||!is_string($path)||!is_string($tmp)||($uploads['error'][$i]??null)!==UPLOAD_ERR_OK||!is_uploaded_file($tmp))throw new \InvalidArgumentException('File upload failed or exceeded server limit');
-            if($mode==='directory'){self::path($path);$parts=explode('/',$path,2);if(count($parts)!==2)throw new \InvalidArgumentException('Directory upload must include its root folder');$root??=$parts[0];if($root!==$parts[0])throw new \InvalidArgumentException('Choose one directory');$path=$parts[1];}
+            if($mode==='directory'){self::path($path);if($paths!==null&&basename($path)!==$name)throw new \InvalidArgumentException('Directory upload filename mismatch');$parts=explode('/',$path,2);if(count($parts)!==2)throw new \InvalidArgumentException('Directory upload must include its root folder');$root??=$parts[0];if($root!==$parts[0])throw new \InvalidArgumentException('Choose one directory');$path=$parts[1];}
             if($mode==='zip')$set->zip($tmp);else $set->add($path,$tmp);
         }
         return $set;

@@ -12,7 +12,7 @@ WORKDIR /opt/cajeerbook
 # Refresh OS security packages and retain only runtime libraries after extension compilation.
 RUN apt-get update && apt-get upgrade -y --with-new-pkgs \
  && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev \
-    libonig5 libpng16-16 libjpeg62-turbo libwebp7 libzip4 libpq5 unzip ca-certificates awscli \
+    libonig5 libpng16-16 libjpeg62-turbo libwebp7 libzip4 libpq5 ca-certificates awscli \
  && docker-php-ext-configure gd --with-jpeg --with-webp \
  && docker-php-ext-install mbstring gd zip pdo_pgsql pcntl \
  && pecl install redis-6.1.0 && docker-php-ext-enable redis \
@@ -20,9 +20,13 @@ RUN apt-get update && apt-get upgrade -y --with-new-pkgs \
     autoconf dpkg-dev g++ gcc libc6-dev make pkg-config re2c \
  && php -r 'foreach (["mbstring","gd","zip","pdo_pgsql","pcntl","redis"] as $ext) { if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); } }' \
  && rm -rf /var/lib/apt/lists/* /tmp/pear
+FROM runtime AS dependencies
 COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock ./
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+FROM runtime AS app
+COPY composer.json composer.lock ./
+COPY --from=dependencies /opt/cajeerbook/vendor/ vendor/
 COPY bootstrap.php VERSION LICENSE NOTICE TRADEMARKS.md ./
 COPY bin/ bin/
 COPY core/ core/
@@ -44,6 +48,6 @@ VOLUME ["/var/lib/cajeerbook"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD php -r '$c=stream_context_create(["http"=>["timeout"=>3]]);exit(@file_get_contents("http://127.0.0.1/health/ready",false,$c)===false?1:0);'
 EXPOSE 80
 
-FROM runtime AS test
+FROM app AS test
 COPY tests/ tests/
-FROM runtime AS production
+FROM app AS production

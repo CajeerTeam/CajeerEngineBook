@@ -43,7 +43,7 @@ build(){
   docker pull --platform linux/amd64 "$ref"
   docker tag "$ref" "$image:$candidate"
   docker save -o "$work/image.tar" "$image:$candidate"
-  docker run --rm -v "$work:/scan:ro" -v "$report:/report" aquasec/trivy:0.69.3 image --input /scan/image.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --format json --output "/report/$role-scan.json"
+  docker run --rm -v "$work:/scan:ro" -v "$report:/report" aquasec/trivy:0.76.2 image --input /scan/image.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --format json --output "/report/$role-scan.json"
   rm "$work/image.tar"
   printf '%s\n' "$ref" > "$work/$role.ref"
 }

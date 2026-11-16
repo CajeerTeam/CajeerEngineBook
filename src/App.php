@@ -31,7 +31,7 @@ final class App {
     private function runRequest(string $id):void{
         header('X-Request-ID: '.$id);header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
         try{$path=RequestSecurity::path($_SERVER['REQUEST_URI']??'/');}catch(\InvalidArgumentException){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
-        if(preg_match('~\A/(?:login|logout|recover|reset|auth|account|organizations|invite)(?:/|$)~D',$path))header('Referrer-Policy: no-referrer');
+        // Same-origin referrers preserve the Origin header on browser form POSTs; never disclose paths cross-origin.
         if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
@@ -535,7 +535,8 @@ final class App {
             if($path==='/studio/import'){
                 try{$str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';$upload=$_FILES['files']??[];
                     if(!preg_match('/\A[1-9][0-9]{0,2}\z/D',$str('count'))||!is_array($upload['name']??null)||count($upload['name'])!==(int)$str('count'))throw new \InvalidArgumentException('Upload count mismatch; check server upload limits');
-                    $files=ImportFiles::uploads($upload,$str('mode'));$importer=new MarkdownImport($this->store,$this->media);$secret=MarkdownImport::previewSecret($this->installationDir,$csrf);
+                    $paths=$_POST['paths']??null;if($paths!==null&&!is_array($paths))throw new \InvalidArgumentException('Invalid directory upload paths');
+                    $files=ImportFiles::uploads($upload,$str('mode'),$paths);$importer=new MarkdownImport($this->store,$this->media);$secret=MarkdownImport::previewSecret($this->installationDir,$csrf);
                     $result=$str('action')==='preview'?$importer->preview($files->files(),$str('book'),$str('version'),$str('strategy'),$secret):$importer->apply($files->files(),$str('book'),$str('version'),$str('strategy'),$secret,$str('token'));
                     $this->json($result);
                 }catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$this->json(['error'=>$e->getMessage()]);}return;

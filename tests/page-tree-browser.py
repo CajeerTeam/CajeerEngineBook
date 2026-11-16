@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory() as work:
     password = 'tree-browser-password'
     password_hash = subprocess.check_output(['php', '-r', 'echo password_hash("tree-browser-password",PASSWORD_DEFAULT);'], text=True)
     env = dict(os.environ, BOOK_DATA_DIR=str(Path(work) / 'data'), BOOK_ADMIN_HASH=password_hash, BOOK_SECURE_COOKIE='0')
-    seed = r'''require "core/Update/OperationFiles.php";require "src/BookStore.php";$s=new CajeerBook\BookStore(getenv("BOOK_DATA_DIR"));$s->change(function(&$db){$p=$db["pages"]["handbook/1.0/welcome"]["draft"];$p["title"]="Child";$p["order"]=11;$db["pages"]["handbook/1.0/welcome/child"]=["draft"=>$p,"published"=>$p,"revision"=>1];});'''
+    seed = r'''require "bootstrap.php";$s=new CajeerBook\BookStore(getenv("BOOK_DATA_DIR"));$s->change(function(&$db){$p=$db["pages"]["handbook/1.0/welcome"]["draft"];$p["title"]="Child";$p["order"]=11;$db["pages"]["handbook/1.0/welcome/child"]=["draft"=>$p,"published"=>$p,"revision"=>1];});'''
     subprocess.run(['php', '-r', seed], cwd=ROOT, env=env, check=True)
     with open(Path(work) / 'server.log', 'w+') as log:
         server = subprocess.Popen(['php', '-S', f'127.0.0.1:{port}', '-t', 'public', 'public/router.php'], cwd=ROOT, env=env, stdout=log, stderr=log)

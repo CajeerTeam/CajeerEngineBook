@@ -2,6 +2,7 @@
   'use strict';
   const form = document.querySelector('[data-markdown-import]');
   if (!form) return;
+  const endpoint = form.getAttribute('action');
   const status = document.querySelector('[data-import-status]');
   const result = document.querySelector('[data-import-result]');
   const apply = form.querySelector('[data-import-apply]');
@@ -30,7 +31,7 @@
       const r = document.createElement('tr'); r.append(element('td', item.source), element('td', item.title));
       const target = element('td', '');
       if (committed && item.action !== 'skip') {
-        const a = element('a', item.target); a.href = form.action.replace(/\/import$/, '') + '?edit=' + encodeURIComponent(item.target); target.append(a);
+        const a = element('a', item.target); a.href = endpoint.replace(/\/import$/, '') + '?edit=' + encodeURIComponent(item.target); target.append(a);
       } else target.textContent = item.target;
       r.append(target, element('td', item.action)); body.append(r);
     }
@@ -49,7 +50,10 @@
     if (!input.files.length) return;
     if (input.files.length > 200) { status.textContent = 'Select at most 200 files.'; return; }
     const data = new FormData(form); data.delete('files[]');
-    for (const file of input.files) data.append('files[]', file, form.elements.mode.value === 'directory' ? file.webkitRelativePath : file.name);
+    for (const file of input.files) {
+      data.append('files[]', file, file.name);
+      if (form.elements.mode.value === 'directory') data.append('paths[]', file.webkitRelativePath);
+    }
     data.set('action', action); data.set('count', String(input.files.length));
     if (action === 'apply') data.set('token', token);
     busy = true; preview.disabled = true; apply.disabled = true;
@@ -58,7 +62,7 @@
     status.textContent = action === 'preview' ? 'Checking import files…' : 'Saving drafts…';
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 120000);
     try {
-      const response = await fetch(form.action, {method:'POST',body:data,credentials:'same-origin',headers:{'X-Book-Import':'1'},signal:controller.signal});
+      const response = await fetch(endpoint, {method:'POST',body:data,credentials:'same-origin',headers:{'X-Book-Import':'1'},signal:controller.signal});
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Import failed (HTTP ${response.status}). Sign in again if necessary.`);
       show(payload, action === 'apply');

@@ -132,7 +132,7 @@ class Repo:
         # Disable archiving so a drill cannot write a divergent timeline into the source repository.
         self.run('--pg1-path='+str(p), '--set='+m['backup'], '--type=name', '--target='+m['point'],
                  '--target-timeline='+str(m['timeline']), '--target-action=promote', '--archive-mode=off',
-                 '--no-delta', '--no-force', '--no-link-all', 'restore')
+                 '--no-delta', 'restore')
         # archive-get validates the local pg_control; the source may no longer exist.
         self.archive_check(m, 300, p)
         return {'status':'restored_files', 'pgdata':str(p), 'id':m['id'], 'point':m['point']}

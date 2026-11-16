@@ -18,7 +18,7 @@ def check(ok, msg):
 
 
 def main():
-    markup = subprocess.check_output(['php', '-r', 'require "src/Markdown.php"; require "src/StudioEditor.php"; echo CajeerBook\\StudioEditor::markup("");'], cwd=ROOT, text=True)
+    markup = subprocess.check_output(['php', '-r', 'require "bootstrap.php"; echo CajeerBook\\StudioEditor::markup("");'], cwd=ROOT, text=True)
     fields = ''.join(f'<input name="{key}" value="{val}">' for key, val in {'book': 'qa', 'version': '1.0', 'path': 'network', 'title': 'Network', 'section': 'QA', 'order': '10', 'csrf': 'fixture', 'revision': '0'}.items())
     with sync_playwright() as pw:
         opts = {'headless': True}
