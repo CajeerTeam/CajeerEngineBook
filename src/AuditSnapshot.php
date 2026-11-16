@@ -10,13 +10,26 @@ final class AuditSnapshot
 {
     public const MAX_BYTES=4*1024*1024*1024;
     private static function line($f,array $v):void{$s=json_encode($v,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE)."\n";if(fwrite($f,$s)!==strlen($s))throw new \RuntimeException('Audit snapshot write failed.');if(ftell($f)>self::MAX_BYTES)throw new \RuntimeException('Audit snapshot exceeds portable limit; archive old events first.');}
-    public static function create(string $root,string $target):array{
+    public static function create(string $root,string $target):array{return (self::capture($root,$target))();}
+    /** Pin the PostgreSQL MVCC snapshot immediately; stream and verify it after releasing live locks. */
+    public static function capture(string $root,string $target):\Closure{
+        [$pdo,$id]=AuditLog::connection($root);$pdo->beginTransaction();
+        try{
+            $pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+            $pdo->query('SELECT txid_current_snapshot()')->fetchColumn();
+        }catch(\Throwable $e){$pdo->rollBack();throw $e;}
+        return static function()use($root,$target,$pdo,$id):array{
+            try{return self::writeCaptured($root,$target,$pdo,$id);}
+            finally{if($pdo->inTransaction())$pdo->rollBack();}
+        };
+    }
+    private static function writeCaptured(string $root,string $target,PDO $pdo,string $id):array{
         $parent=DataDirectory::resolve(dirname($target),dirname(__DIR__).'/public');$name=basename($target);
         if(!is_dir($parent)||!preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,180}\.jsonl\z/D',$name)||$parent===$root||str_starts_with($parent,$root.'/'))throw new \InvalidArgumentException('Snapshot requires a private destination outside the live data directory.');
         $target=$parent.'/'.$name;if(file_exists($target)||is_link($target))throw new \InvalidArgumentException('Snapshot destination exists.');
-        [$pdo,$id]=AuditLog::connection($root);$tmp=$parent.'/.audit-snapshot-'.bin2hex(random_bytes(16));$f=null;$pdo->beginTransaction();
+        $tmp=$parent.'/.audit-snapshot-'.bin2hex(random_bytes(16));$f=null;
         try{
-            $pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');$heads=AuditLog::verify($pdo,$id);
+            $heads=AuditLog::verify($pdo,$id);
             $old=umask(0077);try{$f=fopen($tmp,'xb');}finally{umask($old);}if(!$f)throw new \RuntimeException('Cannot allocate snapshot.');
             self::line($f,['format'=>1,'kind'=>'audit-snapshot','installation'=>$id]);
             $q=$pdo->prepare('SELECT seq,payload,previous_hash,event_hash FROM cajeer_book.audit_event WHERE installation=? AND stream=? AND seq>? ORDER BY seq LIMIT 1000');

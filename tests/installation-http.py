@@ -44,7 +44,7 @@ def browser_reader(base,prefix):
         browser=p.chromium.launch(headless=True);ctx=browser.new_context();login(ctx.request,base,'password-viewer-123','viewer');page=ctx.new_page()
         try:
             response=page.goto(base+prefix+'/docs/guide/1.0/start');assert response.status==200
-            expect(page.locator('article table')).to_be_visible();expect(page.get_by_text('Stable tip',exact=True)).to_be_visible();d=page.locator('.book-diagram');expect(d.locator('.book-diagram-status')).to_have_text('Diagram ready.',timeout=25000);expect(d.frame_locator('iframe').locator('svg')).to_have_count(1)
+            expect(page.locator('article table')).to_be_visible();expect(page.locator('aside.book-callout[aria-label="Stable tip"]')).to_be_visible();d=page.locator('.book-diagram');expect(d.locator('.book-diagram-status')).to_have_text('Diagram ready.',timeout=25000);expect(d.frame_locator('iframe').locator('svg')).to_have_count(1)
             assert page.evaluate("document.querySelector('iframe').contentDocument === null")
             guest=browser.new_page();assert guest.goto(base+prefix+'/docs/guide/1.0/start').status==401
             check('Chromium authenticated private Reader renders approved GFM, callout and real Mermaid; guest denied')

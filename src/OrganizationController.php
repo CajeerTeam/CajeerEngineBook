@@ -17,7 +17,7 @@ final class OrganizationController
     private static function ip():string{$ip=$_SERVER['REMOTE_ADDR']??'';return is_string($ip)&&filter_var($ip,FILTER_VALIDATE_IP)?$ip:'unknown';}
     public function dispatch(string $path,string $method,callable $page):void
     {
-        header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');header('Referrer-Policy: no-referrer');
+        header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');header('Referrer-Policy: same-origin');
         $ctx=$this->auth->current();$session=$this->auth->token();
         if($path==='/organizations/join'){$this->join($method,$ctx,$session,$page);return;}
         if(!$ctx){http_response_code(401);$page('Sign in required','<h1>Sign in required</h1><p><a href="/login">Sign in</a> to manage organizations.</p>');return;}

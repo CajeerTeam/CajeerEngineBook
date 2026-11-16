@@ -7,7 +7,7 @@ export BOOK_SECURE_COOKIE=0
 export BOOK_ADMIN_HASH=$(php -r 'echo password_hash("tree-test-password",PASSWORD_DEFAULT);')
 # Seed realistic legacy entries without involving the Markdown parser: these HTTP
 # checks exercise the real App, router, template engine and transaction store.
-php -r 'require "core/Update/OperationFiles.php";require "src/BookStore.php"; $s=new CajeerBook\BookStore(getenv("BOOK_DATA_DIR"));$s->change(function(&$db){$p=$db["pages"]["handbook/1.0/welcome"]["published"];$p["title"]="Child";$p["order"]=11;$db["pages"]["handbook/1.0/welcome/child"]=["draft"=>$p,"published"=>$p,"revision"=>1];$p["title"]="Private";$db["pages"]["handbook/1.0/welcome/private"]=["draft"=>$p,"published"=>null,"revision"=>1];});'
+php -r 'require "bootstrap.php"; $s=new CajeerBook\BookStore(getenv("BOOK_DATA_DIR"));$s->change(function(&$db){$p=$db["pages"]["handbook/1.0/welcome"]["published"];$p["title"]="Child";$p["order"]=11;$db["pages"]["handbook/1.0/welcome/child"]=["draft"=>$p,"published"=>$p,"revision"=>1];$p["title"]="Private";$db["pages"]["handbook/1.0/welcome/private"]=["draft"=>$p,"published"=>null,"revision"=>1];});'
 port=${BOOK_TREE_TEST_PORT:-8106};base="http://127.0.0.1:$port"
 php -S "127.0.0.1:$port" -t public public/router.php >"$work/server.log" 2>&1 &
 pid=$!;trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT

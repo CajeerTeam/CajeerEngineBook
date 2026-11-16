@@ -1,7 +1,7 @@
 """Full-stack images/attachments E2E against the real CommonMark renderer and PHP storage."""
 import base64, json, os, re, socket, subprocess, tempfile, time
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 from auth_helpers import login
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,14 +42,14 @@ def exercise(pw, base):
     check('book-image:v1:' in source and 'book-attachment:v1' in source and '/media/'+iid in source and '/media/'+aid in source,'visual media serializes canonical Markdown')
     page.locator('[data-mode=visual]').click();page.get_by_role('textbox',name='Caption').wait_for();check(page.get_by_role('textbox',name='Caption').input_value()=='Caption <safe> & details','round trip preserves caption')
     page.locator('[data-mode=preview]').click();page.locator('[data-live-preview] figure.book-image-50.book-image-right').wait_for();check(page.locator('[data-live-preview] figcaption').inner_text()=='Caption <safe> & details','real server preview caption and layout')
-    page.locator('[data-editor-form] button[value=save]').click();page.wait_for_function("document.querySelector('[data-editor-form] input[name=revision]').value === '1'")
+    page.locator('[data-editor-form] button[value=save]').click();expect(page.locator('[data-editor-form] input[name=revision]')).to_have_value('1')
     check(public.get(base+'/media/'+iid).status==404 and public.get(base+'/media/'+aid).status==404,'draft media remains private')
-    page.locator('[data-editor-form] button[value=publish]').click();page.wait_for_function("document.querySelector('[data-editor-form] input[name=revision]').value === '2'")
+    page.locator('[data-editor-form] button[value=publish]').click();expect(page.locator('[data-editor-form] input[name=revision]')).to_have_value('2')
     check(public.get(base+'/media/'+iid).body()==PNG,'published image exact bytes')
     downloaded=public.get(base+'/media/'+aid+'?download=1');check(downloaded.status==200 and downloaded.body()==b'Attachment content\n' and 'attachment;' in downloaded.headers['content-disposition'],'published attachment download')
     page.goto(base+'/docs/qa/1.0/images');page.locator('[data-image-zoom]').click();viewer=page.locator('.book-image-dialog');viewer.wait_for();check(viewer.locator('img').get_attribute('src')=='/media/'+iid,'Reader full-size viewer uses public URL');page.keyboard.press('Escape');viewer.wait_for(state='detached')
     page.goto(base+'/studio?edit=qa%2F1.0%2Fimages');page.get_by_role('textbox',name='Caption').wait_for();page.get_by_role('textbox',name='Caption').fill('Revised private caption')
-    page.locator('[data-editor-form] button[value=save]').click();page.wait_for_function("Number(document.querySelector('[data-editor-form] input[name=revision]').value) >= 3")
+    page.locator('[data-editor-form] button[value=save]').click();expect(page.locator('[data-editor-form] input[name=revision]')).to_have_value(re.compile(r'^(?:[3-9]|[1-9][0-9]+)$'))
     check('Revised private caption' not in public.get(base+'/docs/qa/1.0/images').text(),'draft edits leave public figure unchanged')
     page.locator('[data-insert-media=attachment]').click();dialog=page.locator('[data-book-media-picker]');dialog.locator('input[type=file]').set_input_files({'name':'new.txt','mimeType':'text/plain','buffer':b'New uploaded attachment\n'});dialog.get_by_role('button',name='Upload and insert').click();dialog.wait_for(state='detached');check(page.get_by_role('textbox',name='Attachment label').count()==2,'direct upload and insert in editor')
     check(not errors,'no JavaScript errors');browser.close();api.dispose();public.dispose()

@@ -28,7 +28,9 @@ def main():
                 try:
                     assert page.goto(base+'/studio/import').status==200
                     form=page.locator('[data-markdown-import]');form.locator('[name=book]').fill('browser');form.locator('[name=mode]').select_option('directory');form.locator('[data-import-input=directory] input').set_input_files(str(docs))
-                    form.get_by_role('button',name='Preview import').click();expect(page.get_by_role('heading',name='Import plan')).to_be_visible(timeout=15000);expect(page.locator('[data-import-result]')).to_contain_text('browser/1.0/sub/next');expect(form.locator('[data-import-apply]')).to_be_enabled()
+                    with page.expect_response(lambda r:r.url==base+'/studio/import' and r.request.method=='POST') as response:
+                        form.get_by_role('button',name='Preview import').click()
+                    assert response.value.ok,response.value.text();expect(page.get_by_role('heading',name='Import plan')).to_be_visible(timeout=15000);expect(page.locator('[data-import-result]')).to_contain_text('browser/1.0/sub/next');expect(form.locator('[data-import-apply]')).to_be_enabled()
                     # Change an option: previous confirmation cannot be reused.
                     form.locator('[name=version]').fill('2.0');expect(form.locator('[data-import-apply]')).to_be_disabled();expect(page.locator('[data-import-result]')).to_be_hidden()
                     form.get_by_role('button',name='Preview import').click();expect(page.get_by_role('heading',name='Import plan')).to_be_visible(timeout=15000);form.locator('[data-import-apply]').click();expect(page.get_by_role('heading',name='Import completed')).to_be_visible(timeout=15000)

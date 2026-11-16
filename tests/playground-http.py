@@ -69,7 +69,7 @@ def exercise(base,data,origin):
     post(owner,prefix+'/studio/books','visibility',slug='api',visibility='private',revision='1');guest.request(pg,404);outsider.request(pg,404);check('private book in public workspace blocks operation model');guest.request(sdk,404);outsider.request(sdk,404);check('SDK public download respects explicit deny and book visibility')
 
 def browser(base,pg,viewer,origin,body):
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, expect
     with sync_playwright() as p:
         args={'headless':True};exe=os.environ.get('BOOK_CHROMIUM');
         if exe:args['executable_path']=exe
@@ -80,7 +80,7 @@ def browser(base,pg,viewer,origin,body):
                 # Local environment may prohibit page navigation; load exact real HTML and production JS.
                 page.set_content(body.decode());page.add_script_tag(content=(ROOT/'public/assets/api-playground.js').read_text())
             else:page.goto(base+pg,wait_until='domcontentloaded')
-            page.locator('[data-pg-send]').wait_for();page.locator('[data-pg-mode]').select_option('browser');page.get_by_label('id (path, string, required)').fill('a b');page.get_by_label('limit (query, integer, required)').fill('2');page.get_by_label('X-Trace (header, string)').fill('trace');page.get_by_label('token (header)').fill('browser-ui-secret');page.get_by_label('apiKey (query)').fill('query-ui-secret');page.locator('[data-pg-payload]').fill('{"name":"Ada"}');page.locator('[data-pg-confirm]').check();page.locator('[data-pg-curl]').click();assert 'browser-ui-secret' not in page.locator('[data-pg-command]').inner_text() and 'query-ui-secret' not in page.locator('[data-pg-command]').inner_text();page.locator('[data-pg-send]').click();page.wait_for_function("document.querySelector('[data-pg-result]').textContent.includes('HTTP 201')",timeout=15000);assert json.loads(page.locator('[data-pg-result-body]').inner_text())['body']['name']=='Ada';page.locator('[data-pg-clear]').click();assert not page.locator('[data-pg-auth] input').first.input_value() and not page.locator('[data-pg-payload]').input_value();check('Chromium actual form, HTTPS API response, redacted cURL and credential clearing')
+            page.locator('[data-pg-send]').wait_for();page.locator('[data-pg-mode]').select_option('browser');page.get_by_label('id (path, string, required)').fill('a b');page.get_by_label('limit (query, integer, required)').fill('2');page.get_by_label('X-Trace (header, string)').fill('trace');page.get_by_label('token (header)').fill('browser-ui-secret');page.get_by_label('apiKey (query)').fill('query-ui-secret');page.locator('[data-pg-payload]').fill('{"name":"Ada"}');page.locator('[data-pg-confirm]').check();page.locator('[data-pg-curl]').click();assert 'browser-ui-secret' not in page.locator('[data-pg-command]').inner_text() and 'query-ui-secret' not in page.locator('[data-pg-command]').inner_text();page.locator('[data-pg-send]').click();expect(page.locator('[data-pg-result]')).to_contain_text('HTTP 201',timeout=15000);assert json.loads(page.locator('[data-pg-result-body]').inner_text())['body']['name']=='Ada';page.locator('[data-pg-clear]').click();assert not page.locator('[data-pg-auth] input').first.input_value() and not page.locator('[data-pg-payload]').input_value();check('Chromium actual form, HTTPS API response, redacted cURL and credential clearing')
         finally:ctx.close();b.close()
 
 def main():

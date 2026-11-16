@@ -158,22 +158,22 @@ def run(base, persisted=False):
     # This same gate runs against both PHP's server and the real Compose/Apache image.
     _, _, b = admin.request('/studio/ci', 'POST', {'csrf':csrf,'action':'issue','scope':'artifact/1','label':'release gate','days':'1','publish':'1'})
     credential = re.search(rb'cbci_[a-f0-9]{32}\.[a-f0-9]{64}', b).group(0).decode()
-    def ci(action, expected=200, **fields):
-        return public.request('/api/v1/ci', 'POST', json.dumps({'action':action,**fields}).encode(), {'Content-Type':'application/json','Authorization':'Bearer '+credential}, expected=expected)
+    def ci(action, status=200, **fields):
+        return public.request('/api/v1/ci', 'POST', json.dumps({'action':action,**fields}).encode(), {'Content-Type':'application/json','Authorization':'Bearer '+credential}, expected=status)
     _, _, b = admin.request('/studio', 'POST', {**form,'book':'artifact','version':'1','path':'index','title':'Release artifact','body':'# Release artifact\n\n[File]('+media+')','revision':0,'action':'save'}, headers)
     check(json.loads(b)['revision']==1, 'CI release source saved as draft')
     _, _, b = ci('state'); fingerprint=json.loads(b)['fingerprint']
     _, _, b = ci('build',request='release-gate',expected=fingerprint); build=json.loads(b)
-    ci('export',expected=409,id=build['id'],digest=build['digest'])
+    ci('export',status=409,id=build['id'],digest=build['digest'])
     ci('publish',id=build['id'],digest=build['digest'])
     _, h, b = ci('export',id=build['id'],digest=build['digest'])
     check(h['Content-Type']=='application/zip' and h['X-Book-Artifact-SHA256']==hashlib.sha256(b).hexdigest(), 'CI release archive HTTP integrity')
     with zipfile.ZipFile(io.BytesIO(b)) as archive:
         release=json.loads(archive.read('release.json'))
         check(release['digest']==build['digest'] and release['scope']=='artifact/1' and archive.read('media/'+item['id']+'.txt')==payload and archive.testzip() is None, 'CI publication to static artifact across real HTTP')
-    ci('export',expected=409,id=build['id'],digest='0'*64)
+    ci('export',status=409,id=build['id'],digest='0'*64)
     _, _, b = admin.request('/studio', 'POST', {**form,'book':'artifact','version':'1','path':'index','title':'Release artifact changed','body':'Changed publication','revision':2,'action':'publish'}, headers)
-    ci('export',expected=409,id=build['id'],digest=build['digest'])
+    ci('export',status=409,id=build['id'],digest=build['digest'])
     check(True, 'old bundle cannot export a changed publication')
     print('RELEASE HTTP GATE PASSED', flush=True)
 
