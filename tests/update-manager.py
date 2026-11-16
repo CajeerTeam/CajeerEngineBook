@@ -87,6 +87,38 @@ class FakeDocker:
             return out([{'Config':{'Labels':{'com.docker.compose.service':n,'com.docker.compose.project':'test'},'Image':s['image'],'Env':[],'Entrypoint':None,'Cmd':None},'State':{'Running':True},'Image':'id:'+s['image'],'Mounts':mounts}])
         raise AssertionError('Unexpected command '+str(args))
 
+class ComposeRendering(unittest.TestCase):
+    def test_dollar_rendering_preserves_exact_environment_and_command(self):
+        # Simulate both CLI rendering formats, including a literal double-dollar
+        # secret. The actual compose integration gate also exercises bcrypt.
+        image='example.invalid/book@sha256:'+'a'*64
+        secret='$2y$12$test$$literal'
+        command=['sh','-ec','echo "$EXAMPLE"; echo "$$"']
+        model={'services':{'book':{'image':image,'environment':{'BOOK_ADMIN_HASH':secret},'command':command}},'volumes':{}}
+        for escaped in (False,True):
+            with self.subTest(escaped=escaped), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); (root/'compose.yaml').touch(); (root/'env').touch()
+                def adapter(args,**kw):
+                    def render(value):
+                        raw=json.dumps(value).encode()
+                        return raw.replace(b'$',b'$$') if escaped else raw
+                    if 'book-config-probe' in args:
+                        source=Path(args[args.index('-f')+1]); probe=json.loads(source.read_text())
+                        self.assertEqual(probe['services']['probe']['environment']['BOOK_CONFIG_PROBE'],'$$book_config_probe')
+                        probe['services']['probe']['environment']['BOOK_CONFIG_PROBE']='$book_config_probe'
+                        return render(probe)
+                    if args[3:5]==['image','inspect']:
+                        return json.dumps([{'Id':'image-id','Config':{'Entrypoint':None,'Cmd':None}}]).encode()
+                    return render(model)
+                c=u.Compose(root,{'project':'test','env':str(root/'env'),'overlays':[]},adapter)
+                config=c.config({'images':{'book':image}})
+                self.assertEqual(config,model)
+                obj={'Mounts':[],'Config':{'Env':['BOOK_ADMIN_HASH='+secret],'Entrypoint':None,'Cmd':command}}
+                self.assertEqual(c.validate_container(obj,config,'book'),'image-id')
+                obj['Config']['Env']=['BOOK_ADMIN_HASH='+secret.replace('$','$$')]
+                with self.assertRaisesRegex(ValueError,'Container environment differs'):
+                    c.validate_container(obj,config,'book')
+
 class Update(unittest.TestCase):
     def setUp(self):
         self.f=signing.Signing('test_real_package_and_reproducibility'); self.f.setUp(); self.addCleanup(self.f.doCleanups)

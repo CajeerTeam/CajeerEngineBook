@@ -1,6 +1,8 @@
 """Run inside the monitoring network. Never print credentials in test logs."""
 import base64
 import json
+import os
+import re
 import pathlib
 import sys
 import time
@@ -28,7 +30,10 @@ def wait(label,fn,seconds=120):
 mode=sys.argv[1]
 if mode=='initial':
     token=pathlib.Path('/fixture-data/metrics-token').read_text().strip()
-    wait('real Apache bearer-authenticated scrape',lambda:b'book_build_info{version="0.5.3"} 1' in get('http://diagnostics/metrics',{'Authorization':'Bearer '+token}))
+    version=os.environ['BOOK_TEST_VERSION']
+    assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version), 'Expected release VERSION'
+    expected=f'book_build_info{{version="{version}"}} 1'.encode()
+    wait('real Apache bearer-authenticated scrape',lambda:expected in get('http://diagnostics/metrics',{'Authorization':'Bearer '+token}))
     for headers in ({},{'Authorization':'Bearer invalid'}):
         try:get('http://diagnostics/metrics',headers);raise RuntimeError('unauthorized scrape accepted')
         except urllib.error.HTTPError as e:assert e.code==404
