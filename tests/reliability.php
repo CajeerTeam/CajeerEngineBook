@@ -23,6 +23,19 @@ try{
     deny(fn()=>RedisTopology::discover($c,fn()=>['https://attacker.example',6379]),'invalid advertised endpoint refused');
     putenv('BOOK_REDIS_SENTINELS=s1:26379,s1:26379,s2:26379');deny(fn()=>RedisTopology::config(),'duplicate Sentinel nodes rejected');
     putenv('BOOK_REDIS_SENTINELS=s1:26379,s2:26379');deny(fn()=>RedisTopology::config(),'even or insufficient Sentinel quorum rejected');
+    // No socket is needed: check() is rejected before dialing while the retry deadline is active.
+    // This reproduces the hot polling loop from the real Sentinel failover gate.
+    $runtime=RedisRuntime::forBinding(str_repeat('c',32),str_repeat('d',32));
+    $deadline=new ReflectionProperty(RedisRuntime::class,'retryAt');$until=hrtime(true)/1e9+60;
+    $deadline->setValue($runtime,$until);
+    for($attempt=0;$attempt<8;$attempt++){
+        try{$runtime->check();throw new LogicException('Unexpected Redis success during cooldown');}catch(RuntimeException){}
+    }
+    ok($deadline->getValue($runtime)===$until,'frequent Redis retries cannot extend active cooldown');
+    // The invalid Sentinel config fails locally after the deadline, even without ext-redis.
+    $expired=hrtime(true)/1e9-1;$deadline->setValue($runtime,$expired);
+    deny(fn()=>$runtime->check(),'new Redis connection failure after cooldown is rejected');
+    ok($deadline->getValue($runtime)>hrtime(true)/1e9,'new Redis failure starts a fresh bounded cooldown');
     putenv('BOOK_REDIS_SENTINELS');
     $probe=new StorageProbe($root);$id=$probe->create();$probe->verify($id);$child=launch(['--hold',$id]);$line=fgets($child[1][1]);ok(trim((string)$line)==='LOCKED','independent process holds shared storage lock');$probe->lock($id,true);ok(true,'cross-process POSIX exclusion verified');finish($child);$child=null;$probe->remove($id);deny(fn()=>$probe->verify($id),'removed storage probe cannot be reused');
     putenv('BOOK_AUTOMATION_KEY='.str_repeat('ab',32));putenv('BOOK_WEBHOOK_ORIGINS=https://receiver.example.org');

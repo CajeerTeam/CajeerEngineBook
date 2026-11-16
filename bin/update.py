@@ -272,8 +272,15 @@ class Compose:
         for key,value in service.get('environment',{}).items():
             require(value is not None and env.get(key)==str(value),'Container environment differs: '+n+' '+key)
         image=json.loads(self.dc('image','inspect',service['image']))[0]
-        require((obj['Config']['Entrypoint'] or [])==(service.get('entrypoint',image['Config']['Entrypoint']) or []),'Container entrypoint differs: '+n)
-        require((obj['Config']['Cmd'] or [])==(service.get('command',image['Config']['Cmd']) or []),'Container command differs: '+n)
+        # Compose JSON explicitly emits null for an inherited CMD/ENTRYPOINT.
+        # An explicit non-empty entrypoint suppresses the image's default CMD
+        # (Docker Engine merge semantics). Preserve explicit empty overrides;
+        # never accept an alternative executable or argument list.
+        entrypoint=service.get('entrypoint'); command=service.get('command')
+        expected_entrypoint=image['Config']['Entrypoint'] if entrypoint is None else entrypoint
+        expected_command=(None if entrypoint else image['Config']['Cmd']) if command is None else command
+        require((obj['Config']['Entrypoint'] or [])==(expected_entrypoint or []),'Container entrypoint differs: '+n)
+        require((obj['Config']['Cmd'] or [])==(expected_command or []),'Container command differs: '+n)
         return image['Id']
 
     def inventory(self, config):

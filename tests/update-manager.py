@@ -119,6 +119,35 @@ class ComposeRendering(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'Container environment differs'):
                     c.validate_container(obj,config,'book')
 
+    def test_compose_null_inherits_image_process_defaults(self):
+        image='example.invalid/book@sha256:'+'a'*64
+        defaults={'Entrypoint':['/entrypoint.sh'],'Cmd':['/usr/sbin/httpd','-DFOREGROUND']}
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'compose.yaml').touch(); (root/'env').touch()
+            def adapter(args,**kw):
+                self.assertEqual(args[3:5],['image','inspect'])
+                return json.dumps([{'Id':'image-id','Config':defaults}]).encode()
+            c=u.Compose(root,{'project':'test','env':str(root/'env'),'overlays':[]},adapter)
+            # Missing and explicit null fields both inherit; an explicit nonempty
+            # entrypoint without a command suppresses the image CMD.
+            cases=[({},defaults['Entrypoint'],defaults['Cmd']),
+                   ({'entrypoint':None,'command':None},defaults['Entrypoint'],defaults['Cmd']),
+                   ({'entrypoint':None,'command':['php','bin/worker.php','--loop']},defaults['Entrypoint'],['php','bin/worker.php','--loop']),
+                   ({'entrypoint':['/custom'],'command':None},['/custom'],None),
+                   ({'entrypoint':['/custom'],'command':[]},['/custom'],[]),
+                   ({'entrypoint':[],'command':None},[],defaults['Cmd'])]
+            for override,entrypoint,cmd in cases:
+                with self.subTest(override=override):
+                    config={'services':{'book':{'image':image,**override}},'volumes':{}}
+                    obj={'Mounts':[],'Config':{'Env':[],'Entrypoint':entrypoint,'Cmd':cmd}}
+                    self.assertEqual(c.validate_container(obj,config,'book'),'image-id')
+                    obj['Config']['Cmd']=['/unexpected-command']
+                    with self.assertRaisesRegex(ValueError,'Container command differs'):
+                        c.validate_container(obj,config,'book')
+                    obj['Config']['Cmd']=cmd; obj['Config']['Entrypoint']=['/unexpected-entrypoint']
+                    with self.assertRaisesRegex(ValueError,'Container entrypoint differs'):
+                        c.validate_container(obj,config,'book')
+
 class Update(unittest.TestCase):
     def setUp(self):
         self.f=signing.Signing('test_real_package_and_reproducibility'); self.f.setUp(); self.addCleanup(self.f.doCleanups)
