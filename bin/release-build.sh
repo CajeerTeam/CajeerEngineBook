@@ -27,7 +27,7 @@ cleanup(){ docker rm -fv "$container" >/dev/null 2>&1 || :; rm -rf "$work"; }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 resolve(){ local tag=$1 d; d=$(docker buildx imagetools inspect "$tag" | awk '$1=="Digest:" && !seen++ {print $2}'); [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]]; printf '%s@%s' "$tag" "$d"; }
-node=$(resolve node:22-bookworm-slim); composer=$(resolve composer:2); phpbase=$(resolve php:8.4-apache-bookworm); pg=$(resolve postgres:16-bookworm)
+node=$(resolve node:22-bookworm-slim); composer=$(resolve composer:2); phpbase=$(resolve alpine:3.24); pg=$(resolve postgres:16-bookworm)
 export BUILDX_GIT_LABELS=1 BUILDX_GIT_INFO=1 BUILDX_METADATA_PROVENANCE=max
 build(){
   local role=$1 image=$2; shift 2

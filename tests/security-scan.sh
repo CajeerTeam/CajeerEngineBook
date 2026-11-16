@@ -13,7 +13,7 @@ trap 'exit 130' INT TERM
 composer audit --locked --format=json > "$report/composer-audit.json"
 semgrep scan --config security/semgrep.yml --metrics=off --error --strict --json --output "$report/semgrep.json" src core public
 docker build --pull --target production -t "$image" . > "$report/build.log" 2>&1
-docker run --rm --entrypoint sh "$image" -ec 'test ! -e /opt/cajeerbook/tests; test ! -e /usr/local/bin/composer; test -f /opt/cajeerbook/public/index.php; test -f /opt/cajeerbook/vendor/autoload.php'
+docker run --rm --entrypoint sh "$image" -ec 'test ! -e /opt/cajeerbook/tests; test ! -e /usr/local/bin/composer; test -f /opt/cajeerbook/public/index.php; test -f /opt/cajeerbook/vendor/autoload.php; test "$(id -u www-data):$(id -g www-data)" = 33:33; httpd -t; aws --version'
 docker save -o "$work/image.tar" "$image"
 # Preserve the full JSON report and surface exact blockers in the job log.
 rc=0
