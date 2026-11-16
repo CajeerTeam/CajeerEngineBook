@@ -196,7 +196,10 @@ def main():
                 preflight(g)
                 if suite=='native': native(g)
                 elif suite=='postgres': postgres(g)
-                else: g.require(suite,['bash', 'tests/domains-edge.sh' if suite=='domains' else f'tests/gate-{suite}.sh'],3600)
+                else:
+                    g.require(suite,['bash', 'tests/domains-edge.sh' if suite=='domains' else f'tests/gate-{suite}.sh'],3600)
+                    if suite=='docker':
+                        g.require('secure-update-compose',(['sudo','-n'] if os.geteuid()!=0 else [])+['python3','tests/update-compose-gate.py'],3600)
                 ok=not any(r['exit_code'] for r in g.rows)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 (dest/'gate-error.log').write_text(str(exc)+'\n');g.rows.append({'name':'gate-error','exit_code':1,'seconds':0,'log':'gate-error.log'})

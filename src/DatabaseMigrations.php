@@ -63,20 +63,36 @@ final class DatabaseMigrations
         if($ledger!==$history)throw new \RuntimeException('Incomplete schema migration registry.');
         return $ledger?$pdo->query('SELECT version,name,release,checksum,applied_at,mode,duration_ms FROM '.self::LEDGER.' ORDER BY version')->fetchAll(PDO::FETCH_ASSOC):[];
     }
+    /** An older runtime can verify a fully rolled-back future migration as an opaque
+     * balanced history pair. Unknown applied ledger entries are NEVER accepted. The
+     * newer migrator verifies the actual SQL/checksum before performing its down SQL. */
+    public static function validateHistory(iterable $rows,array $catalog,int $version): void
+    {
+        $head=0;$future=[];
+        foreach($rows as $row){
+            $n=(int)$row['version'];$m=$catalog[$n]??null;$op=$row['operation'];
+            if((string)$row['version']!==(string)$n||$n<1)throw new \RuntimeException('Invalid migration history version.');
+            if($m){
+                if($row['name']!==$m['name']||$row['release']!==$m['release']||!hash_equals($m['checksum'],$row['checksum']))throw new \RuntimeException('Migration history checksum mismatch.');
+            }else{
+                if($n<=count($catalog)||!is_string($row['name'])||!preg_match('/\A[a-z0-9][a-z0-9-]{0,127}\z/D',$row['name'])||!is_string($row['release'])||!preg_match('/\A[0-9]+\.[0-9]+\.[0-9]+\z/D',$row['release'])||!is_string($row['checksum'])||!preg_match('/\A[a-f0-9]{64}\z/D',$row['checksum']))throw new \RuntimeException('Unknown migration history metadata.');
+                $identity=[$row['name'],$row['release'],$row['checksum']];
+                if($op==='apply'){$future[$n]=$identity;}
+                elseif($op==='rollback'){if(($future[$n]??null)!==$identity)throw new \RuntimeException('Unknown rollback history checksum mismatch.');unset($future[$n]);}
+                else throw new \RuntimeException('Unknown migration history operation.');
+            }
+            if($op==='rollback'){
+                if(($m&&!$m['reversible'])||$n!==$head)throw new \RuntimeException('Invalid migration rollback history.');$head--;
+            }else{
+                if($n!==$head+1||($op==='adopt'&&$n!==1)||!in_array($op,['apply','adopt'],true))throw new \RuntimeException('Invalid migration apply history.');$head++;
+            }
+        }
+        if($future||$head!==$version)throw new \RuntimeException('Migration history does not match current ledger.');
+    }
     private static function verifyHistory(PDO $pdo,array $catalog,int $version): void
     {
         if(!self::exists($pdo,self::HISTORY)){if($version!==0)throw new \RuntimeException('Migration history missing.');return;}
-        $head=0;
-        foreach($pdo->query('SELECT version,name,release,checksum,operation FROM '.self::HISTORY.' ORDER BY id') as $row){
-            $n=(int)$row['version'];$m=$catalog[$n]??null;
-            if(!$m||$row['name']!==$m['name']||$row['release']!==$m['release']||!hash_equals($m['checksum'],$row['checksum']))throw new \RuntimeException('Migration history checksum mismatch.');
-            if($row['operation']==='rollback'){
-                if(!$m['reversible']||$n!==$head)throw new \RuntimeException('Invalid migration rollback history.');$head--;
-            }else{
-                if($n!==$head+1||($row['operation']==='adopt'&&$n!==1)||!in_array($row['operation'],['apply','adopt'],true))throw new \RuntimeException('Invalid migration apply history.');$head++;
-            }
-        }
-        if($head!==$version)throw new \RuntimeException('Migration history does not match current ledger.');
+        self::validateHistory($pdo->query('SELECT version,name,release,checksum,operation FROM '.self::HISTORY.' ORDER BY id'),$catalog,$version);
     }
     private static function lock(PDO $pdo,bool $shared): void
     {

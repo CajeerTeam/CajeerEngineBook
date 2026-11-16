@@ -16,3 +16,11 @@ deny(fn()=>M::validateLedger([$c[1],$c[2],$c[3],['version'=>4]],$c),'future sche
 deny(fn()=>M::validateLedger([$c[2],$c[1]],$c),'out of order denied');
 $up=file_get_contents(dirname(__DIR__).'/sql/'.$c[2]['files'][0]);$down=file_get_contents(dirname(__DIR__).'/sql/'.$c[2]['files'][1]);ok(str_contains($up,'(installation, outcome, at_epoch DESC, event_id DESC)')&&str_contains($down,'DROP INDEX cajeer_book.audit_event_outcome;'),'real reversible audit query index');
 foreach([['apply'],['rollback','0','--offline'],['rollback','1'],['apply','--force']] as $args){$cmd=[PHP_BINARY,dirname(__DIR__).'/bin/migrations.php',...$args];$p=proc_open($cmd,[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);fclose($pipes[0]);$out=stream_get_contents($pipes[1]).stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);ok(proc_close($p)!==0&&str_contains($out,'Usage:'),'unsafe CLI rejected: '.implode(' ',$args));}
+$history=[];foreach($c as $m)$history[]=$m+['operation'=>'apply'];
+M::validateHistory($history,$c,3);ok(true,'known history verified');
+$future=['version'=>4,'name'=>'future-index','release'=>'0.8.2','checksum'=>str_repeat('c',64),'operation'=>'apply'];
+$down=array_replace($future,['operation'=>'rollback']);
+M::validateHistory([...$history,$future,$down],$c,3);ok(true,'completed future rollback verified without accepting unknown applied schema');
+deny(fn()=>M::validateHistory([...$history,$future],$c,3),'unbalanced future apply denied');
+deny(fn()=>M::validateHistory([...$history,$future,array_replace($down,['checksum'=>str_repeat('d',64)])],$c,3),'future rollback checksum mismatch denied');
+deny(fn()=>M::validateHistory([...$history,$down],$c,3),'future rollback without apply denied');

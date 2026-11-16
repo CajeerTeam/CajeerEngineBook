@@ -9,8 +9,8 @@ try{
     $cmd=$argv[1]??'';
     $read=in_array($cmd,['status','plan','preflight','verify'],true)&&$argc===2;
     $apply=$cmd==='apply'&&$argc===3&&$argv[2]==='--offline';
-    $rollback=$cmd==='rollback'&&$argc===4&&in_array($argv[2],['1','2'],true)&&$argv[3]==='--offline';
-    if(!$read&&!$apply&&!$rollback)throw new InvalidArgumentException('Usage: php bin/migrations.php status | plan | preflight | verify | apply --offline | rollback 1|2 --offline');
+    $rollback=$cmd==='rollback'&&$argc===4&&preg_match('/\A[1-9][0-9]{0,8}\z/D',$argv[2])===1&&(int)$argv[2]<DatabaseMigrations::VERSION&&$argv[3]==='--offline';
+    if(!$read&&!$apply&&!$rollback)throw new InvalidArgumentException('Usage: php bin/migrations.php status | plan | preflight | verify | apply --offline | rollback TARGET --offline');
     $user=getenv('BOOK_MIGRATION_PG_USER');$password=getenv('BOOK_MIGRATION_PG_PASSWORD');
     if(($user===false)!==($password===false)||$user==='')throw new InvalidArgumentException('Set both BOOK_MIGRATION_PG_USER and BOOK_MIGRATION_PG_PASSWORD, or neither.');
     $pdo=PostgresContentStore::connect($user===false?null:$user,$password===false?null:$password);

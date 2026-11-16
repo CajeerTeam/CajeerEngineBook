@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 — Secure Update Manager
+
+- Verified GitHub HTTPS asset downloads, pinned Ed25519 trust and Cosign verification; bounded ZIP extraction and immutable staged deployment trees.
+- Local Docker Compose enrollment, image/volume inventory, high-water anti-downgrade state, durable transaction journal and exclusive lock.
+- Offline backup and portable restore drill, native SQL dump, migration preflight/apply, candidate checks, service-count preservation and controlled rollback/recovery.
+- Rollback-aware migration history validation and dynamic rollback target; no SQL schema change (version 3).
+- Real signed-release and HTTPS tests, simulated fault-injection tests, and a separate real Docker/PostgreSQL/HTTP integration gate.
+
+
 ## 0.8.0 — Signed Release Pipeline
 
 - Build and qualify immutable application and PostgreSQL/PITR OCI candidates after every mandatory enterprise/security gate passes; base images resolved by digest, actual SPDX SBOM and BuildKit provenance exported.
