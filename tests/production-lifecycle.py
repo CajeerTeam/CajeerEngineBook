@@ -80,6 +80,10 @@ def archive(root, commit, dest):
         with tarfile.open(tar) as t:
             for m in t.getmembers(): require(m.isfile() or m.isdir(), 'Unexpected Git archive member')
             t.extractall(dest,filter='data')
+        # data_filter intentionally ignores directory modes; under our private umask
+        # these become 0700. Docker COPY preserves them, preventing uid 33 from
+        # traversing historical PHP source. Git trees have no directory modes.
+        for directory, _, _ in os.walk(dest): Path(directory).chmod(0o755)
     finally: tar.unlink(missing_ok=True)
 
 
@@ -200,9 +204,9 @@ def main():
             config=root/'pgbackrest.conf';config.write_text('[global]\nrepo1-path=/repo\nrepo1-retention-full=2\nrepo1-cipher-type=aes-256-cbc\nrepo1-cipher-pass='+secrets.token_hex(32)+'\narchive-async=n\nlog-level-file=off\nlog-level-console=warn\n[book]\npg1-path=/var/lib/postgresql/data\npg1-user=book_admin\n');config.chmod(0o644)
             backupkey=root/'backup-key';backupkey.write_text(secrets.token_hex(32)+'\n');os.chown(backupkey,33,33);backupkey.chmod(0o400)
             docker('run','--rm','-v',str(repo)+':/repo','--entrypoint','sh',pg,'-ec','chown postgres:postgres /repo; chmod 700 /repo')
-            password=secrets.token_hex(24); adminpass=secrets.token_hex(24); control=secrets.token_hex(24); namespace=secrets.token_hex(16); env=root/'runtime.env'
+            password=secrets.token_hex(24); adminpass=secrets.token_hex(24); control=secrets.token_hex(24); namespace=secrets.token_hex(16); redispass=secrets.token_hex(32); env=root/'runtime.env'
             ph=call(['php','-r',f'echo password_hash("{http.PASSWORD}", PASSWORD_DEFAULT);'])
-            env.write_text(f"BOOK_ADMIN_HASH='{ph}'\nBOOK_SECURE_COOKIE=0\nBOOK_PG_PASSWORD={password}\nBOOK_PG_ADMIN_PASSWORD={adminpass}\nBOOK_PG_NAMESPACE={namespace}\nBOOK_REDIS_PASSWORD={secrets.token_hex(32)}\nBOOK_PITR_CONFIG_PATH={config}\nBOOK_PITR_REPOSITORY_PATH={repo}\nBOOK_PITR_PG_USER=book_pitr\nBOOK_PITR_PG_PASSWORD={control}\nBOOK_BACKUP_KEY_PATH={backupkey}\nBOOK_PITR_REMOTE_PATH={remote}\n");env.chmod(0o600)
+            env.write_text(f"BOOK_ADMIN_HASH='{ph}'\nBOOK_SECURE_COOKIE=0\nBOOK_PG_PASSWORD={password}\nBOOK_PG_ADMIN_PASSWORD={adminpass}\nBOOK_PG_NAMESPACE={namespace}\nBOOK_REDIS_PASSWORD={redispass}\nBOOK_PITR_CONFIG_PATH={config}\nBOOK_PITR_REPOSITORY_PATH={repo}\nBOOK_PITR_PG_USER=book_pitr\nBOOK_PITR_PG_PASSWORD={control}\nBOOK_BACKUP_KEY_PATH={backupkey}\nBOOK_PITR_REMOTE_PATH={remote}\n");env.chmod(0o600)
             def bundle(src,v,image):
                 tree=root/('bundle-src-'+v);tree.mkdir()
                 for f in ('compose.yaml','compose.postgres.yaml','compose.redis.yaml','compose.distributed.yaml','compose.pitr.yaml','src/DatabaseMigrations.php','bin/postgres-init.sh','deploy/book-nginx.conf','deploy/book-remoteip.conf'):
@@ -217,14 +221,31 @@ def main():
                     u.release.dump(ev/f'{r}-sbom.spdx.json',{'spdxVersion':'SPDX-2.3','packages':[{'name':'test fixture'}]});u.release.dump(ev/f'{r}-provenance.json',{'buildType':'test fixture','materials':[{'uri':'test fixture'}]});u.release.dump(ev/f'{r}-build-metadata.json',{'containerimage.digest':digests[r]});u.release.dump(ev/f'{r}-scan.json',{'Results':[{'Target':'test fixture'}]});(ev/f'{r}-smoke.log').write_text('TEST ONLY\n')
                 out=root/('bundle-'+v);u.release.assemble(argparse.Namespace(root=tree,output=out,version=v,commit=commit,repository='Test/Book',key=key,public_key=pub,book_digest=digests['book'],pitr_digest=digests['postgres-pitr'],evidence=ev));return out
             a0=bundle(oldsrc,PREVIOUS,old);a1=bundle(newsrc,version,new)
-            manager=u.Manager(root/'state',verify_oci=lambda m:[docker('pull',ref,timeout=900) for ref in m['images'].values()]);manager.pub.write_bytes(pub.read_bytes());manager.pub.chmod(0o400)
+            # These are disposable synthetic credentials, not an operator deployment.
+            # Retain bounded failure output, redacted, so an auto-removed one-off
+            # cannot hide the exact error behind the updater's safe generic message.
+            def diagnostic_command(args,timeout=180,stdout=None,stdin=None):
+                proc=subprocess.run(args,env=SAFE_ENV,stdin=stdin or subprocess.DEVNULL,stdout=stdout if stdout is not None else subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
+                if proc.returncode:
+                    detail=proc.stderr or b''
+                    if stdout is None: detail+=(proc.stdout or b'')
+                    for secret in (password,adminpass,control,redispass,ph,http.PASSWORD,backupkey.read_text().strip()): detail=detail.replace(secret.encode(),b'[redacted]')
+                    path=report/'failed-command.log';path.write_bytes(detail[-65536:]);path.chmod(0o600)
+                    if owner:os.chown(path,*owner)
+                    raise RuntimeError('Disposable qualification command failed; see failed-command.log')
+                return proc.stdout
+            manager=u.Manager(root/'state',command=diagnostic_command,verify_oci=lambda m:[docker('pull',ref,timeout=900) for ref in m['images'].values()]);manager.pub.write_bytes(pub.read_bytes());manager.pub.chmod(0o400)
             overlays=['postgres','redis','distributed','pitr']; cfg={'project':project,'repository':'Test/Book','overlays':overlays,'env':str(env),'env_sha':u.release.sha(env)}
             initial=manager.stage(cfg,PREVIOUS,a0);current,m=manager.load(cfg,initial)
             def start():
                 current.call('up','-d','--wait','--wait-timeout','120','postgres','redis',timeout=300)
                 current.call('exec','-T','-u','postgres','postgres','pgbackrest','--stanza=book','stanza-create',timeout=300)
                 current.one('php','bin/postgres-content.php','migrate','--offline')
-                current.call('up','-d','--no-build','--wait','--wait-timeout','180','--scale','book=2','--scale','worker=2','book','worker','proxy',timeout=420)
+                current.call('up','-d','--no-build','--wait','--wait-timeout','180','--scale','book=2','book','proxy',timeout=420)
+                # Historical worker explicitly disables its inherited HTTP healthcheck.
+                # Compose --wait may incorrectly require one. Check both real worker
+                # processes with the updater's bounded startup verifier instead.
+                current.start_service(current.config(m),'worker',2)
                 http.run(base)
                 return snapshot(base)
             expected=step('seed-historical-http',start); evidence['content_sha256']=expected;save()

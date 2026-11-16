@@ -365,15 +365,37 @@ class Compose:
             syncdir(d)
         syncdir(directory.parent)
 
+    def start_service(self, config, n, replicas):
+        # Historical workers explicitly disable the image's HTTP healthcheck.
+        # Compose --wait can reject these containers; never skip the check for
+        # a service with an enabled/inherited healthcheck.
+        disabled=(config['services'][n].get('healthcheck') or {}).get('disable') is True
+        require(not disabled or n not in {'book','proxy'},'Required application readiness check disabled: '+n)
+        args=['up','-d','--no-deps','--no-build','--pull','never']
+        if not disabled: args+=['--wait','--wait-timeout','180']
+        self.call(*args,'--scale',f'{n}={replicas}',n,timeout=300)
+        if disabled:
+            deadline=time.monotonic()+180; previous=None
+            while time.monotonic()<deadline:
+                ids=sorted(self.call('ps','-q',n).decode().split())
+                if len(ids)==replicas:
+                    states=[json.loads(self.dc('inspect',cid))[0] for cid in ids]
+                    if all(o['State']['Running'] and not o['State'].get('Restarting',False) for o in states):
+                        current=[(cid,o.get('RestartCount',0),o['State'].get('StartedAt')) for cid,o in zip(ids,states)]
+                        if current==previous: return
+                        previous=current
+                    else: previous=None
+                else: previous=None
+                time.sleep(2)
+            raise RuntimeError('Service did not stabilize: '+n)
+
     def activate(self, config, running):
         # Remove stopped old service containers, never volumes; retain DB and Redis unchanged.
         names=sorted(set(config['services'])-INFRA)
         if names: self.call('rm','-f',*names,timeout=180)
-        def up(n):
-            self.call('up','-d','--no-deps','--no-build','--pull','never','--wait','--wait-timeout','180','--scale',f'{n}={running[n]}',n,timeout=300)
-        up('book')
-        for n in sorted(set(running)-INFRA-{'book','proxy'}): up(n)
-        if 'proxy' in running: up('proxy')
+        self.start_service(config,'book',running['book'])
+        for n in sorted(set(running)-INFRA-{'book','proxy'}): self.start_service(config,n,running[n])
+        if 'proxy' in running: self.start_service(config,'proxy',running['proxy'])
         require(self.inventory(config)==running,'Replica inventory differs after activation')
 
 
@@ -384,7 +406,11 @@ def normalized(c,tree):
         if isinstance(v,str) and (v==str(tree) or v.startswith(str(tree)+'/')): return '@release'+v[len(str(tree)):]
         return v
     c=norm(c)
-    for n in ROLES & set(c['services']): c['services'][n]['image']='@book'
+    for n in ROLES & set(c['services']):
+        c['services'][n]['image']='@book'
+        # Signed application healthchecks evolve with application code (and are
+        # enforced by start_service). Infrastructure and all other topology stay strict.
+        c['services'][n].pop('healthcheck',None)
     return c
 
 

@@ -19,6 +19,8 @@ try{
     $r=$search('quasar');ok($keys($r)===['guide/1/a','guide/1/b']&&$r['total']===2&&count($r['pages'])===2&&$r['engine']==='postgresql','indexed title ranks above body; private/draft excluded from hits, counts and navigation');
     ok($search('quasar','viewer','private')['total']===3&&$search('quasar','none','private')['total']===0,'member access and private workspace ceiling');
     ok($keys($search('"red fox"'))===['guide/1/a']&&$keys($search('quas'))===['guide/1/a','guide/1/b'],'quoted phrase and technical prefix');
+    ok($keys($search('"quasar"'))===['guide/1/a','guide/1/b']&&$search('"quas"')['total']===0,'single quoted lexeme is exact without prefix or typo fallback');
+    ok($search('"quasar guide"')['total']===0,'multiword phrase cannot cross title and section boundary');
     ok($keys($search('quasarr'))===['guide/1/a']&&$search('quasarr')['match']==='similar','trigram typo fallback honors book privacy');
     ok($keys($search('policy'))===['guide/1/a']&&$keys($search('документации'))===['guide/1/a'],'English and Russian stemming');
     ok($search('hiddenurltoken')['total']===0&&$search('draftonlytoken','owner')['total']===0&&$search('secrettoken')['total']===0,'URL attributes, unpublished text and private book excluded');
