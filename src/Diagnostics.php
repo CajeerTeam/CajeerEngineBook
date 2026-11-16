@@ -18,7 +18,7 @@ final class Diagnostics
         $this->metrics=[];$this->checks=[];
         $this->probe('telemetry',function(){$this->metrics+=Observability::snapshot();});
         $root=null;$this->probe('storage',function()use(&$root){$root=PostgresContentStore::configuredRoot();if(!is_dir($root)||!is_readable($root)||!is_writable($root))throw new \RuntimeException('Storage unavailable');$free=disk_free_space($root);if($free===false)throw new \RuntimeException('Storage unavailable');$this->metrics['storage_free_bytes']=$free;});
-        $this->metrics+=Observability::httpDefaults();
+        $this->metrics+=Observability::httpDefaults();$this->metrics['media_integrity_failures_total']??=0;
         $this->probe('configuration',fn()=>ReleaseHealth::configuration());
         $this->probe('runtime',fn()=>ReleaseHealth::check(dirname(__DIR__)));
         $pg=(bool)getenv('BOOK_PG_DSN');$redis=RedisRuntime::enabled();$this->metrics['postgres_configured']=$pg?1:0;$this->metrics['redis_configured']=$redis?1:0;

@@ -1,0 +1,16 @@
+# Use instead of compose.redis.yaml. Redis/Sentinel cluster is operator-provisioned
+# on independent hosts; all endpoints must be reachable from book/worker.
+x-sentinel-env: &sentinel-env
+  BOOK_REDIS_HOST: ''
+  BOOK_REDIS_SENTINELS: ${BOOK_REDIS_SENTINELS:?Set three or five private Sentinel host:port endpoints}
+  BOOK_REDIS_SENTINEL_MASTER: ${BOOK_REDIS_SENTINEL_MASTER:-book}
+  BOOK_REDIS_PASSWORD: ${BOOK_REDIS_PASSWORD:?Set Redis primary/replica password}
+  BOOK_REDIS_USER: ${BOOK_REDIS_USER:-}
+  BOOK_REDIS_SENTINEL_PASSWORD: ${BOOK_REDIS_SENTINEL_PASSWORD:?Set Sentinel password}
+  BOOK_REDIS_SENTINEL_USER: ${BOOK_REDIS_SENTINEL_USER:-}
+  BOOK_REDIS_TLS: ${BOOK_REDIS_TLS:-0}
+services:
+  book:
+    environment: *sentinel-env
+  worker:
+    environment: *sentinel-env

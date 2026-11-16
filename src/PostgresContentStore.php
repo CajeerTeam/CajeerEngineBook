@@ -98,7 +98,9 @@ final class PostgresContentStore
     /** Runtime connections pin the database-wide schema; raw connect is operator/test only. */
     public static function runtimeConnect():PDO
     {
-        $pdo=self::connect();DatabaseMigrations::pin($pdo);return $pdo;
+        $pdo=self::connect();
+        if((int)$pdo->query("SELECT CASE WHEN NOT pg_is_in_recovery() AND current_setting('transaction_read_only')='off' THEN 1 ELSE 0 END")->fetchColumn()!==1)throw new \RuntimeException('PostgreSQL writable primary required.');
+        DatabaseMigrations::pin($pdo);return $pdo;
     }
     private function db():PDO{
         if($this->connection===null){

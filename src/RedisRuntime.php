@@ -2,12 +2,15 @@
 declare(strict_types=1);
 namespace CajeerBook;
 require_once __DIR__.'/Observability.php';
+require_once __DIR__.'/RedisTopology.php';
 
 /** Redis is an acceleration/notification layer, never an identity or job authority. */
 final class RedisRuntime
 {
     private ?\Redis $client=null;
     private float $retryAt=0;
+    private float $primaryUntil=0;
+    private ?array $primary=null;
     private bool $groupReady=false;
     private string $consumer;
     private int $lastPrune=0;
@@ -27,7 +30,7 @@ LUA;
         $this->prefix='book:044:'.hash('sha256',$namespace.':'.$binding).':';
         $this->consumer=bin2hex(random_bytes(12));
     }
-    public static function enabled():bool{return (getenv('BOOK_REDIS_HOST')?:'')!=='';}
+    public static function enabled():bool{return (getenv('BOOK_REDIS_HOST')?:'')!==''||(getenv('BOOK_REDIS_SENTINELS')?:'')!=='';}
     public static function forRoot(string $root):?self
     {
         if(!self::enabled())return null;
@@ -41,33 +44,47 @@ LUA;
         $key=$namespace.':'.$binding;
         return self::$instances[$key]??=new self($namespace,$binding);
     }
-    private function connection():\Redis
+    private static function clock():float{return hrtime(true)/1e9;}
+    private function dial(string $host,int $port,bool $sentinel=false):\Redis
     {
-        if($this->client!==null)return $this->client;
-        if(microtime(true)<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');
-        if(!class_exists(\Redis::class))throw new \RuntimeException('Redis runtime requires ext-redis.');
-        $host=getenv('BOOK_REDIS_HOST')?:'';$port=getenv('BOOK_REDIS_PORT')?:'6379';
-        if(!preg_match('/\A[a-zA-Z0-9.-]+\z/D',$host)||!ctype_digit($port)||(int)$port<1||(int)$port>65535)throw new \RuntimeException('Invalid Redis host or port.');
         $tls=getenv('BOOK_REDIS_TLS')==='1';$context=[];
         if($tls){$context=['stream'=>['verify_peer'=>true,'verify_peer_name'=>true,'peer_name'=>$host]];if($ca=getenv('BOOK_REDIS_CA'))$context['stream']['cafile']=$ca;}
         $r=new \Redis();
         try{
-            if(!@$r->connect(($tls?'tls://':'').$host,(int)$port,0.5,null,0,0.75,$context))throw new \RuntimeException('Redis connection failed.');
-            $password=getenv('BOOK_REDIS_PASSWORD');$user=getenv('BOOK_REDIS_USER')?:'';
+            if(!@$r->connect(($tls?'tls://':'').$host,$port,0.5,null,0,0.75,$context))throw new \RuntimeException('Redis connection failed.');
+            $prefix=$sentinel?'BOOK_REDIS_SENTINEL_':'BOOK_REDIS_';$password=getenv($prefix.'PASSWORD');$user=getenv($prefix.'USER')?:'';
             if($user!==''&&($password===false||$password===''))throw new \RuntimeException('Redis ACL user requires password.');
             if($password!==false&&$password!==''&&!$r->auth($user!==''?[$user,$password]:$password))throw new \RuntimeException('Redis authentication failed.');
-            $this->client=$r;return $r;
+            return $r;
         }catch(\Throwable $e){try{$r->close();}catch(\Throwable){}throw new \RuntimeException('Redis connection unavailable.',0,$e);}
+    }
+    private function connection():\Redis
+    {
+        if(self::clock()<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');
+        if(!class_exists(\Redis::class))throw new \RuntimeException('Redis runtime requires ext-redis.');
+        $topology=RedisTopology::config();
+        if($topology!==null&&self::clock()>=$this->primaryUntil){
+            $primary=RedisTopology::discover($topology,function($host,$port,$name){$r=$this->dial($host,$port,true);try{return $r->rawCommand('SENTINEL','get-master-addr-by-name',$name);}finally{$r->close();}});
+            if($primary!==$this->primary){if($this->client!==null)$this->client->close();$this->client=null;$this->groupReady=false;$this->primary=$primary;}
+            // Recheck role even on an existing worker connection after each discovery interval.
+            if($this->client!==null){$role=$this->client->rawCommand('ROLE');if(!is_array($role)||($role[0]??null)!=='master')throw new \RuntimeException('Redis primary changed role.');}
+            $this->primaryUntil=self::clock()+5;
+        }
+        if($this->client!==null)return $this->client;
+        [$host,$port]=$topology!==null?$this->primary:RedisTopology::endpoint(getenv('BOOK_REDIS_HOST')?:'',getenv('BOOK_REDIS_PORT')?:'6379');
+        $r=$this->dial($host,$port);
+        try{if($topology!==null){$role=$r->rawCommand('ROLE');if(!is_array($role)||($role[0]??null)!=='master')throw new \RuntimeException('Redis endpoint is not primary.');}$this->client=$r;return $r;}
+        catch(\Throwable $e){try{$r->close();}catch(\Throwable){}throw $e;}
     }
     private function failed():void
     {
         if($this->client!==null){try{$this->client->close();}catch(\Throwable){}$this->client=null;}
-        $this->retryAt=microtime(true)+2;$this->groupReady=false;
+        $this->retryAt=self::clock()+random_int(1000,2500)/1000;$this->groupReady=false;$this->primaryUntil=0;$this->primary=null;
     }
     private function invoke(callable $fn,?string $allowedError=null):mixed
     {
         $start=hrtime(true);$ok=false;
-        try{if(microtime(true)<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');$r=$this->connection();$r->clearLastError();$v=$fn($r);$error=$r->getLastError();
+        try{if(self::clock()<$this->retryAt)throw new \RuntimeException('Redis temporarily unavailable.');$r=$this->connection();$r->clearLastError();$v=$fn($r);$error=$r->getLastError();
             if($error&&($allowedError===null||!str_starts_with($error,$allowedError)))throw new \RuntimeException('Redis command failed.');$ok=true;return $v;
         }catch(\Throwable $e){if($allowedError!==null&&str_starts_with($e->getMessage(),$allowedError))return false;$this->failed();throw new \RuntimeException('Redis runtime unavailable.',0,$e);}finally{Observability::operation('redis_command',$start,$ok);}
     }
@@ -157,7 +174,7 @@ LUA;
     public function wait():array
     {
         try{
-            $stream=$this->prefix.'jobs';if(!$this->groupReady){$this->createGroup($stream);$this->groupReady=true;}
+            $this->connection();$stream=$this->prefix.'jobs';if(!$this->groupReady){$this->createGroup($stream);$this->groupReady=true;}
             $this->pruneConsumers($stream);$this->connection()->setOption(\Redis::OPT_READ_TIMEOUT,3.0);
             $v=$this->command('XREADGROUP','GROUP',self::GROUP,$this->consumer,'COUNT','128','BLOCK','2000','NOACK','STREAMS',$stream,'>');$scopes=[];
             if(is_array($v))foreach($v as $entry)foreach($entry[1]??[] as $message){

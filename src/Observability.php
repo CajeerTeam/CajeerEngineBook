@@ -55,10 +55,11 @@ final class Observability
     private static function extra(string $labels,string $key,string $v):string{return $labels===''?'{'.$key.'="'.$v.'"}':substr($labels,0,-1).','.$key.'="'.$v.'"}';}
     public static function operation(string $operation,float $started,bool $ok):void{
         if(!self::enabled()||getenv('BOOK_OBSERVABILITY_EXPORTER')==='1')return;
-        if(!in_array($operation,['sql_connect','sql_content_query','sql_search_query','sql_identity_query','sql_identity_lock','sql_content_lock','sql_identity_transaction','sql_content_transaction','redis_command','worker_tick','backup_run','dns_recheck'],true))return;
+        if(!in_array($operation,['sql_connect','sql_content_query','sql_search_query','sql_identity_query','sql_identity_lock','sql_content_lock','sql_identity_transaction','sql_content_transaction','redis_command','worker_tick','backup_run','dns_recheck','media_verify'],true))return;
         self::histogram('operation_duration_seconds','{operation="'.$operation.'",outcome="'.($ok?'ok':'error').'"}',(hrtime(true)-$started)/1e9);
     }
     public static function domainRecheck(bool $ok,int $failed):void{if($ok)self::add('domain_recheck_last_success_timestamp_seconds',time());self::add('domain_recheck_failures_total',max(0,$failed));}
+    public static function mediaIntegrityFailure():void{self::add('media_integrity_failures_total',1);}
     public static function workerScopeFailure():void{self::add('worker_scope_failures_total',1);}
     public static function worker(int $processed):void{self::add('worker_last_success_timestamp_seconds',time());self::add('worker_jobs_processed_total',max(0,$processed));}
     public static function startRequest(string $id):void{

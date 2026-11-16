@@ -23,6 +23,7 @@ services:
     profiles: [automation]
     user: www-data
     init: true
+    stop_grace_period: 16m
     command: [php, bin/worker.php, --loop]
     healthcheck:
       disable: true

@@ -20,14 +20,52 @@
     }
 }
 
-# Shared host authorization for static assets and plaintext redirects. Only the
-# private edge can reach the permission endpoints, never external requests.
+# Shared upstreams and header policy, with retries only for explicitly read-only handlers.
+(book_backend) {
+    dynamic a book 80 {
+        refresh 5s
+        resolvers 127.0.0.11
+        versions ipv4
+    }
+    lb_policy round_robin
+    fail_duration 5s
+    max_fails 1
+    header_up X-Book-Client-IP {remote_host}
+    header_up X-Book-Edge-Proto https
+    header_up X-Book-Edge-Secret {$BOOK_DOMAIN_EDGE_SECRET}
+    header_up -X-Forwarded-Host
+    header_up -X-Forwarded-For
+    header_up -X-Forwarded-Proto
+    transport http {
+        dial_timeout 2s
+        response_header_timeout 130s
+    }
+}
+(book_read_retry) {
+    lb_retries 2
+    lb_try_duration 5s
+    lb_try_interval 100ms
+    lb_retry_match {
+        method GET HEAD
+    }
+}
+# Private host authorization is a read-only request, including for static assets.
 (book_host_gate) {
     forward_auth book:80 {
         uri /.well-known/book-domain-host
+        dynamic a book 80 {
+            refresh 5s
+            resolvers 127.0.0.11
+            versions ipv4
+        }
+        import book_read_retry
         header_up -X-Book-Client-IP
         header_up -Cookie
         header_up -Authorization
+        transport http {
+            dial_timeout 2s
+            response_header_timeout 5s
+        }
     }
 }
 
@@ -53,39 +91,27 @@ https:// {
         handle @assets {
             import book_host_gate
             reverse_proxy {
-                dynamic a book 80 {
-                    refresh 5s
-                    resolvers 127.0.0.11
-                    versions ipv4
-                }
-                header_up X-Book-Client-IP {remote_host}
-                header_up X-Book-Edge-Proto https
-                header_up X-Book-Edge-Secret {$BOOK_DOMAIN_EDGE_SECRET}
-                header_up -X-Forwarded-Host
-                header_up -X-Forwarded-For
-                header_up -X-Forwarded-Proto
+                import book_backend
+                import book_read_retry
+            }
+        }
+        @safe_read {
+            method GET HEAD
+            path_regexp safe_read "^/($|(w/[a-f0-9]{32}/[a-f0-9]{32}/)?(docs/|media/|api/v1/pages(/|$)|api/v1/search$|search$|l/(en|ru)/docs/)|health/(live|ready)$|sitemap[.]xml$|robots[.]txt$)"
+        }
+        handle @safe_read {
+            reverse_proxy {
+                import book_backend
+                import book_read_retry
             }
         }
         handle {
             request_body {
                 max_size 72MB
             }
+            # No retry on any other route, including OIDC callback and writes.
             reverse_proxy {
-                dynamic a book 80 {
-                    refresh 5s
-                    resolvers 127.0.0.11
-                    versions ipv4
-                }
-                lb_policy round_robin
-                header_up X-Book-Client-IP {remote_host}
-                header_up X-Book-Edge-Proto https
-                header_up X-Book-Edge-Secret {$BOOK_DOMAIN_EDGE_SECRET}
-                header_up -X-Forwarded-Host
-                header_up -X-Forwarded-For
-                header_up -X-Forwarded-Proto
-                transport http {
-                    response_header_timeout 130s
-                }
+                import book_backend
             }
         }
     }

@@ -64,7 +64,7 @@ final class RecoveryManager
     private function postgresDrill(string $restored,string $dsn):array{
         if(!str_starts_with($dsn,'pgsql:')||$dsn===getenv('BOOK_PG_DSN'))throw new \InvalidArgumentException('Drill requires a separate PostgreSQL database.');
         $sourceNamespace=getenv('BOOK_PG_DSN')?PostgresContentStore::namespace():null;
-        $ns=bin2hex(random_bytes(16));$env=['BOOK_DATA_DIR'=>$restored,'BOOK_PG_DSN'=>$dsn,'BOOK_PG_NAMESPACE'=>$ns,'BOOK_PG_USER'=>getenv('BOOK_BACKUP_DRILL_PG_USER')?:'','BOOK_PG_PASSWORD'=>getenv('BOOK_BACKUP_DRILL_PG_PASSWORD')?:'','BOOK_REDIS_HOST'=>''];$old=[];
+        $ns=bin2hex(random_bytes(16));$env=['BOOK_DATA_DIR'=>$restored,'BOOK_PG_DSN'=>$dsn,'BOOK_PG_NAMESPACE'=>$ns,'BOOK_PG_USER'=>getenv('BOOK_BACKUP_DRILL_PG_USER')?:'','BOOK_PG_PASSWORD'=>getenv('BOOK_BACKUP_DRILL_PG_PASSWORD')?:'','BOOK_REDIS_HOST'=>'','BOOK_REDIS_SENTINELS'=>''];$old=[];
         foreach($env as $name=>$value){$old[$name]=getenv($name);putenv($name.'='.$value);}
         try{
             // DSNs can alias the same database (hostname, port, options or credentials).

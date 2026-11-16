@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 — Distributed Reliability
+
+- Optional Redis Sentinel majority discovery with separate credentials, TLS peer verification, primary role validation, monotonic reconnect backoff and no automatic replay of ambiguous Redis commands. SQL queue reconciliation and fail-closed rate limiting retained.
+- Worker SIGTERM/SIGINT drain, bounded rotating scope batches, jittered retry, database clock and connection fencing for claims/completions; expired leases cannot finish. Stable delivery IDs preserve at-least-once delivery semantics.
+- Nginx/Caddy bounded failover for explicitly read-only routes; no replay of Studio writes or OIDC callbacks. PostgreSQL runtime refuses read-only/standby sessions.
+- SHA-256 authenticated media streaming before headers, checked preview cache, exact-byte repair, cross-node volume/lock probes and external shared POSIX storage overlay; media integrity metrics and alert.
+- Real Nginx/PHP replica kill, corruption/repair and proxy replay tests, worker SIGTERM/SIGKILL tests, mandatory Redis Sentinel promotion/quorum-loss Docker gate, PostgreSQL worker crash/read-only tests and Caddy replica fault injection. Schema remains 3; full infrastructure qualification remains required.
+
 ## 0.6.0 — PostgreSQL Performance Stable
 
 - Indexed point reads for published REST pages and stable-ID redirects; compact Reader navigation and list projections, with draft/history/CI bodies excluded. SQL filters workspace and book visibility before fetching rows.

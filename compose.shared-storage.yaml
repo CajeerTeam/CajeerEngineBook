@@ -1,0 +1,6 @@
+# Optional: pre-provision the same protected POSIX backing store on EVERY app host.
+# Never use an empty local volume as a substitute for a missing shared mount.
+volumes:
+  book-data:
+    external: true
+    name: ${BOOK_SHARED_VOLUME:?Set an existing shared POSIX Docker volume}

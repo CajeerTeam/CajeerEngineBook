@@ -12,6 +12,7 @@ final class ReleaseHealth
         if(Oidc::required()&&$oidc===null)throw new \RuntimeException('Required OIDC provider is not configured.');
         if(($primary!==null||$oidc!==null)&&getenv('BOOK_SECURE_COOKIE')==='0')throw new \RuntimeException('HTTPS domains and OIDC require secure cookies.');
         if($primary!==null&&$oidc!==null&&($oidc['redirect_uri']!=='https://'.$primary.Oidc::CALLBACK))throw new \RuntimeException('OIDC callback must use the primary HTTPS domain.');
+        RedisTopology::config();
         if(RedisRuntime::enabled()&&!getenv('BOOK_PG_DSN'))throw new \RuntimeException('Redis requires PostgreSQL.');
     }
     public static function check(string $root): void

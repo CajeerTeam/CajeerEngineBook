@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.6.1 — Distributed Reliability
+
+Redis Sentinel majority discovery, bounded reconnect/backoff, graceful and fenced workers, safe read-only edge failover, verified media streaming and exact-byte repair are integrated into the existing runtime. PostgreSQL connections reject read-only servers; SQL remains the durable job authority. Optional external Sentinel and shared POSIX volume overlays and cross-node storage probes are provided. **No new SQL migration: schema 3 is required.** See [Distributed reliability](docs/admin/distributed-reliability.md) for upgrade, topology, failover and recovery. Real local worker crash/drain and Nginx/PHP replica tests passed; Redis Sentinel, PostgreSQL and Caddy Docker qualification remains an infrastructure gate.
 
 ## 0.6.0 — PostgreSQL Performance Stable
 

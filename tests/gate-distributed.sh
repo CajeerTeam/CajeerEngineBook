@@ -30,3 +30,22 @@ docker compose restart redis
 docker compose up -d --wait --wait-timeout 120 redis
 python3 tests/release-http.py --check-persisted
 
+
+# Kill one actual app replica and exercise the existing persistent page via Nginx.
+replica="$(docker compose ps -q book | head -1)"
+docker stop -t 1 "$replica"
+for n in $(seq 1 30); do curl -fsS --max-time 10 "$BOOK_TEST_URL/api/v1/pages/release/1.0/renamed" | grep -q 'Mixed release content'; done
+docker start "$replica"
+docker compose up -d --wait --wait-timeout 180 --scale book=2 book
+# Both replicas must see the same data and lock namespace.
+probe="$(docker compose exec -T --index 1 -u www-data book php bin/storage-probe.php create)"
+docker compose exec -T --index 2 -u www-data book php bin/storage-probe.php verify "$probe"
+lock_log="$(mktemp)"
+docker compose exec -T --index 1 -u www-data book php bin/storage-probe.php hold "$probe" 10 >"$lock_log" &
+lock_pid=$!
+for n in $(seq 1 50); do if grep -q LOCKED "$lock_log"; then break; fi; sleep 0.1; done
+grep -q LOCKED "$lock_log"
+docker compose exec -T --index 2 -u www-data book php bin/storage-probe.php busy "$probe"
+wait "$lock_pid"; rm -f "$lock_log"
+docker compose exec -T --index 2 -u www-data book php bin/storage-probe.php remove "$probe"
+bash tests/redis-sentinel-gate.sh

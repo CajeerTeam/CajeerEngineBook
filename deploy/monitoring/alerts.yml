@@ -101,3 +101,9 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: 'A previously checked domain has no valid DNS proof'}
+
+      - alert: BookMediaIntegrityFailure
+        expr: increase(book_media_integrity_failures_total[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Book rejected a damaged or unavailable media blob"

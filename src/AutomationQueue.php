@@ -132,12 +132,12 @@ final class AutomationQueue
         $candidate=null;foreach($a['jobs'] as $id=>$j)if($j['state']==='queued'&&$j['due']<=$now&&($candidate===null||$j['due']<$a['jobs'][$candidate]['due']))$candidate=$id;
         if($candidate===null)return null;$j=&$a['jobs'][$candidate];$j['state']='running';$j['attempts']++;$j['lease']=bin2hex(random_bytes(16));$j['lease_until']=$now+self::LEASE;$j['updated']=$now;return $j;
     }
-    public static function assertLease(array $db,array $job):array{
+    public static function assertLease(array $db,array $job,?int $now=null):array{
         $j=$db['automation']['jobs'][$job['id']]??null;$c=$db['automation']['config']??null;
-        if(!$j||$j['state']!=='running'||$j['lease']!==$job['lease']||!$c||$c['id']!==$job['config']||$c['actor']!==$job['actor'])throw new \DomainException('Automation job no longer authorized.');return $c;
+        if(!$j||$j['state']!=='running'||$j['lease']!==$job['lease']||$j['lease_until']<=($now??time())||!$c||$c['id']!==$job['config']||$c['actor']!==$job['actor'])throw new \DomainException('Automation job no longer authorized.');return $c;
     }
     public static function finish(array &$db,array $job,string $state,string $error='',bool $retry=false,int $now=0,string $commit=''):void{
-        if(!in_array($state,['succeeded','dead','cancelled'],true))throw new \InvalidArgumentException('Invalid terminal job state.');$now=$now?:time();$j=&$db['automation']['jobs'][$job['id']];if(!is_array($j)||$j['state']!=='running'||$j['lease']!==$job['lease'])throw new \DomainException('Automation lease lost.');
+        if(!in_array($state,['succeeded','dead','cancelled'],true))throw new \InvalidArgumentException('Invalid terminal job state.');$now=$now?:time();$j=&$db['automation']['jobs'][$job['id']];if(!is_array($j)||$j['state']!=='running'||$j['lease']!==$job['lease']||$j['lease_until']<=$now)throw new \DomainException('Automation lease lost or expired.');
         if($retry&&$j['attempts']<self::MAX_ATTEMPTS){self::terminal($j,'queued',$error);$j['due']=$now+min(3600,30*(2**($j['attempts']-1)));return;}
         self::terminal($j,$state,$error);$j['result_commit']=$commit;
         if($job['kind']==='sync'&&$state==='dead')self::enqueueEvent($db,'git.sync.failed');

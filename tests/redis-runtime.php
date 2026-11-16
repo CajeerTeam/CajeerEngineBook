@@ -7,8 +7,9 @@ function ok(bool $v,string $s):void{if(!$v)throw new RuntimeException($s);echo "
 function clean(string $p):void{if(!is_dir($p))return;foreach(new DirectoryIterator($p) as $f){if($f->isDot())continue;if($f->isDir()&&!$f->isLink())clean($f->getPathname());else unlink($f->getPathname());}rmdir($p);}
 if(($argv[1]??'')==='--wait'){echo json_encode(RedisRuntime::forRoot(getenv('BOOK_DATA_DIR'))->wait(),JSON_THROW_ON_ERROR)."\n";exit(0);}
 if(($argv[1]??'')==='--worker'){
-    $root=getenv('BOOK_DATA_DIR');$dir=$argv[2];$scope=$argv[3];$barrier=($argv[4]??'')==='barrier';
-    $sender=function(array $request)use($dir,$barrier){$id=$request['headers']['X-Cajeer-Delivery'];file_put_contents($dir.'/'.$id.'.start',"sent\n",FILE_APPEND|LOCK_EX);
+    $root=getenv('BOOK_DATA_DIR');$dir=$argv[2];$scope=$argv[3];$barrier=($argv[4]??'')==='barrier';$crash=($argv[4]??'')==='crash';
+    $sender=function(array $request)use($dir,$barrier,$crash){$id=$request['headers']['X-Cajeer-Delivery'];file_put_contents($dir.'/'.$id.'.start',"sent\n",FILE_APPEND|LOCK_EX);
+        if($crash){sleep(60);throw new RuntimeException('Crash fixture should be killed');}
         if($barrier){$deadline=microtime(true)+10;while(count(glob($dir.'/*.start'))<2&&microtime(true)<$deadline)usleep(25000);if(count(glob($dir.'/*.start'))<2)throw new RuntimeException('Parallel worker barrier timed out');}
         return ['status'=>204];};
     echo (new AutomationWorker($root,new IdentityStore($root),null,$sender))->tick([$scope])."\n";exit(0);
@@ -55,6 +56,16 @@ try{
     $s->change(fn(&$d)=>$d['automation']['jobs'][$later]['due']=time());$raw->del($prefix.'jobs');$env=getenv();$env['BOOK_REDIS_PORT']='1';$env['BOOK_REDIS_HOST']='127.0.0.1';
     ok(finish(launch(['--worker',$log,$scopes[0]],$env))==='1','SQL polling processes durable job with Redis stream deleted and connection unavailable');
     $j=array_values($s->read()['automation']['jobs']);ok(count(array_filter($j,fn($r)=>$r['state']!=='succeeded'))===0,'all jobs remain durably completed after Redis outage');
+    // Actually kill a worker after the external request begins; the SQL claim survives.
+    $s->change(fn(&$d)=>Q::enqueueEvent($d,'document.changed'));$crashId=array_key_last($s->read()['automation']['jobs']);
+    $child=launch(['--worker',$log,$scopes[0],'crash']);$deadline=microtime(true)+10;
+    while(!is_file($log.'/'.$crashId.'.start')&&microtime(true)<$deadline)usleep(20000);
+    if(!is_file($log.'/'.$crashId.'.start')){proc_terminate($child[0],9);try{finish($child);}catch(Throwable){}throw new RuntimeException('Crash worker did not claim job');}
+    $crashed=$s->read()['automation']['jobs'][$crashId];proc_terminate($child[0],9);try{finish($child);throw new LogicException('Killed worker exited successfully');}catch(RuntimeException){}
+    ok($crashed['state']==='running'&&finish(launch(['--worker',$log,$scopes[0]]))==='0','real SIGKILL preserves SQL lease and prevents premature duplicate execution');
+    $s->change(fn(&$d)=>$d['automation']['jobs'][$crashId]['lease_until']=time()-1);
+    ok(finish(launch(['--worker',$log,$scopes[0]]))==='1'&&$s->read()['automation']['jobs'][$crashId]['state']==='succeeded'&&file_get_contents($log.'/'.$crashId.'.start')==="sent\nsent\n",'expired crashed worker recovered with the same delivery ID');
+    try{$s->change(fn(&$d)=>Q::finish($d,$crashed,'succeeded'));throw new LogicException('Stale completion accepted');}catch(DomainException){ok(true,'killed worker fencing token cannot complete the recovered job');}
     $stats=$redis->stats()['metrics'];ok(($stats['cache_hits']??0)>=1&&($stats['rate_denied']??0)>=1&&($stats['jobs_processed']??0)>=2,'operator metrics reflect real cache, rate and worker activity');
     CajeerBook\Observability::flush();putenv('BOOK_MONITOR_WORKERS=1');$diagnostics=(new CajeerBook\Diagnostics())->collect();$metrics=$diagnostics['metrics'];
     ok($diagnostics['checks']['postgres']==='ok'&&$diagnostics['checks']['redis']==='ok'&&$diagnostics['checks']['queue']==='ok'&&$diagnostics['checks']['search']==='ok'&&$diagnostics['checks']['audit']==='ok','real SQL and Redis probes expose independent component health');

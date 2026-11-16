@@ -23,6 +23,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/reliability.php",
+            "python3 tests/reliability-http.py",
             "python3 tests/observability-http.py",
             "@php tests/enterprise-policy.php",
             "@php tests/migrations-policy.php",

@@ -65,6 +65,13 @@ code="$(https book.example.com -sS -o /dev/null -w '%{http_code}' -H "Cookie: __
 https docs.example.net -fsS https://docs.example.net/docs/guide/1/start | grep -q 'https://docs.example.net/docs/guide/1/start'
 https docs.example.net -fsS https://docs.example.net/sitemap.xml | grep -q 'https://docs.example.net/docs/guide/1/start'
 https docs.example.net -fsS https://docs.example.net/assets/book.css >/dev/null
+# Exercise real TLS routing during app replica loss; already-issued certificates remain valid.
+replica="$(docker compose ps -q book | head -1)"
+docker stop -t 1 "$replica"
+for n in $(seq 1 20); do https docs.example.net -fsS https://docs.example.net/api/v1/pages/guide/1/start | grep -q 'Edge public content'; done
+docker start "$replica"
+docker compose up -d --wait --wait-timeout 180 --scale book=2 book
+
 [ "$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code} %{redirect_url}' --resolve docs.example.net:80:127.0.0.1 http://docs.example.net/docs/guide/1/start)" = '308 https://docs.example.net/docs/guide/1/start' ]
 [ "$(https docs.example.net -sS -o /dev/null -w '%{http_code}' -H 'Host: book.example.com' https://docs.example.net/)" = 421 ]
 [ "$(https docs.example.net -sS -o /dev/null -w '%{http_code}' -H "Cookie: __Host-book_session=$token" https://docs.example.net/studio)" = 404 ]

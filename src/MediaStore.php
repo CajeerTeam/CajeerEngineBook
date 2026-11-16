@@ -147,7 +147,7 @@ final class MediaStore
             unset($db['media'][$id]);
         });
         // ID is never reused. Delete only after commit; already-open readers can finish.
-        foreach(['blob','thumbPath'] as $method)try{Files::remove($this->$method($id));}catch(\Throwable $e){Observability::log('cleanup.failure',['error_type'=>get_class($e)]);}
+        foreach(['blob','thumbPath','thumbDigestPath'] as $method)try{Files::remove($this->$method($id));}catch(\Throwable $e){Observability::log('cleanup.failure',['error_type'=>get_class($e)]);}
     }
     /** Explicit maintenance for blobs left by interrupted transactions. Never follows symlinks. */
     public function collectOrphans(): int
@@ -158,7 +158,7 @@ final class MediaStore
             foreach(new \DirectoryIterator($directory) as $entry){
                 if($entry->isDot()||$entry->isLink()||!$entry->isFile())continue;
                 $name=$entry->getFilename();
-                if(preg_match('/\A([a-f0-9]{32})\.(?:blob|thumb\.png)\z/D',$name,$m)){
+                if(preg_match('/\A([a-f0-9]{32})\.(?:blob|thumb\.png|thumb\.sha256)\z/D',$name,$m)){
                     if(isset($db['media'][$m[1]]))continue;
                 }elseif(!preg_match('/\A\.tmp-[a-f0-9]{24}\z/D',$name))continue;
                 Files::remove($entry->getPathname());$removed++;
@@ -171,30 +171,69 @@ final class MediaStore
         if(!self::validId($id))throw new \InvalidArgumentException('Invalid media ID');
         return Files::path($this->dir,'media/'.$id.'.thumb.png');
     }
-    /** Generate a bounded preview once; thumbnails are derived and not included in backups. */
+    private function thumbDigestPath(string $id):string{return Files::path($this->dir,'media/'.$id.'.thumb.sha256');}
+    /** Copy and authenticate before sending headers. A later disk change cannot alter the verified response. */
+    private static function verifiedStream(string $path,array $item)
+    {
+        if(is_link($path)||!is_file($path))throw new \RuntimeException('Missing media blob');
+        $in=@fopen($path,'rb');if(!$in)throw new \RuntimeException('Cannot open media');
+        $out=null;
+        try{
+            $size=$item['size']??null;$sha=$item['sha256']??null;
+            if(!is_int($size)||$size<1||$size>self::MAX_FILE||!is_string($sha)||!preg_match('/\A[a-f0-9]{64}\z/D',$sha)||fstat($in)['size']!==$size)throw new \RuntimeException('Damaged media blob');
+            $out=fopen('php://temp/maxmemory:2097152','w+b');if(!$out)throw new \RuntimeException('Cannot allocate verified media stream');
+            $hash=hash_init('sha256');$remaining=$size;
+            while($remaining>0){$chunk=fread($in,min(65536,$remaining));if(!is_string($chunk)||$chunk===''||fwrite($out,$chunk)!==strlen($chunk))throw new \RuntimeException('Interrupted media read');hash_update($hash,$chunk);$remaining-=strlen($chunk);}
+            if(fread($in,1)!==''||!hash_equals($sha,hash_final($hash))||!rewind($out))throw new \RuntimeException('Damaged media blob');
+            $result=$out;$out=null;return $result;
+        }finally{fclose($in);if(is_resource($out))fclose($out);}
+    }
+    private function openVerified(string $id,array $item)
+    {
+        $start=hrtime(true);$ok=false;
+        try{$stream=self::verifiedStream($this->blob($id),$item);$ok=true;return $stream;}
+        catch(\Throwable $e){Observability::mediaIntegrityFailure();Observability::log('media.integrity_failure',['component'=>'media','error_type'=>get_class($e)]);throw $e;}
+        finally{Observability::operation('media_verify',$start,$ok);}
+    }
+    /** Repair exact bytes only, using the authoritative metadata under the same scope lock as deletion. */
+    public function repair(string $id,string $source):void
+    {
+        if(!self::validId($id))throw new \InvalidArgumentException('Invalid media ID');
+        $this->books->change(function(array &$db)use($id,$source){
+            $item=$db['media'][$id]??null;if(!$item)throw new \InvalidArgumentException('Media not found');
+            $stream=self::verifiedStream($source,$item);
+            try{$bytes=stream_get_contents($stream);if(!is_string($bytes)||strlen($bytes)!==$item['size'])throw new \RuntimeException('Cannot read repair source');Files::write($this->blob($id),$bytes);}finally{fclose($stream);}
+            foreach(['thumbPath','thumbDigestPath'] as $method)try{Files::remove($this->$method($id));}catch(\Throwable $e){Observability::log('cleanup.failure',['error_type'=>get_class($e)]);}
+        });
+        Observability::log('media.repaired',['component'=>'media','outcome'=>'ok']);
+    }
+    /** Derived previews are expendable. Authenticate the original and the cached bytes before use. */
     public function thumbnail(string $id,?callable $authorized=null,?array $publishedAccess=null): ?array
     {
         if(!self::validId($id)||!function_exists('imagecreatefromstring'))return null;
         $make=function(array $item)use($id){
             if(!str_starts_with($item['mime'],'image/'))return null;
-            $path=$this->thumbPath($id);
-            if(!is_file($path)){
-                $source=$this->blob($id);
-                if(!is_file($source)||filesize($source)!==$item['size'])throw new \RuntimeException('Missing or damaged media blob');
-                $bytes=file_get_contents($source);$original=$bytes===false?false:@imagecreatefromstring($bytes);unset($bytes);
-                if($original===false)return null;
-                $ratio=min(1,320/max($item['width'],$item['height']));
-                $w=max(1,(int)round($item['width']*$ratio));$h=max(1,(int)round($item['height']*$ratio));
-                $canvas=imagecreatetruecolor($w,$h);
-                if($canvas===false)return null;
-                imagealphablending($canvas,false);imagesavealpha($canvas,true);
-                imagecopyresampled($canvas,$original,0,0,0,0,$w,$h,$item['width'],$item['height']);unset($original);
-                ob_start();try{$ok=imagepng($canvas);$png=ob_get_contents();}finally{ob_end_clean();}
-                if(!$ok||!is_string($png))return null;
-                Files::write($path,$png);
-            }
-            $stream=fopen($path,'rb');if(!$stream)throw new \RuntimeException('Cannot open thumbnail');
-            return [fstat($stream)['size'],$stream];
+            $source=$this->openVerified($id,$item);
+            try{
+                $path=$this->thumbPath($id);$digestPath=$this->thumbDigestPath($id);$png=null;
+                if(is_file($path)&&is_file($digestPath)){
+                    $digest=@file_get_contents($digestPath,false,null,0,131);$candidate=@file_get_contents($path,false,null,0,1048577);
+                    if(is_string($candidate)&&strlen($candidate)<=1048576&&is_string($digest)&&hash_equals($item['sha256'].':'.hash('sha256',$candidate),$digest))$png=$candidate;
+                }
+                if($png===null){
+                    $bytes=stream_get_contents($source);$original=is_string($bytes)?@imagecreatefromstring($bytes):false;unset($bytes);
+                    if($original===false)return null;
+                    $ratio=min(1,320/max($item['width'],$item['height']));$w=max(1,(int)round($item['width']*$ratio));$h=max(1,(int)round($item['height']*$ratio));
+                    $canvas=imagecreatetruecolor($w,$h);if($canvas===false)return null;
+                    imagealphablending($canvas,false);imagesavealpha($canvas,true);imagecopyresampled($canvas,$original,0,0,0,0,$w,$h,$item['width'],$item['height']);unset($original);
+                    ob_start();try{$ok=imagepng($canvas);$png=ob_get_contents();}finally{ob_end_clean();}
+                    if(!$ok||!is_string($png))return null;
+                    try{Files::write($path,$png);Files::write($digestPath,$item['sha256'].':'.hash('sha256',$png));}catch(\Throwable $e){Observability::log('media.preview_cache_failure',['error_type'=>get_class($e)]);}
+                }
+                $stream=fopen('php://temp','w+b');if(!$stream)throw new \RuntimeException('Cannot allocate thumbnail');
+                if(fwrite($stream,$png)!==strlen($png)||!rewind($stream)){fclose($stream);throw new \RuntimeException('Cannot buffer thumbnail');}
+                return [strlen($png),$stream];
+            }finally{fclose($source);}
         };
         if($publishedAccess!==null)return $this->books->publishedMedia($id,$publishedAccess[0],$publishedAccess[1],$make);
         return $this->books->snapshot(function(array $db)use($id,$authorized,$make){$item=$db['media'][$id]??null;return !$item||($authorized&&!$authorized($db,$id))?null:$make($item);});
@@ -202,12 +241,7 @@ final class MediaStore
     public function open(string $id,bool $private,?callable $authorized=null,?array $publishedAccess=null): ?array
     {
         if(!self::validId($id)) return null;
-        $open=function(array $item)use($id){
-            $path=$this->blob($id);if(!is_file($path)) throw new \RuntimeException('Missing media blob');
-            $stream=fopen($path,'rb');if(!$stream) throw new \RuntimeException('Cannot open media');
-            if(fstat($stream)['size']!==$item['size']){fclose($stream);throw new \RuntimeException('Damaged media blob');}
-            return [$item,$stream];
-        };
+        $open=fn(array $item)=>[$item,$this->openVerified($id,$item)];
         if(!$private&&$publishedAccess!==null)return $this->books->publishedMedia($id,$publishedAccess[0],$publishedAccess[1],$open);
         return $this->books->snapshot(function(array $db)use($id,$private,$authorized,$open){
             $item=$db['media'][$id]??null;

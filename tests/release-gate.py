@@ -89,14 +89,14 @@ def preflight(g):
     if g.suite in ('native', 'postgres'):
         tools += ['composer', 'node', 'npm']
     if g.suite == 'native':
-        tools += ['aws', 'tsc', 'curl']
+        tools += ['aws', 'tsc', 'curl', 'nginx']
     missing = [x for x in tools if not shutil.which(x)]
     if missing:
         raise RuntimeError('Missing executables: '+', '.join(missing))
     g.require('docker-info', ['docker', 'info'], 30)
     g.require('compose-version', ['docker', 'compose', 'version'], 30)
     if g.suite in ('native', 'postgres'):
-        extensions = ['mbstring', 'fileinfo', 'phar', 'gd', 'zip', 'openssl', 'sodium']
+        extensions = ['mbstring', 'fileinfo', 'phar', 'gd', 'zip', 'openssl', 'sodium', 'pcntl']
         if g.suite == 'postgres':
             extensions += ['pdo_pgsql', 'redis']
         g.require('php-runtime', ['php', '-r', 'if(PHP_VERSION_ID<80401)exit(1);foreach(array_slice($argv,1) as $e)if(!extension_loaded($e)){fwrite(STDERR,"Missing extension: $e\n");exit(1);}', *extensions], 30)
@@ -162,6 +162,7 @@ def postgres(g):
         for name, args in [('domains',['php','tests/domains.php','--postgres']),('domains-http',['python3','tests/domains-http.py','--postgres','--full']),('oidc-http',['python3','tests/oidc-http.py','--postgres']),('multilingual',['php','tests/multilingual.php','--postgres']),('multilingual-http',['python3','tests/multilingual-http.py','--postgres']),('postgres-search',['php','tests/postgres-search.php']),('search-http',['python3','tests/search-http.py','--postgres']),('ci-http',['python3','tests/ci-http.py','--postgres'])]:
             g.run(name,args)
         g.env.update(BOOK_REDIS_HOST='127.0.0.1',BOOK_REDIS_PORT=rport)
+        g.run('postgres-primary',['php','tests/postgres-primary.php'])
         g.run('redis-runtime',['php','tests/redis-runtime.php'])
         g.run('redis-http',['python3','tests/redis-http.py'])
         benchmark_env=dict(g.env,BOOK_BENCHMARK_PG_DSN=f'pgsql:host=127.0.0.1;port={port};dbname=book_benchmark;connect_timeout=5',BOOK_BENCHMARK_PG_USER='book_app',BOOK_BENCHMARK_PG_PASSWORD='book_app_test_only',BOOK_BENCHMARK_REDIS_HOST='127.0.0.1',BOOK_BENCHMARK_REDIS_PORT=rport)
