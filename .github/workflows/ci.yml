@@ -202,7 +202,7 @@ jobs:
   release-candidate:
     # Tag builds must pass every gate from this exact workflow run first.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: [test, postgres-content, docker-release, distributed-release, domains-edge, security-scan, enterprise-release]
+    needs: [test, postgres-content, docker-release, distributed-release, domains-edge, security-scan, production-qualification, enterprise-release]
     runs-on: ubuntu-latest
     timeout-minutes: 240
     permissions:

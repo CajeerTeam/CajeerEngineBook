@@ -2,6 +2,7 @@
 """Build and verify the signed Book distribution. No third-party Python dependencies."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -19,11 +20,30 @@ REPO = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
 GATES = {'test', 'postgres-content', 'docker-release', 'distributed-release', 'domains-edge', 'security-scan', 'enterprise-release'}
 ROLES = ('book', 'postgres-pitr')
 FILES = {'source.zip', 'deployment.zip', 'gate-evidence.json', 'SHA256SUMS'} | {f'{r}-{s}.json' for r in ROLES for s in ('sbom.spdx', 'provenance', 'build-metadata', 'scan')} | {f'{r}-smoke.log' for r in ROLES}
+QUALIFICATION_FILES = {"qualification.json": "report_sha256", "qualification-lifecycle.json": "lifecycle_sha256", "qualification-soak.json": "soak_sha256", "qualification-candidate.json": "candidate_lifecycle_sha256"}
+MAX_SOAK = 256 * 1024 * 1024
 MAX_JSON = 128 * 1024 * 1024
 MAX_ZIP = 256 * 1024 * 1024
 MAX_UNPACK = 512 * 1024 * 1024
 MAX_FILES = 10000
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def stable(version):
+    return tuple(map(int, version.split('.'))) >= (1, 0, 0)
+
+
+def files_for(version):
+    return FILES | (set(QUALIFICATION_FILES) if stable(version) else set())
+
+
+def gates_for(version):
+    return GATES | ({'production-qualification'} if stable(version) else set())
+
+
+def asset_limit(name):
+    if name == 'qualification-soak.json': return MAX_SOAK
+    return MAX_ZIP if name.endswith('.zip') else MAX_JSON
 
 
 def require(condition, message):
@@ -41,9 +61,9 @@ def regular(path):
     return path
 
 
-def json_read(path):
+def json_read(path, cap=MAX_JSON):
     path = regular(path)
-    require(path.stat().st_size <= MAX_JSON, 'JSON exceeds limit')
+    require(path.stat().st_size <= cap, 'JSON exceeds limit')
     def unique(pairs):
         out = {}
         for k, v in pairs:
@@ -97,7 +117,7 @@ def image_ref(repository, role, digest):
 
 def validate_evidence(e, version, commit, repository, images):
     require(e['version'] == version and e['commit'] == commit and e['repository'] == repository, 'Evidence source mismatch')
-    require(e['gates'] == {g: 'success' for g in GATES}, 'Required gates did not all pass')
+    require(e['gates'] == {g: 'success' for g in gates_for(version)}, 'Required gates did not all pass')
     require(re.fullmatch(r'[1-9]\d*', e['run_id']) and re.fullmatch(r'[1-9]\d*', e['run_attempt']), 'Invalid workflow run')
     require(e['images'] == images and e['image_checks'] == {r: {'smoke': 'success', 'scan': 'success'} for r in ROLES}, 'Exact image checks missing')
     if tuple(map(int,version.split('.'))) >= (0,9,0):
@@ -123,6 +143,29 @@ def validate_metadata(directory, images):
         for result in scan['Results']:
             require(not any(v.get('Severity') in ('HIGH','CRITICAL') for v in (result.get('Vulnerabilities') or [])+(result.get('Secrets') or [])), 'Image scan contains blocking findings')
         require(meta.get('containerimage.digest') == images[role].rsplit('@',1)[1], 'Build metadata digest mismatch')
+
+
+def verify_qualification(directory, version, commit, images, digest, evidence):
+    if not stable(version): return
+    spec=importlib.util.spec_from_file_location('qualification_policy', ROOT/'bin/qualification_policy.py')
+    policy=importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
+    q=evidence['production_qualification']
+    for name, field in QUALIFICATION_FILES.items():
+        require(sha(directory/name)==q[field], 'Qualification report hash mismatch: '+name)
+    summary=json_read(directory/'qualification.json')
+    lifecycle=json_read(directory/'qualification-lifecycle.json')
+    soak=json_read(directory/'qualification-soak.json', MAX_SOAK)
+    candidate=json_read(directory/'qualification-candidate.json')
+    require(summary['evidence_sha256']=={'lifecycle':q['lifecycle_sha256'],'load':q['soak_sha256']}, 'Qualification summary hash mismatch')
+    require(q['source_digest']==digest, 'Qualification source digest mismatch')
+    checked=policy.validate_reports(summary,lifecycle,soak,candidate,version,commit,images,digest)
+    require(all(q.get(k)==v for k,v in checked.items()), 'Qualification measurements differ from signed summary')
+
+
+def source_fingerprint(entries):
+    spec=importlib.util.spec_from_file_location('qualification_policy', ROOT/'bin/qualification_policy.py')
+    policy=importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
+    return policy.source_digest_entries(entries)
 
 
 def safe_member(name):
@@ -235,14 +278,17 @@ def assemble(args):
     validate_evidence(evidence,args.version,args.commit,args.repository,images)
     validate_metadata(args.evidence,images)
     files = list(source_files(root,args.commit))
+    names = files_for(args.version)
+    if stable(args.version):
+        verify_qualification(args.evidence,args.version,args.commit,images,source_fingerprint((n,b) for n,_,b in files),evidence)
     with tempfile.TemporaryDirectory(prefix='.book-release-', dir=out.parent) as temp:
         stage = Path(temp)/'release'; stage.mkdir(mode=0o700)
         zip_write(stage/'source.zip',files)
         zip_write(stage/'deployment.zip',deployment_files(files,images))
-        for name in sorted(FILES-{'source.zip','deployment.zip','SHA256SUMS'}):
+        for name in sorted(names-{'source.zip','deployment.zip','SHA256SUMS'}):
             (stage/name).write_bytes(regular(args.evidence/name).read_bytes())
-        (stage/'SHA256SUMS').write_text(''.join(f'{sha(stage/n)}  {n}\n' for n in sorted(FILES-{'SHA256SUMS'})))
-        manifest = {'format':1,'product':'CajeerEngineBook','version':args.version,'commit':args.commit,'repository':args.repository,'schema_version':int(re.search(r'public const VERSION = (\d+);',run('git','show',args.commit+':src/DatabaseMigrations.php',cwd=root).decode()).group(1)),'platform':'linux/amd64','images':images,'signing_key_sha256':hashlib.sha256(key_der(pub,True)).hexdigest(), 'artifacts':{n:{'sha256':sha(stage/n),'size':(stage/n).stat().st_size} for n in sorted(FILES)}}
+        (stage/'SHA256SUMS').write_text(''.join(f'{sha(stage/n)}  {n}\n' for n in sorted(names-{'SHA256SUMS'})))
+        manifest = {'format':1,'product':'CajeerEngineBook','version':args.version,'commit':args.commit,'repository':args.repository,'schema_version':int(re.search(r'public const VERSION = (\d+);',run('git','show',args.commit+':src/DatabaseMigrations.php',cwd=root).decode()).group(1)),'platform':'linux/amd64','images':images,'signing_key_sha256':hashlib.sha256(key_der(pub,True)).hexdigest(), 'artifacts':{n:{'sha256':sha(stage/n),'size':(stage/n).stat().st_size} for n in sorted(names)}}
         dump(stage/'release.json',manifest)
         for n in ('release.json','source.zip','deployment.zip'):
             sign(stage/n,key)
@@ -254,7 +300,8 @@ def assemble(args):
 def verify_directory(directory, pub, version, repository, commit=None):
     directory = Path(directory)
     require(directory.is_dir() and not directory.is_symlink(), 'Release directory is not a regular directory')
-    require({p.name for p in directory.iterdir()} == FILES | {'release.json','release.json.sig','source.zip.sig','deployment.zip.sig'}, 'Unexpected or missing release files')
+    names = files_for(version)
+    require({p.name for p in directory.iterdir()} == names | {'release.json','release.json.sig','source.zip.sig','deployment.zip.sig'}, 'Unexpected or missing release files')
     require(VERSION.fullmatch(version) and REPO.fullmatch(repository), 'Invalid expected release identity')
     verify_sig(directory/'release.json',pub)
     m = json_read(directory/'release.json')
@@ -262,19 +309,33 @@ def verify_directory(directory, pub, version, repository, commit=None):
     require(m['signing_key_sha256']==hashlib.sha256(key_der(pub,True)).hexdigest(), 'Signing key fingerprint mismatch')
     require(m['platform']=='linux/amd64' and type(m['schema_version']) is int and m['schema_version']>=1, 'Unsupported platform/schema')
     require(set(m['images'])==set(ROLES) and all(m['images'][r]==image_ref(repository,r,m['images'][r].rsplit('@',1)[-1]) for r in ROLES), 'Unexpected OCI repository/digest')
-    require(set(m['artifacts'])==FILES, 'Missing/unexpected artifacts')
+    require(set(m['artifacts'])==names, 'Missing/unexpected artifacts')
     for n, a in m['artifacts'].items():
         p=regular(directory/n)
-        cap = MAX_ZIP if n.endswith('.zip') else MAX_JSON
+        cap = asset_limit(n)
         require(type(a['size']) is int and 0 < a['size'] <= cap and p.stat().st_size==a['size'] and sha(p)==a['sha256'], 'Artifact mismatch: '+n)
-    require((directory/'SHA256SUMS').read_text() == ''.join(f"{m['artifacts'][n]['sha256']}  {n}\n" for n in sorted(FILES-{'SHA256SUMS'})), 'SHA256SUMS does not match manifest')
+    require((directory/'SHA256SUMS').read_text() == ''.join(f"{m['artifacts'][n]['sha256']}  {n}\n" for n in sorted(names-{'SHA256SUMS'})), 'SHA256SUMS does not match manifest')
     for n in ('source.zip','deployment.zip'):
         verify_sig(directory/n,pub)
         with zipfile.ZipFile(directory/n) as z:
             zip_members(z)
             require(z.getinfo('VERSION').file_size <= 64, 'Invalid ZIP version size')
             require(z.read('VERSION').decode().strip()==version and z.testzip() is None, 'ZIP version or integrity mismatch')
-    validate_evidence(json_read(directory/'gate-evidence.json'),version,m['commit'],repository,m['images'])
+    evidence=json_read(directory/'gate-evidence.json')
+    validate_evidence(evidence,version,m['commit'],repository,m['images'])
+    if stable(version):
+        with zipfile.ZipFile(directory/'source.zip') as z:
+            source = [(i.filename,i.external_attr >> 16,z.read(i)) for i in zip_members(z)]
+        digest=source_fingerprint((n,b) for n,_,b in source)
+        # A signed deployment must actually be the deterministic transform of its source.
+        expected={n:(mode,hashlib.sha256(b).digest()) for n,mode,b in deployment_files(source,m['images'])}
+        with zipfile.ZipFile(directory/'deployment.zip') as z:
+            actual={i.filename:(i.external_attr >> 16,hashlib.sha256(z.read(i)).digest()) for i in zip_members(z)}
+        require(actual==expected, 'Deployment does not match signed source and OCI digests')
+        schema=dict((n,b) for n,_,b in source).get('src/DatabaseMigrations.php',b'')
+        match=re.search(rb'public const VERSION = (\d+);',schema)
+        require(match and int(match.group(1))==m['schema_version'], 'Signed schema metadata mismatch')
+        verify_qualification(directory,version,m['commit'],m['images'],digest,evidence)
     validate_metadata(directory,m['images'])
     return m
 

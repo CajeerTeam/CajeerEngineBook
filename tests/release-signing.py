@@ -32,8 +32,8 @@ class Signing(unittest.TestCase):
         self.commit=self.git('rev-parse','HEAD').strip(); self.version=(ROOT/'VERSION').read_text().strip(); self.repo='Test/Book'
         self.key=self.base/'private.pem'; self.pub=self.base/'public.pem'; self.make_key(self.key,self.pub)
         self.digests=['sha256:'+'1'*64,'sha256:'+'2'*64]; self.images={r:m.image_ref(self.repo,r,d) for r,d in zip(m.ROLES,self.digests)}
-        self.e={'version':self.version,'commit':self.commit,'repository':self.repo,'run_id':'123','run_attempt':'1','gates':{g:'success' for g in m.GATES},'images':self.images,'image_checks':{r:{'smoke':'success','scan':'success'} for r in m.ROLES}}
-        if tuple(map(int,self.version.split('.'))) >= (0,9,0):self.e['production_qualification']=fixture.qualification_fixture(self.version,self.commit,self.images)
+        self.e={'version':self.version,'commit':self.commit,'repository':self.repo,'run_id':'123','run_attempt':'1','gates':{g:'success' for g in m.gates_for(self.version)},'images':self.images,'image_checks':{r:{'smoke':'success','scan':'success'} for r in m.ROLES}}
+        if tuple(map(int,self.version.split('.'))) >= (0,9,0):self.e['production_qualification']=fixture.write_fixture(m,self.evidence,self.root,self.version,self.commit,self.images)
         m.dump(self.evidence/'gate-evidence.json',self.e)
         for r,d in zip(m.ROLES,self.digests):
             m.dump(self.evidence/f'{r}-sbom.spdx.json',{'spdxVersion':'SPDX-2.3','packages':[{'name':'fixture'}]})
@@ -105,6 +105,31 @@ class Signing(unittest.TestCase):
         self.e['production_qualification']['candidate_rto_seconds']=3601;m.dump(self.evidence/'gate-evidence.json',self.e);self.rejected('assemble')
     def test_qualification_wrong_image(self):
         self.e['production_qualification']['candidate_images']={};m.dump(self.evidence/'gate-evidence.json',self.e);self.rejected('assemble')
+    def test_stable_reports_missing(self):
+        (self.evidence/'qualification-soak.json').unlink(); self.rejected('assemble')
+    def test_stable_report_hash_mismatch(self):
+        path=self.evidence/'qualification-soak.json'; path.write_bytes(path.read_bytes()+b' '); self.rejected('assemble')
+    def test_stable_failed_minute_even_with_matching_hash(self):
+        path=self.evidence/'qualification-soak.json'; data=m.json_read(path); data['phases'][-1]['windows'][700]['passed']=False; m.dump(path,data)
+        self.e['production_qualification']['soak_sha256']=m.sha(path)
+        summary=self.evidence/'qualification.json'; data=m.json_read(summary); data['evidence_sha256']['load']=m.sha(path); m.dump(summary,data)
+        self.e['production_qualification']['report_sha256']=m.sha(summary); m.dump(self.evidence/'gate-evidence.json',self.e); self.rejected('assemble')
+    def test_stable_signed_report_tampered(self):
+        self.assemble(); path=self.out/'qualification-candidate.json'; path.write_bytes(path.read_bytes()+b' '); self.rejected()
+    def test_stable_deployment_diverges_even_with_valid_signatures(self):
+        self.assemble()
+        path=self.out/'deployment.zip'
+        with zipfile.ZipFile(path) as z:
+            files=[(i.filename,i.external_attr>>16,z.read(i)) for i in z.infolist()]
+        path.unlink(); m.zip_write(path,[(n,mode,b+b'\n' if n=='compose.yaml' else b) for n,mode,b in files])
+        manifest=m.json_read(self.out/'release.json')
+        manifest['artifacts']['deployment.zip']={'size':path.stat().st_size,'sha256':m.sha(path)}
+        checksums=self.out/'SHA256SUMS'; checksums.write_text(''.join(f"{manifest['artifacts'][n]['sha256']}  {n}\n" for n in sorted(m.files_for(self.version)-{'SHA256SUMS'})))
+        manifest['artifacts']['SHA256SUMS']={'size':checksums.stat().st_size,'sha256':m.sha(checksums)}
+        m.dump(self.out/'release.json',manifest)
+        for n in ('deployment.zip','release.json'):
+            (self.out/(n+'.sig')).unlink(); m.sign(self.out/n,self.key)
+        result=self.verify(); self.assertNotEqual(result.returncode,0); self.assertIn('Deployment does not match signed source',result.stderr)
     def test_wrong_digest(self):
         m.dump(self.evidence/'book-build-metadata.json',{'containerimage.digest':self.digests[1]}); self.rejected('assemble')
     def test_empty_sbom(self):

@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.9.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 1.0.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 1.0.0 — Production Stable
+
+The stable release pipeline now packages the full qualification reports with the signed ZIP/OCI distribution. The publisher and updater independently recheck the 24-hour SQL/Redis load report, lifecycle and candidate recovery evidence, source fingerprint, schema and deterministic deployment files. See [signed releases](docs/admin/signed-releases.md) and [production qualification](docs/admin/production-qualification.md). Schema 3 is unchanged. Version 1.0.0 is not a claim that the protected tag run has already passed: production readiness and official signatures require the actual successful qualification and protected publishing job. See the operator upgrade procedure before using the 1.0.0 bundle.
 
 ## 0.9.1 — Release Candidate
 

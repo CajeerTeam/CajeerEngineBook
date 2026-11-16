@@ -1,4 +1,4 @@
-# Configuration reference — 0.9.1
+# Configuration reference — 1.0.0
 
 The authoritative configuration is the selected release's source and Compose files. All names below refer to current runtime/host variables, not values from an older version's example. Keep the env file outside the release tree, mode 0600, and never paste `docker compose config`, `docker inspect`, shell tracing or unredacted environment into support requests. Use `config --quiet` for validation. Environment variables inside a running container do not change when the host env file changes; recreate affected containers (managed deployments use `update.py reconcile-env` with its documented checks).
 

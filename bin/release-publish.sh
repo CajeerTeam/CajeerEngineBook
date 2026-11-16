@@ -60,4 +60,15 @@ for ref in "${refs[@]}"; do
   [[ "$actual" == "$expected" ]]
 done
 check_tag
-gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest=false
+# Confirm the public release still identifies the exact verified assets and tag.
+check_tag
+gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets > "$work/published.json"
+python3 - "$work/published.json" "$output" "$tag" <<'PY'
+import json, pathlib, sys
+r=json.loads(pathlib.Path(sys.argv[1]).read_text()); out=pathlib.Path(sys.argv[2])
+expected={p.name:p.stat().st_size for p in out.iterdir()}
+assets=r['assets']; actual={a['name']:a['size'] for a in assets}
+if r['tagName']!=sys.argv[3] or r['isDraft'] or r['isPrerelease'] or len(assets)!=len(expected) or actual!=expected:
+    raise SystemExit('Published release metadata mismatch; operator investigation required')
+PY

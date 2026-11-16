@@ -1,4 +1,4 @@
-# Incident response and maintenance runbook — 0.9.1
+# Incident response and maintenance runbook — 1.0.0
 
 Record incident start UTC, release/digests, topology, affected operations and request IDs. Avoid exposing raw logs, cookies, tokens, database DSNs, users and workspace names. Freeze writes for suspected data loss, unauthorized access, identity binding mismatch, SQL primary ambiguity or media corruption. Take a protected snapshot of evidence before repair. Never edit SQL migration ledger, identity anchors, audit hashes, job lease state or storage bindings to silence an error. Never use `down -v`, `docker volume prune`, `FLUSHALL`, `pg_resetwal` or overwrite a live data directory as a generic recovery step.
 

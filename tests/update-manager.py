@@ -105,7 +105,9 @@ class Update(unittest.TestCase):
         f=self.f; (f.root/'VERSION').write_text(v+'\n'); p=f.root/'src/DatabaseMigrations.php'; p.write_text(re.sub(r'public const VERSION = \d+;',f'public const VERSION = {schema};',p.read_text()))
         f.git('add','.'); f.git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm',v)
         f.commit=f.git('rev-parse','HEAD').strip(); f.version=v; f.digests[0]='sha256:'+d*64; f.images['book']=u.release.image_ref(f.repo,'book',f.digests[0])
-        f.e.update(version=v,commit=f.commit,images=f.images); u.release.dump(f.evidence/'gate-evidence.json',f.e); u.release.dump(f.evidence/'book-build-metadata.json',{'containerimage.digest':f.digests[0]})
+        f.e.update(version=v,commit=f.commit,images=f.images,gates={g:"success" for g in u.release.gates_for(v)});
+        if u.release.stable(v): f.e["production_qualification"]=signing.fixture.write_fixture(u.release,f.evidence,f.root,v,f.commit,f.images)
+        u.release.dump(f.evidence/'gate-evidence.json',f.e); u.release.dump(f.evidence/'book-build-metadata.json',{'containerimage.digest':f.digests[0]})
         out=self.base/('bundle-'+v); p=f.command(output=out); self.assertEqual(p.returncode,0,p.stderr); return out
     def test_upgrade_and_rollback_highwater(self):
         s=self.manager.begin(self.state,self.new); self.assertEqual(s['current'],self.new); self.assertIsNone(s['pending']); self.assertEqual(self.fake.schema,3)
@@ -113,6 +115,10 @@ class Update(unittest.TestCase):
         self.assertEqual(len(list((self.manager.root/'backups').iterdir())),2)
         self.assertEqual(self.manager.read()['current'],self.old); self.assertTrue(any('preflight' in a for a in self.fake.commands)); self.assertTrue(any('pg_dump' in a for a in self.fake.commands))
         self.assertEqual(self.manager.begin(s,self.new)['current'],self.new)
+    def test_stable_bundle_staging(self):
+        bundle=self.build('1.0.0','5'); target=self.manager.stage(self.cfg,'1.0.0',bundle)
+        self.assertEqual(target['version'],'1.0.0'); _,manifest=self.manager.load(self.cfg,target)
+        self.assertIn('qualification-soak.json',manifest['artifacts'])
     def test_candidate_version_failure_rolls_back(self):
         self.fake.fail='version'
         with self.assertRaises(ValueError): self.manager.begin(self.state,self.new)

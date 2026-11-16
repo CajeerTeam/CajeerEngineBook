@@ -13,7 +13,7 @@ git diff --quiet HEAD --
 mkdir -m 700 "$report"; report=$(cd "$report" && pwd)
 python3 - <<'PY'
 import json,os
-n=json.loads(os.environ['GATE_RESULTS']); expected={'test','postgres-content','docker-release','distributed-release','domains-edge','security-scan','enterprise-release'}
+n=json.loads(os.environ['GATE_RESULTS']); expected={'test','postgres-content','docker-release','distributed-release','domains-edge','security-scan','enterprise-release','production-qualification'}
 if set(n)!=expected or any(v['result']!='success' for v in n.values()): raise SystemExit('Release gates not passed')
 PY
 # No ambient runtime credentials in the disposable qualification processes.
@@ -80,5 +80,9 @@ v=os.environ
 spec=importlib.util.spec_from_file_location("qualification",pathlib.Path("tests/production-qualification.py")); q=importlib.util.module_from_spec(spec);spec.loader.exec_module(q)
 out={'version':v['RELEASE_VERSION'],'commit':v['GITHUB_SHA'],'repository':v['GITHUB_REPOSITORY'],'run_id':v['GITHUB_RUN_ID'],'run_attempt':v['GITHUB_RUN_ATTEMPT'],'gates':{k:r['result'] for k,r in json.loads(v['GATE_RESULTS']).items()},'images':{'book':v['RELEASE_BOOK_REF'],'postgres-pitr':v['RELEASE_PITR_REF']},'image_checks':{r:{'smoke':'success','scan':'success'} for r in ('book','postgres-pitr')}}
 out['production_qualification']=q.release_evidence(v['RELEASE_QUALIFICATION'],v['RELEASE_CANDIDATE_LIFECYCLE'],out['images'],out['commit'],out['version'])
-(pathlib.Path(v['RELEASE_REPORT'])/'gate-evidence.json').write_text(json.dumps(out,indent=2)+'\n')
+import shutil
+report=pathlib.Path(v['RELEASE_REPORT']); summary=pathlib.Path(v['RELEASE_QUALIFICATION'])
+for name,path in {'qualification.json':summary,'qualification-lifecycle.json':summary.parent/'lifecycle/lifecycle.json','qualification-soak.json':summary.parent/'load/qualification/report.json','qualification-candidate.json':pathlib.Path(v['RELEASE_CANDIDATE_LIFECYCLE'])}.items():
+    shutil.copyfile(path,report/name)
+(report/'gate-evidence.json').write_text(json.dumps(out,indent=2)+'\n')
 PY

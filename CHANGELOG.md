@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 — Production Stable
+
+- Require the full production qualification job explicitly in stable release evidence; sign all four qualification reports with the release manifest and checksums.
+- Independently validate complete load windows, lifecycle, candidate image identities and source fingerprint at packaging and verification; reject mismatched signed deployment files and schema.
+- Secure updater handles the versioned evidence format, preserving verification of 0.8.x–0.9.x packages and existing state.
+- Confirm published GitHub release metadata after draft readback and digest promotion. Schema 3 unchanged. Official stable publication requires real protected CI, operator approval and the established release key; synthetic regression evidence is not production qualification.
+
 ## 0.9.1 — Release Candidate
 
 - Authenticate signed update artifacts before ZIP parsing; share bounded archive validation with the release verifier, reject ambiguous/colliding names and unsupported compression, and bound version/schema reads.
