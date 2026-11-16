@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1 — Release Candidate
+
+- Authenticate signed update artifacts before ZIP parsing; share bounded archive validation with the release verifier, reject ambiguous/colliding names and unsupported compression, and bound version/schema reads.
+- Reject malformed Origin authorities, invalid IPv6 and explicit HTTP/HTTPS mismatches; preserve the authenticated HTTPS domain ingress.
+- Reject invalid OIDC JSON claim types, null security-sensitive claims/headers/JWK fields and unsupported JWT encoding extensions.
+- Validate outbound TLS request headers before opening the socket, reject case-insensitive duplicates, retired 6to4 relay addresses and forbidden framing on informational/204 responses.
+- Add independent regression scenarios to the security CI job. Schema remains 3. External auditor sign-off and production lab qualification are not claimed.
+
 ## 0.9.0 — Production Qualification
 
 - Real historical 0.8.2-to-current OCI build, signed updater enrollment, upgrade/rollback/re-upgrade, two app/worker replicas, Redis restart, physical backup/WAL, deletion of source volumes and isolated recovery with public HTTP and deep integrity verification.

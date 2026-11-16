@@ -21,6 +21,8 @@ ROLES = ('book', 'postgres-pitr')
 FILES = {'source.zip', 'deployment.zip', 'gate-evidence.json', 'SHA256SUMS'} | {f'{r}-{s}.json' for r in ROLES for s in ('sbom.spdx', 'provenance', 'build-metadata', 'scan')} | {f'{r}-smoke.log' for r in ROLES}
 MAX_JSON = 128 * 1024 * 1024
 MAX_ZIP = 256 * 1024 * 1024
+MAX_UNPACK = 512 * 1024 * 1024
+MAX_FILES = 10000
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -125,9 +127,33 @@ def validate_metadata(directory, images):
 
 def safe_member(name):
     p = PurePosixPath(name)
-    require(name and not name.startswith('/') and '\\' not in name and all(x not in ('', '.', '..') for x in name.split('/')) and ':' not in name and all(ord(c)>=32 for c in name), 'Unsafe archive path')
+    require(name and not name.startswith('/') and '\\' not in name and all(x not in ('', '.', '..') for x in name.split('/')) and ':' not in name and all(ord(c)>=32 and ord(c)!=127 for c in name), 'Unsafe archive path')
     require(not any(x.casefold() == '.git' for x in p.parts), 'Git metadata is forbidden')
     return p
+
+
+def zip_members(z):
+    """Validate all members before any decompression; shared by verifier and updater."""
+    infos = z.infolist()
+    require(0 < len(infos) <= MAX_FILES, 'Invalid ZIP member count')
+    seen, dirs = set(), {}
+    total = 0
+    for i in infos:
+        # zipfile normalizes NUL in filename; reject the original spelling too.
+        require(i.orig_filename == i.filename, 'Ambiguous ZIP member name')
+        p = safe_member(i.filename)
+        name = i.filename.casefold()
+        require(not i.is_dir() and stat.S_ISREG(i.external_attr >> 16) and not i.flag_bits & 1
+                and i.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                and name not in seen and name not in dirs, 'Unsafe ZIP member')
+        for parent in p.parents:
+            if str(parent) == '.': continue
+            spelling = str(parent); key = spelling.casefold()
+            require(key not in seen and (key not in dirs or dirs[key] == spelling), 'ZIP file/directory conflict')
+            dirs[key] = spelling
+        seen.add(name); total += i.file_size
+        require(0 <= i.file_size <= MAX_UNPACK and total <= MAX_UNPACK, 'ZIP expands beyond limit')
+    return infos
 
 
 def source_files(root, commit):
@@ -239,16 +265,14 @@ def verify_directory(directory, pub, version, repository, commit=None):
     require(set(m['artifacts'])==FILES, 'Missing/unexpected artifacts')
     for n, a in m['artifacts'].items():
         p=regular(directory/n)
-        require(type(a['size']) is int and p.stat().st_size==a['size'] and sha(p)==a['sha256'], 'Artifact mismatch: '+n)
+        cap = MAX_ZIP if n.endswith('.zip') else MAX_JSON
+        require(type(a['size']) is int and 0 < a['size'] <= cap and p.stat().st_size==a['size'] and sha(p)==a['sha256'], 'Artifact mismatch: '+n)
     require((directory/'SHA256SUMS').read_text() == ''.join(f"{m['artifacts'][n]['sha256']}  {n}\n" for n in sorted(FILES-{'SHA256SUMS'})), 'SHA256SUMS does not match manifest')
     for n in ('source.zip','deployment.zip'):
         verify_sig(directory/n,pub)
         with zipfile.ZipFile(directory/n) as z:
-            names=set()
-            for i in z.infolist():
-                safe_member(i.filename)
-                require(i.filename.casefold() not in names and stat.S_ISREG(i.external_attr>>16), 'Unsafe/duplicate ZIP member')
-                names.add(i.filename.casefold())
+            zip_members(z)
+            require(z.getinfo('VERSION').file_size <= 64, 'Invalid ZIP version size')
             require(z.read('VERSION').decode().strip()==version and z.testzip() is None, 'ZIP version or integrity mismatch')
     validate_evidence(json_read(directory/'gate-evidence.json'),version,m['commit'],repository,m['images'])
     validate_metadata(directory,m['images'])

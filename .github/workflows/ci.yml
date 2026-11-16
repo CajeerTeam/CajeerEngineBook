@@ -123,10 +123,25 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
+          extensions: mbstring, fileinfo, phar, gd, zip, openssl, sodium, pcntl
           tools: composer:v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Independent regression execution on a separate runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/book-security"
+          set -e -o pipefail
+          {
+            python3 tests/security-retest.py
+            php tests/security-hardening.php --require-zip
+            php tests/security-lifecycle.php
+            python3 tests/security-lifecycle-http.py
+            php tests/oidc-policy.php
+            python3 tests/oidc-http.py
+            python3 tests/security-http.py
+            python3 tests/security-transport.py
+          } 2>&1 | tee "$RUNNER_TEMP/book-security/retest.log"
       - run: python -m pip install semgrep==1.185.0
       - run: sh tests/security-scan.sh "$RUNNER_TEMP/book-security"
       - uses: actions/upload-artifact@v4

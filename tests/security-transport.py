@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory() as d:
         t=threading.Thread(target=serve,daemon=True);t.start()
         r=json.loads(subprocess.check_output(['php','-d',f'openssl.cafile={cert}','-r',PHP,f'https://localhost:{port}/',method,'public' if public else 'private'],cwd=ROOT,timeout=4))
         assert r['ok']==expected,r
-        if expected:assert r['body']=='hello',r
+        if expected:assert r['body']==('' if wire.startswith(b'HTTP/1.1 204') else 'hello'),r
         if slow or stall:assert 600<=r['ms']<1500,r
         t.join(timeout=3);count+=1
     h=b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
@@ -42,6 +42,10 @@ with tempfile.TemporaryDirectory() as d:
     run(b'HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nhello',False)
     run(b'HTTP/1.1 200 OK\r\nX-Long: '+b'x'*9000+b'\r\n\r\n',False)
     run(b'HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello',False,slow=True)
+    run(b'HTTP/1.1 204 No Content\r\n\r\n',True)
+    run(b'HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n',False)
+    run(b'HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello',False)
+    run(b'HTTP/1.1 103 Early Hints\r\nLink: </x>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello',True)
     run(b'',False,stall=True)
     run(b'',False,public=True)
     print(f'PASS {count} real TLS framing/deadline/address policy checks')

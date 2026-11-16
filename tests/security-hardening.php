@@ -17,6 +17,9 @@ ok(R::browserPost('/login','POST',['HTTP_HOST'=>'book.test','HTTP_ORIGIN'=>'http
 ok(R::browserPost('/account','POST',[],null),'legacy CSRF still checked by controller');
 ok(R::browserPost('/api/v1/ci','POST',['HTTP_ORIGIN'=>'null'],null),'machine auth remains independent');
 ok(R::browserPost('/webhooks/gitlab','POST',['HTTP_SEC_FETCH_SITE'=>'cross-site'],null),'machine webhook');
+foreach(['http://book.test:','http://book.test:00000','http://[::::]:8080'] as $origin)ok(!R::browserPost('/account','POST',array_replace($server,['HTTP_ORIGIN'=>$origin,'HTTP_HOST'=>substr($origin,7)]),null),'reject malformed authority');
+ok(!R::browserPost('/account','POST',['HTTP_HOST'=>'book.test','HTTPS'=>'off','HTTP_ORIGIN'=>'https://book.test'],null),'explicit HTTP cannot accept HTTPS origin');
+ok(R::browserPost('/account','POST',['HTTP_HOST'=>'book.test','HTTPS'=>'off','HTTP_ORIGIN'=>'https://book.test'],'book.test'),'authenticated edge primary uses HTTPS');
 $tmp=tempnam(sys_get_temp_dir(),'book-security-');file_put_contents($tmp,'hello');$set=new ImportFiles();
 try{$set->add('a.md',$tmp);ok(file_get_contents($set->files()['a.md'])==='hello','exact copy');denied(fn()=>$set->add('a.md',$tmp),'duplicate');denied(fn()=>$set->add('../bad',$tmp),'traversal');$set->addBytes('b.md','world');ok(count($set->files())===2,'staging usable after rejection');
 if(class_exists(ZipArchive::class)){$z=$tmp.'.zip';$zip=new ZipArchive();$zip->open($z,ZipArchive::CREATE);$zip->addFromString('valid.md','valid');$zip->addFromString('../bad','bad');$zip->close();try{denied(fn()=>$set->zip($z),'unsafe zip');ok(count($set->files())===2,'failed zip is atomic');$set->addBytes('valid.md','retry');ok(count($set->files())===3,'zip reservation rolled back');}finally{unlink($z);}}

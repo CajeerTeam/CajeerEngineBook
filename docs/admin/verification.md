@@ -1,4 +1,4 @@
-# Documentation verification — 0.9.0
+# Documentation verification — 0.9.1
 
 The handbook is tested against the actual checkout. A syntax/link check is not proof that a deployment or restore works. Use the following tiers and record the release commit, UTC time, environment, command, exit code and report path. A skipped tier is **not** a passed tier.
 

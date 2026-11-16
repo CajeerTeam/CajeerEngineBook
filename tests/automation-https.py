@@ -15,7 +15,9 @@ class Receiver(http.server.BaseHTTPRequestHandler):
         assert abs(time.time()-int(ts))<60 and self.path=='/hook'
         assert json.loads(body)=={'id':delivery,'event':'document.changed','at':json.loads(body)['at']}
         received.append((delivery,body))
-        self.send_response(503 if len(received)==1 else 204);self.send_header('Content-Length','0');self.end_headers()
+        self.send_response(503 if len(received)==1 else 204)
+        if len(received)==1:self.send_header('Content-Length','0')
+        self.end_headers()
 with tempfile.TemporaryDirectory(prefix='book-automation-tls-') as td:
     d=Path(td); cert=d/'cert.pem'; key=d/'key.pem'
     subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost','-keyout',str(key),'-out',str(cert)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

@@ -9,7 +9,7 @@ final class ApiPlaygroundTransport
     private const DEADLINE=15.0, MAX_HEADERS=65536;
     private static function clock():float{return hrtime(true)/1e9;}
     public static function publicIp(string $ip):bool {
-        return filter_var($ip,FILTER_VALIDATE_IP,FILTER_FLAG_IPV4|FILTER_FLAG_GLOBAL_RANGE)!==false && (int)explode('.',$ip)[0]<224;
+        return filter_var($ip,FILTER_VALIDATE_IP,FILTER_FLAG_IPV4|FILTER_FLAG_GLOBAL_RANGE)!==false && (int)explode('.',$ip)[0]<224 && !str_starts_with($ip,'192.88.99.');
     }
     public static function send(array $request,string $allowlist='BOOK_PLAYGROUND_PROXY_ORIGINS'):array {
         $started=self::clock();$p=parse_url($request['url']);if(!is_array($p)||($p['scheme']??null)!=='https'||isset($p['user'])||isset($p['pass'])||isset($p['fragment'])||!is_string($p['host']??null)||strlen($request['url'])>8192)throw new \InvalidArgumentException('Invalid API proxy target.');
@@ -39,6 +39,13 @@ final class ApiPlaygroundTransport
     }
     /** Only called after DNS policy. Private for transport tests using a local TLS fixture. */
     private static function sendPinned(array $request,string $host,int $port,string $ip,int $max=ApiPlayground::MAX_RESPONSE,float $seconds=self::DEADLINE,bool $raw=false):array {
+        $parts=parse_url($request['url']);$target=($parts['path']??'/').(isset($parts['query'])?'?'.$parts['query']:'');
+        if(!str_starts_with($target,'/')||str_starts_with($target,'//')||preg_match('/[\x00-\x20\x7f]/',$target))throw new \InvalidArgumentException('Invalid API request target.');
+        $body=$request['body'];$method=$request['method'];if(!in_array($method,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],true))throw new \InvalidArgumentException('Unsupported API method.');
+        $wire=$method.' '.$target." HTTP/1.1\r\nHost: ".(str_contains($host,':')?'['.$host.']':$host).($port===443?'':':'.$port)."\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: CajeerEngineBook/0.7.0\r\n";
+        $seen=[];foreach($request['headers'] as $name=>$value){$lower=strtolower((string)$name);if(isset($seen[$lower])||!is_string($name)||!is_string($value)||!preg_match('/\A[A-Za-z0-9!#$%&\x27*+.^_`|~-]{1,80}\z/D',$name)||preg_match('/[^\x20-\x7e]/',$value)||in_array(strtolower($name),['host','connection','content-length','transfer-encoding','accept-encoding','user-agent','expect','upgrade','proxy-authorization','proxy-connection','trailer','te'],true))throw new \InvalidArgumentException('Invalid outbound API header.');$seen[$lower]=true;$wire.=$name.': '.$value."\r\n";}
+        if($body!==''||in_array($method,['POST','PUT','PATCH'],true))$wire.='Content-Length: '.strlen($body)."\r\n";
+        $wire.="\r\n".$body;
         $started=hrtime(true);$deadline=self::clock()+$seconds;
         $ctx=stream_context_create(['ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'peer_name'=>$host,'SNI_enabled'=>true,'allow_self_signed'=>false,'crypto_method'=>STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT|STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT]]);
         $address=str_contains($ip,':')?'['.$ip.']':$ip;
@@ -48,13 +55,7 @@ final class ApiPlaygroundTransport
             if(!stream_set_blocking($socket,false))throw new \RuntimeException('Cannot configure TLS transport.');
             while(true){self::remaining($deadline);$handshake=@stream_socket_enable_crypto($socket,true,STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT|STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT);if($handshake===true)break;if($handshake===false)throw new \RuntimeException('API TLS connection failed.');self::wait($socket,$deadline,true,true);usleep(1000);}
             $buffer='';
-            $parts=parse_url($request['url']);$target=($parts['path']??'/').(isset($parts['query'])?'?'.$parts['query']:'');
-            if(!str_starts_with($target,'/')||str_starts_with($target,'//')||preg_match('/[\x00-\x20\x7f]/',$target))throw new \InvalidArgumentException('Invalid API request target.');
-            $body=$request['body'];$method=$request['method'];if(!in_array($method,['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],true))throw new \InvalidArgumentException('Unsupported API method.');
-            $wire=$method.' '.$target." HTTP/1.1\r\nHost: ".(str_contains($host,':')?'['.$host.']':$host).($port===443?'':':'.$port)."\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: CajeerEngineBook/0.7.0\r\n";
-            foreach($request['headers'] as $name=>$value){if(!preg_match('/\A[A-Za-z0-9!#$%&\x27*+.^_`|~-]{1,80}\z/D',$name)||preg_match('/[^\x20-\x7e]/',$value)||in_array(strtolower($name),['host','connection','content-length','transfer-encoding','accept-encoding','user-agent','expect','upgrade','proxy-authorization','proxy-connection','trailer','te'],true))throw new \InvalidArgumentException('Invalid outbound API header.');$wire.=$name.': '.$value."\r\n";}
-            if($body!==''||in_array($method,['POST','PUT','PATCH'],true))$wire.='Content-Length: '.strlen($body)."\r\n";
-            $wire.="\r\n".$body;self::write($socket,$wire,$deadline);
+            self::write($socket,$wire,$deadline);
             $totalHeaders=0;$interim=0;
             do{
                 $line=self::line($socket,$deadline,$buffer);$totalHeaders+=strlen($line);
@@ -63,12 +64,13 @@ final class ApiPlaygroundTransport
                     $totalHeaders+=strlen($line);if($totalHeaders>self::MAX_HEADERS||count($headers)>=200||!preg_match('/\A([A-Za-z0-9!#$%&\x27*+.^_`|~-]+):[ \t]*([^\r\n]*)\r\n\z/D',$line,$m)||preg_match('/[\x00-\x08\x0b-\x1f\x7f]/',$m[2]))throw new \RuntimeException('Invalid or oversized API response headers.');
                     $name=$m[1];$value=trim($m[2]);$lookup[strtolower($name)][]=$value;$headers[]=[$name,self::utf8($value)];
                 }
-                if($status===101||++$interim>5)throw new \RuntimeException('API protocol upgrade or excessive informational responses.');
+                if($status===101||($status<200&&(isset($lookup['content-length'])||isset($lookup['transfer-encoding'])))||++$interim>5)throw new \RuntimeException('API protocol upgrade or excessive informational responses.');
             }while($status<200);
             $out='';$truncated=false;
             if($raw&&isset($lookup['content-encoding'])&&$lookup['content-encoding']!==['identity'])throw new \RuntimeException('Unsupported integration content encoding.');
             $te=$lookup['transfer-encoding']??[];$cl=$lookup['content-length']??[];
             if(($te&&$cl)||count($cl)>1||($cl&&!preg_match('/\A[0-9]{1,16}\z/D',$cl[0]))||($te&&(count($te)!==1||strtolower($te[0])!=='chunked')))throw new \RuntimeException('Ambiguous or invalid API response framing.');
+            if($status===204&&($te||$cl))throw new \RuntimeException('Invalid framing for HTTP 204.');
             if($method!=='HEAD'&&!in_array($status,[204,304],true)){
                 if($te){if(count($te)!==1||strtolower($te[0])!=='chunked')throw new \RuntimeException('Unsupported API response encoding.');
                     while(true){$line=self::line($socket,$deadline,$buffer);if(!preg_match('/\A([0-9a-fA-F]{1,8})(?:;[^\r\n]*)?\r\n\z/D',$line,$m))throw new \RuntimeException('Invalid API chunk framing.');$n=(int)hexdec($m[1]);if($n===0){

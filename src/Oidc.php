@@ -80,20 +80,23 @@ final class Oidc
     private static function signed(string $jwt,array $jwks,array $c):array
     {
         if(strlen($jwt)>65536||count($parts=explode('.',$jwt))!==3)throw new \RuntimeException('Invalid ID token.');
-        [$h,$p,$s]=$parts;$head=json_decode(self::decode($h),true,8,JSON_THROW_ON_ERROR);$claims=json_decode(self::decode($p),true,16,JSON_THROW_ON_ERROR);
-        if(!is_array($head)||!is_array($claims)||($head['alg']??null)!=='RS256'||!is_string($head['kid']??null)||$head['kid']===''||strlen($head['kid'])>256||isset($head['crit'])||isset($head['jku'])||isset($head['jwk'])||isset($head['x5u']))throw new \RuntimeException('Unsupported ID token header.');
+        [$h,$p,$s]=$parts;$headJson=self::decode($h);$claimsJson=self::decode($p);$head=json_decode($headJson,true,8,JSON_THROW_ON_ERROR);$claims=json_decode($claimsJson,true,16,JSON_THROW_ON_ERROR);
+        $headObject=json_decode($headJson,false,8,JSON_THROW_ON_ERROR);$claimsObject=json_decode($claimsJson,false,16,JSON_THROW_ON_ERROR);
+        if(!$headObject instanceof \stdClass||!$claimsObject instanceof \stdClass||(!is_string($claimsObject->aud??null)&&!is_array($claimsObject->aud??null)))throw new \RuntimeException('Invalid OIDC JSON types.');
+        if(!is_array($head)||!is_array($claims)||($head['alg']??null)!=='RS256'||!is_string($head['kid']??null)||$head['kid']===''||strlen($head['kid'])>256||array_key_exists('crit',$head)||array_key_exists('jku',$head)||array_key_exists('jwk',$head)||array_key_exists('x5u',$head)||array_key_exists('b64',$head))throw new \RuntimeException('Unsupported ID token header.');
         $keys=$jwks['keys']??null;if(!is_array($keys)||!array_is_list($keys)||count($keys)>100)throw new \RuntimeException('Invalid OIDC key set.');
-        $matches=[];foreach($keys as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&($j['use']??'sig')==='sig'&&($j['alg']??'RS256')==='RS256'&&(!isset($j['key_ops'])||(is_array($j['key_ops'])&&array_is_list($j['key_ops'])&&in_array('verify',$j['key_ops'],true))))$matches[]=$j;
+        $matches=[];foreach($keys as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&(!array_key_exists('use',$j)||$j['use']==='sig')&&(!array_key_exists('alg',$j)||$j['alg']==='RS256')&&(!array_key_exists('key_ops',$j)||(is_array($j['key_ops'])&&array_is_list($j['key_ops'])&&in_array('verify',$j['key_ops'],true))))$matches[]=$j;
         if(count($matches)!==1||openssl_verify($h.'.'.$p,self::decode($s),self::key($matches[0]),OPENSSL_ALGO_SHA256)!==1)throw new \RuntimeException('Invalid ID token signature.');
         $aud=$claims['aud']??null;$aud=is_string($aud)?[$aud]:$aud;
-        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!array_is_list($aud)||count($aud)>32||count(array_filter($aud,'is_string'))!==count($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
+        if(isset($c['group_claim'])&&property_exists($claimsObject,$c['group_claim'])&&!is_array($claimsObject->{$c['group_claim']}))throw new \RuntimeException('Invalid OIDC group claim type.');
+        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!array_is_list($aud)||count($aud)>32||count(array_filter($aud,'is_string'))!==count($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(array_key_exists('azp',$claims)&&$claims['azp']!==$c['client_id'])||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
         return $claims;
     }
     public static function verify(string $jwt,array $jwks,array $c,string $nonce,int $now):array
     {
         $claims=self::signed($jwt,$jwks,$c);
-        if(($claims['nonce']??null)!==$nonce||isset($claims['events']))throw new \RuntimeException('Invalid ID token nonce or type.');
-        if(!is_int($claims['exp']??null)||$claims['exp']<=$now||!is_int($claims['iat']??null)||$claims['iat']>$now+60||$claims['iat']<$now-600||$claims['exp']<=$claims['iat']||(isset($claims['nbf'])&&(!is_int($claims['nbf'])||$claims['nbf']>$now+60)))throw new \RuntimeException('Invalid ID token time claims.');
+        if(($claims['nonce']??null)!==$nonce||array_key_exists('events',$claims))throw new \RuntimeException('Invalid ID token nonce or type.');
+        if(!is_int($claims['exp']??null)||$claims['exp']<=$now||!is_int($claims['iat']??null)||$claims['iat']>$now+60||$claims['iat']<$now-600||$claims['exp']<=$claims['iat']||(array_key_exists('nbf',$claims)&&(!is_int($claims['nbf'])||$claims['nbf']>$now+60)))throw new \RuntimeException('Invalid ID token time claims.');
         return $claims;
     }
     /** Subject-wide OIDC back-channel logout. SID-only tokens are not supported. */

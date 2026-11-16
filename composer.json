@@ -34,6 +34,7 @@
             "@php tests/security-hardening.php --require-zip",
             "python3 tests/security-http.py",
             "python3 tests/security-transport.py",
+            "python3 tests/security-retest.py",
             "@php tests/reliability.php",
             "python3 tests/reliability-http.py",
             "python3 tests/observability-http.py",

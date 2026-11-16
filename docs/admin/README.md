@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 0.9.0
+# Administrator handbook — CajeerEngine Book 0.9.1
 
 **Current PostgreSQL schema: 3.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -9,7 +9,7 @@
 | Choose topology, install, initialize owner, validate deployment | [Installation and operations](operations.md) |
 | Configure storage, PostgreSQL, Redis, secrets, TLS, SSO | [Configuration reference](configuration.md) |
 | Diagnose faults and run maintenance safely | [Incident runbook](incidents.md), [CLI reference](cli-reference.md) |
-| Review access, rotate credentials and revoke sessions | [Security lifecycle](security-lifecycle.md), [security hardening](security-hardening.md) |
+| Review access, rotate credentials and revoke sessions | [Security lifecycle](security-lifecycle.md), [security hardening](security-hardening.md), [release candidate retest](release-candidate.md) |
 | Run replicas, Redis Sentinel and repair media | [Distributed reliability](distributed-reliability.md) |
 | Monitor metrics, logs, alerts and RPO | [Observability](observability.md) |
 | Physical backups, WAL, named restore points and total-loss recovery | [Disaster recovery](disaster-recovery.md) |

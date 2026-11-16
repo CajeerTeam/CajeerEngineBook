@@ -135,26 +135,16 @@ def manifest_header(bundle, pub, repo, v):
 
 
 def zip_members(z):
-    infos = z.infolist(); require(0 < len(infos) <= MAX_FILES, 'Invalid ZIP member count')
-    seen = set(); dirs = set(); total = 0
-    for i in infos:
-        p = release.safe_member(i.filename); name = i.filename.casefold()
-        require(not i.is_dir() and stat.S_ISREG(i.external_attr>>16) and not i.flag_bits & 1 and name not in seen and name not in dirs, 'Unsafe ZIP member')
-        for parent in p.parents:
-            if str(parent)=='.': continue
-            key=str(parent).casefold(); require(key not in seen, 'ZIP file/directory conflict'); dirs.add(key)
-        seen.add(name); total += i.file_size
-        require(total <= MAX_UNPACK and i.file_size <= MAX_UNPACK, 'ZIP expands beyond limit')
-    return infos
+    return release.zip_members(z)
 
 
 def verify_bundle(bundle, pub, repo, v, commit=None):
     manifest_header(bundle,pub,repo,v)
-    for n in ('source.zip','deployment.zip'):
-        with zipfile.ZipFile(bundle/n) as z: zip_members(z)
+    # Authenticate artifact bytes before opening either archive.
     m=release.verify_directory(bundle,pub,v,repo,commit)
     for n in ('source.zip','deployment.zip'):
         with zipfile.ZipFile(bundle/n) as z:
+            require(z.getinfo('src/DatabaseMigrations.php').file_size <= 1024*1024, 'Schema source exceeds limit')
             body=z.read('src/DatabaseMigrations.php').decode('utf-8')
             match=re.search(r'public const VERSION = (\d+);',body)
             require(match and int(match.group(1))==m['schema_version'],'Signed schema metadata mismatch')

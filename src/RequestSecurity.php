@@ -18,9 +18,10 @@ final class RequestSecurity
     {
         // HTTP_HOST is never used to choose a tenant here. It only compares the browser's Origin.
         if($value===''||strlen($value)>512||preg_match('/[\x00-\x20\x7f\\\\\/@?#]/',$value))return null;
-        $p=parse_url('http://'.$value);if(!is_array($p)||!isset($p['host'])||isset($p['user'])||isset($p['pass'])||isset($p['path'])||isset($p['query'])||isset($p['fragment']))return null;
-        $host=strtolower($p['host']);if(!preg_match('/\A(?:[a-z0-9.-]+|\[[a-f0-9:]+\])\z/D',$host))return null;
-        $port=$p['port']??null;if($port!==null&&($port<1||$port>65535))return null;
+        if(!preg_match('~\A(\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9.-]+)(?::([0-9]{1,5}))?\z~D',$value,$m))return null;
+        $host=strtolower($m[1]);
+        if(str_starts_with($host,'[')&&!filter_var(substr($host,1,-1),FILTER_VALIDATE_IP,FILTER_FLAG_IPV6))return null;
+        $port=isset($m[2])?(int)$m[2]:null;if($port!==null&&($port<1||$port>65535))return null;
         return [$host,$port];
     }
     /** Browser-origin protection is additional to (not a replacement for) existing CSRF.
@@ -37,7 +38,10 @@ final class RequestSecurity
         $default=$m[1]==='https'?443:80;
         if(($o[1]??$default)!==($h[1]??$default))return false;
         if($primary!==null&&$m[1]!=='https')return false;
-        if(!empty($server['HTTPS'])&&$server['HTTPS']!=='off'&&$m[1]!=='https')return false;
+        if($primary===null&&isset($server['HTTPS'])){
+            $scheme=!empty($server['HTTPS'])&&$server['HTTPS']!=='off'?'https':'http';
+            if($m[1]!==$scheme)return false;
+        }
         return true;
     }
 }
