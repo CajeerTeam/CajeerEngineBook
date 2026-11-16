@@ -172,12 +172,11 @@ final class MediaStore
         return Files::path($this->dir,'media/'.$id.'.thumb.png');
     }
     /** Generate a bounded preview once; thumbnails are derived and not included in backups. */
-    public function thumbnail(string $id,?callable $authorized=null): ?array
+    public function thumbnail(string $id,?callable $authorized=null,?array $publishedAccess=null): ?array
     {
         if(!self::validId($id)||!function_exists('imagecreatefromstring'))return null;
-        return $this->books->snapshot(function(array $db)use($id,$authorized){
-            $item=$db['media'][$id]??null;
-            if(!$item||($authorized&&!$authorized($db,$id))||!str_starts_with($item['mime'],'image/'))return null;
+        $make=function(array $item)use($id){
+            if(!str_starts_with($item['mime'],'image/'))return null;
             $path=$this->thumbPath($id);
             if(!is_file($path)){
                 $source=$this->blob($id);
@@ -196,18 +195,24 @@ final class MediaStore
             }
             $stream=fopen($path,'rb');if(!$stream)throw new \RuntimeException('Cannot open thumbnail');
             return [fstat($stream)['size'],$stream];
-        });
+        };
+        if($publishedAccess!==null)return $this->books->publishedMedia($id,$publishedAccess[0],$publishedAccess[1],$make);
+        return $this->books->snapshot(function(array $db)use($id,$authorized,$make){$item=$db['media'][$id]??null;return !$item||($authorized&&!$authorized($db,$id))?null:$make($item);});
     }
-    public function open(string $id,bool $private,?callable $authorized=null): ?array
+    public function open(string $id,bool $private,?callable $authorized=null,?array $publishedAccess=null): ?array
     {
         if(!self::validId($id)) return null;
-        return $this->books->snapshot(function(array $db)use($id,$private,$authorized){
-            $item=$db['media'][$id]??null;
-            if(!$item || (!$private && !($authorized?$authorized($db,$id):self::references($db,$id,true)))) return null;
+        $open=function(array $item)use($id){
             $path=$this->blob($id);if(!is_file($path)) throw new \RuntimeException('Missing media blob');
             $stream=fopen($path,'rb');if(!$stream) throw new \RuntimeException('Cannot open media');
             if(fstat($stream)['size']!==$item['size']){fclose($stream);throw new \RuntimeException('Damaged media blob');}
             return [$item,$stream];
+        };
+        if(!$private&&$publishedAccess!==null)return $this->books->publishedMedia($id,$publishedAccess[0],$publishedAccess[1],$open);
+        return $this->books->snapshot(function(array $db)use($id,$private,$authorized,$open){
+            $item=$db['media'][$id]??null;
+            if(!$item || (!$private && !($authorized?$authorized($db,$id):self::references($db,$id,true)))) return null;
+            return $open($item);
         });
     }
 }

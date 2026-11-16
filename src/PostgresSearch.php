@@ -36,11 +36,19 @@ final class PostgresSearch
         if(!$pdo->inTransaction())throw new \LogicException('Search update outside transaction.');
         $old=$rebuild||!isset($before['pages'])?[]:Search::projection($before);$new=Search::projection($after);
         if($rebuild)self::q($pdo,'DELETE FROM cajeer_book.search_document WHERE installation=? AND scope=?',$scope);
-        else foreach(array_diff_key($old,$new) as $key=>$p)self::q($pdo,'DELETE FROM cajeer_book.search_document WHERE installation=? AND scope=? AND page_key=?',[...$scope,$key]);
+        else foreach(array_chunk(array_keys(array_diff_key($old,$new)),128) as $chunk)self::q($pdo,'DELETE FROM cajeer_book.search_document WHERE installation=? AND scope=? AND page_key IN ('.implode(',',array_fill(0,count($chunk),'?')).')',[...$scope,...$chunk]);
+        $batch=[];$bytes=0;
+        $flush=static function()use($pdo,&$batch,&$bytes){
+            if(!$batch)return;
+            self::q($pdo,'INSERT INTO cajeer_book.search_document(installation,scope,page_key,book,version,title,section,page_order,is_public,body,locale) VALUES '.implode(',',array_fill(0,count($batch),'(?,?,?,?,?,?,?,?,CAST(? AS boolean),?,?)')).' ON CONFLICT(installation,scope,page_key) DO UPDATE SET book=EXCLUDED.book,version=EXCLUDED.version,title=EXCLUDED.title,section=EXCLUDED.section,page_order=EXCLUDED.page_order,is_public=EXCLUDED.is_public,body=EXCLUDED.body,locale=EXCLUDED.locale',array_merge(...$batch));
+            $batch=[];$bytes=0;
+        };
         foreach($new as $key=>$p){if(isset($old[$key])&&$old[$key]===$p)continue;
-            $body=Search::plain($key,$p);
-            self::q($pdo,'INSERT INTO cajeer_book.search_document(installation,scope,page_key,book,version,title,section,page_order,is_public,body,locale) VALUES(?,?,?,?,?,?,?,?,CAST(? AS boolean),?,?) ON CONFLICT(installation,scope,page_key) DO UPDATE SET book=EXCLUDED.book,version=EXCLUDED.version,title=EXCLUDED.title,section=EXCLUDED.section,page_order=EXCLUDED.page_order,is_public=EXCLUDED.is_public,body=EXCLUDED.body,locale=EXCLUDED.locale',[...$scope,$key,$p['book'],$p['version'],str_replace("\0",' ',$p['title']),str_replace("\0",' ',$p['section']),$p['order'],$p['public']?'true':'false',$body,$p['locale']]);
+            $body=Search::plain($key,$p);$size=strlen($body)+strlen($key)+strlen($p['title'])+strlen($p['section']);
+            if(count($batch)>=64||($batch&&$bytes+$size>2097152))$flush();
+            $batch[]=[...$scope,$key,$p['book'],$p['version'],str_replace("\0",' ',$p['title']),str_replace("\0",' ',$p['section']),$p['order'],$p['public']?'true':'false',$body,$p['locale']];$bytes+=$size;
         }
+        $flush();
         self::q($pdo,'INSERT INTO cajeer_book.search_state(installation,scope,revision) SELECT installation,scope,revision FROM cajeer_book.content_store WHERE installation=? AND scope=? ON CONFLICT(installation,scope) DO UPDATE SET revision=EXCLUDED.revision',$scope);
     }
     public static function find(PDO $pdo,array $scope,string $visibility,string $role,array $o,bool $navigation):array

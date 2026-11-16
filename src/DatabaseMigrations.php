@@ -10,7 +10,7 @@ use PDO;
  */
 final class DatabaseMigrations
 {
-    public const VERSION = 2;
+    public const VERSION = 3;
     private const LOCK = '1128416305, 1'; // same database-wide lock as pre-0.5.2 schema installers
     private const SCHEMA = 'cajeer_book';
     private const BASELINE = ['postgres-content.sql','postgres-identity.sql','postgres-audit.sql'];
@@ -30,6 +30,7 @@ final class DatabaseMigrations
         $definitions=[
             1=>['name'=>'baseline-0.5.1','release'=>'0.5.1','up'=>self::BASELINE,'down'=>null],
             2=>['name'=>'audit-outcome-index','release'=>'0.5.2','up'=>['migrations/0002-audit-outcome.up.sql'],'down'=>'migrations/0002-audit-outcome.down.sql'],
+            3=>['name'=>'published-read-indexes','release'=>'0.6.0','up'=>['migrations/0003-published-read.up.sql'],'down'=>'migrations/0003-published-read.down.sql'],
         ];
         $out=[];$next=1;
         foreach($definitions as $version=>$definition){
@@ -92,14 +93,14 @@ final class DatabaseMigrations
         try{
             $v=self::validateLedger(self::rows($pdo),self::catalog());
             if($v!==self::VERSION)throw new \RuntimeException('Database schema '.$v.' is incompatible with this release (requires '.self::VERSION.'). Run bin/migrations.php apply --offline.');
-            self::verifyIndex($pdo,true);
+            self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);
         }catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
     }
     /** Fresh portable imports and restore drills use the same registry. No DDL on a current database. */
     public static function prepareInstallation(PDO $pdo,bool $boundLegacy=false): void
     {
         self::lock($pdo,true);
-        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);return;}
+        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);return;}
             if(!$boundLegacy&&self::exists($pdo,'cajeer_book.content_installation')&&$pdo->query('SELECT 1 FROM cajeer_book.content_installation LIMIT 1')->fetchColumn()!==false)throw new \RuntimeException('A populated database needs an explicit offline schema upgrade with its matching installation before importing a new namespace.');}
         catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
         self::unlock($pdo,true);
@@ -118,6 +119,23 @@ final class DatabaseMigrations
         $row=self::q($pdo,"SELECT i.indisvalid,i.indisready,i.indisunique,pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='cajeer_book' AND c.relname='audit_event_outcome'")->fetch(PDO::FETCH_ASSOC);
         if(!$present){if($row||self::exists($pdo,'cajeer_book.audit_event_outcome'))throw new \RuntimeException('Unexpected audit outcome index; investigate schema drift.');return;}
         if(!$row||!$row['indisvalid']||!$row['indisready']||$row['indisunique']||$row['definition']!=='CREATE INDEX audit_event_outcome ON cajeer_book.audit_event USING btree (installation, outcome, at_epoch DESC, event_id DESC)')throw new \RuntimeException('Audit outcome index missing or inconsistent; schema verification failed.');
+    }
+    private static function verifyReadIndexes(PDO $pdo,bool $present):void
+    {
+        // Compare the actual index definitions with the immutable migration SQL.
+        // PostgreSQL adds redundant parentheses and explicit text casts when deparsing.
+        $normalize=static fn(string $s)=>strtolower(preg_replace('/[\s();]+/','',str_replace('::text','',$s)));
+        $statements=array_values(array_filter(explode(';',trim(self::sql('migrations/0003-published-read.up.sql'))),fn($sql)=>str_starts_with(ltrim($sql),'CREATE INDEX ')));
+        $function=$pdo->query("SELECT p.prosrc,p.provolatile,p.proisstrict,p.proparallel,p.prosecdef,p.proconfig::text AS settings,l.lanname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang WHERE n.nspname='cajeer_book' AND p.proname='reader_json' AND p.proargtypes='114'::oidvector AND p.prorettype=114")->fetch(PDO::FETCH_ASSOC);
+        if($present){if(!$function||trim($function['prosrc'])!=="SELECT replace(value::text, chr(92)||'u0000', chr(92)||'u0001')::json"||$function['provolatile']!=='i'||!$function['proisstrict']||$function['proparallel']!=='s'||$function['prosecdef']||$function['settings']!=='{search_path=pg_catalog}'||$function['lanname']!=='sql')throw new \RuntimeException('Published routing JSON function missing or inconsistent.');}
+        elseif($function||$pdo->query("SELECT to_regprocedure('cajeer_book.reader_json(json)') IS NOT NULL")->fetchColumn())throw new \RuntimeException('Unexpected published routing JSON function.');
+        $names=['pages_public_key_idx','pages_public_id_idx','pages_public_media_idx'];$rows=[];
+        foreach($pdo->query("SELECT c.relname,i.indisvalid,i.indisready,i.indisunique,i.indrelid='cajeer_book.pages'::regclass AS correct_table,pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='cajeer_book' AND c.relname IN ('pages_public_key_idx','pages_public_id_idx','pages_public_media_idx')") as $row)$rows[$row['relname']]=$row;
+        foreach($names as $i=>$name){
+            $r=$rows[$name]??null;
+            if(!$present){if($r||self::exists($pdo,'cajeer_book.'.$name))throw new \RuntimeException('Unexpected published read index: '.$name);continue;}
+            if(!$r||!$r['correct_table']||!$r['indisvalid']||!$r['indisready']||$r['indisunique']||$normalize($r['definition'])!==$normalize($statements[$i]))throw new \RuntimeException('Published read index missing or inconsistent: '.$name);
+        }
     }
     /** Compare baseline objects against the SQL definitions in a transactional shadow schema.
      * Existing extra operator indexes are allowed; required objects, definitions and columns
@@ -148,7 +166,7 @@ final class DatabaseMigrations
         $expected=self::inventory($pdo,$shadow);$actual=self::inventory($pdo,self::SCHEMA);
         self::compareInventory($expected,$actual);
         $pdo->exec('DROP SCHEMA '.$shadow.' CASCADE');
-        self::baselineData($pdo);self::verifyIndex($pdo,false);return $expected;
+        self::baselineData($pdo);self::verifyIndex($pdo,false);self::verifyReadIndexes($pdo,false);return $expected;
     }
     private static function compareInventory(array $expected,array $actual): void
     {
@@ -193,7 +211,7 @@ final class DatabaseMigrations
         try{
             $db=self::server($pdo);$catalog=self::catalog();$rows=self::rows($pdo);$v=self::validateLedger($rows,$catalog);
             self::verifyHistory($pdo,$catalog,$v);$legacy=self::legacy($pdo);if($v===0&&self::exists($pdo,self::LEDGER))throw new \RuntimeException('Empty migration registry.');$pending=array_values(array_filter($catalog,fn($m)=>$m['version']>$v));
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);}
             $bytes=self::exists($pdo,'cajeer_book.audit_event')?(int)$pdo->query("SELECT pg_total_relation_size('cajeer_book.audit_event'::regclass)")->fetchColumn():0;
             $exclusive=(int)$pdo->query('SELECT CASE WHEN pg_try_advisory_lock('.self::LOCK.') THEN 1 ELSE 0 END')->fetchColumn()===1;if($exclusive)self::unlock($pdo,false);
             $canCreate=$pdo->query("SELECT has_database_privilege(current_user,current_database(),'CREATE')")->fetchColumn()===true;
@@ -247,14 +265,14 @@ final class DatabaseMigrations
             $pdo->exec("SET LOCAL lock_timeout='30s'; SET LOCAL statement_timeout='30min'");
             $v=self::validateLedger(self::rows($pdo),$catalog);$before=$v;$changed=[];
             self::verifyHistory($pdo,$catalog,$v);
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);}
             if($down){
                 if($v<=$target)throw new \RuntimeException('Rollback target must be below the applied schema version.');
                 // Validate the whole down path before executing any DDL.
                 for($n=$v;$n>$target;$n--)if(!$catalog[$n]['reversible'])throw new \RuntimeException('Migration '.$n.' requires restoring the matched backup.');
                 while($v>$target){$m=$catalog[$v];$start=hrtime(true);$pdo->exec(self::sql($m['down']));
                     self::record($pdo,$m,'rollback',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'rollback'];$v--;
-                    self::verifyIndex($pdo,$v>=2);
+                    self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);
                 }
             }else{
                 if($v===0){
@@ -264,7 +282,7 @@ final class DatabaseMigrations
                     self::registry($pdo);self::record($pdo,$catalog[1],$mode,(int)((hrtime(true)-$start)/1000000),$inventory);$v=1;$changed[]=['version'=>1,'operation'=>$mode];
                 }
                 while($v<$target){$m=$catalog[$v+1];$start=hrtime(true);foreach($m['up'] as $file)$pdo->exec(self::sql($file));
-                    $v++;self::verifyIndex($pdo,$v>=2);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
+                    $v++;self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
                 }
             }
             if($v!==$target||self::validateLedger(self::rows($pdo),$catalog)!==$target)throw new \RuntimeException('Migration target verification failed.');

@@ -341,7 +341,7 @@ final class App {
             if($path==='/organizations'||str_starts_with($path,'/organizations/')){(new OrganizationController($this->identityStore,$this->auth))->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/studio'||str_starts_with($path,'/studio/')){$this->studio($path,$method);return;}
             if($method==='POST'){http_response_code(405);header('Allow: GET, HEAD');return;}
-            if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method,fn($db,$id)=>Visibility::media($db,$id,$this->readerVisibility,$this->studioRole));return;}
+            if(str_starts_with($path,'/media/')){$this->mediaController->serve(substr($path,7),false,$method,fn($db,$id)=>Visibility::media($db,$id,$this->readerVisibility,$this->studioRole),[$this->readerVisibility,$this->studioRole]);return;}
             if($path==='/health/live'){$this->json(['status'=>'ok']);return;}
             if($path==='/health/ready'){
                 try { $this->identityStore->checkReady(); $this->identityStore->checkWorkspaceStores($this->installationDir); ReleaseHealth::check($this->root); RedisRuntime::forRoot($this->installationDir)?->check(); $this->json(['status'=>'ok']); }
@@ -349,7 +349,12 @@ final class App {
                 return;
             }
             if($path==='/search'||$path==='/api/v1/search'){$this->search($path==='/api/v1/search');return;}
-            $db=$this->store->read();$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
+            if(str_starts_with($path,'/api/v1/pages/')){
+                $key=substr($path,14);$result=$this->store->publishedPage($key,$this->readerVisibility,$this->studioRole);
+                if($result['page']===null){if($result['redirect']!==null){$this->redirect('/api/v1/pages/'.$result['redirect']);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}
+                $p=$result['page'];$this->json(array_diff_key($p,['link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($p)]);return;
+            }
+            $db=in_array($path,['/sdk','/playground'],true)?$this->store->read():$this->store->readerSnapshot($this->readerVisibility,$this->studioRole,str_starts_with($path,'/docs/')?substr($path,6):null,$path==='/api/v1/pages');$pages=Visibility::pages($db,$this->readerVisibility,$this->studioRole);
             if($this->domainHost!==null&&$path==='/robots.txt'){header('Content-Type: text/plain; charset=utf-8');echo 'User-agent: *'."\n".'Allow: /'."\n".'Sitemap: https://'.$this->domainCanonical.'/sitemap.xml'."\n";return;}
             if($this->domainHost!==null&&$path==='/sitemap.xml'){if($this->domainCanonical!==$this->domainHost){header('Location: https://'.$this->domainCanonical.'/sitemap.xml',true,302);return;}header('Content-Type: application/xml; charset=utf-8');echo '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';foreach($pages as $key=>$p)echo '<url><loc>'.htmlspecialchars($this->canonicalUrl('/docs/'.$key),ENT_XML1|ENT_QUOTES,'UTF-8').'</loc></url>';echo '</urlset>';return;}
             if(preg_match('~\A/l/(en|ru)/docs/(.+)\z~D',$path,$localized)){
@@ -383,7 +388,7 @@ final class App {
                 $this->page('API Playground',ApiPlaygroundView::markup($key,$pages[$key],$d,$this->scopedIdentity,$this->studioRole),$pages,$key);return;
             }
             if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($p)],$pages));return;}
-            if(str_starts_with($path,'/api/v1/pages/')){$key=substr($path,14);if(!isset($pages[$key])){if(($target=PageTree::redirect($db,$key))&&isset($pages[$target])){$this->redirect('/api/v1/pages/'.$target);return;}http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'not_found']);return;}$this->json(array_diff_key($pages[$key],['link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($pages[$key])] );return;}
+
 
             if($path==='/'){
                 $locale=$_GET['locale']??'';if($locale!=='')Locale::require($locale);$visible=Locale::pages($pages,$locale);$books=BookStore::books($db);

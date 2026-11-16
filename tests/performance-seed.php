@@ -14,7 +14,7 @@ if($action==='prepare'){
     unset($pdo);PostgresContentStore::migrate($root);echo json_encode($settings,JSON_THROW_ON_ERROR);exit;
 }
 if($action==='analyze'){
-    $pdo=PostgresContentStore::runtimeConnect();$pdo->exec('ANALYZE cajeer_book.content_record, cajeer_book.content_section, cajeer_book.search_document, cajeer_book.identity_workspaces, cajeer_book.audit_event');exit;
+    $pdo=PostgresContentStore::runtimeConnect();$pdo->exec('ANALYZE cajeer_book.content_record, cajeer_book.pages, cajeer_book.content_section, cajeer_book.search_document, cajeer_book.identity_workspaces, cajeer_book.audit_event');exit;
 }
 if($action==='ci-fixture'){
     // Separate unpublished batch; the measured Reader corpus is left unchanged.
@@ -39,7 +39,9 @@ if($action==='profile'){
         $q=$pdo->prepare('SELECT count(*) FROM cajeer_book.search_document WHERE installation=? AND is_public');$q->execute([$id]);$published=(int)$q->fetchColumn();
         $db=$pdo->query("SELECT pg_database_size(current_database()) AS bytes,blks_read,blks_hit,temp_bytes,xact_commit,xact_rollback FROM pg_stat_database WHERE datname=current_database()")->fetch(PDO::FETCH_ASSOC);
         $relations=$pdo->query("SELECT relname,pg_total_relation_size(relid) AS bytes,seq_scan,idx_scan FROM pg_stat_user_tables WHERE schemaname='cajeer_book' ORDER BY relname")->fetchAll(PDO::FETCH_ASSOC);
+        $q=$pdo->prepare("SELECT record_key FROM cajeer_book.media WHERE installation=? AND scope=? ORDER BY position LIMIT 1");$q->execute([$id,$scope]);$mid=$q->fetchColumn();
         $pdo->rollBack();$out=['published_documents'=>$published,'content_load_plan'=>$content,'search_plans'=>$search,'database'=>$db,'relations'=>$relations];
+        if(is_string($mid))$out['optimized_read_plans']=(new PostgresContentStore($id,$scope,$binding[1]))->profilePublished('guide/1/topic-0000',$mid);
         if(CajeerBook\RedisRuntime::enabled()){$r=CajeerBook\RedisRuntime::forRoot($root);$out['redis']=['stats'=>$r->stats(),'resources'=>$r->resources()];}
         echo json_encode($out,JSON_THROW_ON_ERROR);exit;
     }finally{if($pdo->inTransaction())$pdo->rollBack();}

@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.5.4 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.6.0 — PostgreSQL Performance Stable
+
+Published page API requests now retrieve the specific authorized snapshot instead of loading the whole content scope. Reader navigation and list APIs use compact SQL projections; published media uses an indexed reference check. Anonymous routing reads the relevant workspace/organization without loading sessions or all users. Content and search writes are batched within the original transaction. These changes preserve existing quotas, publication semantics, visibility, and audit history. **Existing PostgreSQL installations must upgrade to database schema 3 offline before starting 0.6.0.** See [PostgreSQL performance upgrade](docs/admin/postgres-performance.md) for migration, rollback, benchmark and qualification instructions. The SQL integration and production SLO must be verified on a real PostgreSQL/Redis test stand; no latency improvement is asserted without measurement.
 
 ## 0.5.4 — Performance Benchmarking
 

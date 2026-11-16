@@ -46,6 +46,36 @@ final class PostgresIdentityStore
             $result=$fn($db,$pdo);$pdo->commit();$ok=true;return $result;
         }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}finally{Observability::operation('sql_identity_transaction',$start,$ok);}
     }
+    /** Anonymous routing needs only workspace/organization metadata, never users,
+     * sessions, invitations, OIDC flows or activity. Keep the same identity read lock
+     * as the full transaction until the caller finishes reading the content scope. */
+    public function publicRegistry(string $root,string $kind,string $value,callable $fn):mixed
+    {
+        $pdo=PostgresContentStore::runtimeConnect();$pdo->beginTransaction();$start=hrtime(true);$ok=false;
+        try{
+            $this->assertBinding($pdo);
+            $lockStart=hrtime(true);$locked=false;
+            try{$state=self::query($pdo,"SELECT format,owner_anchor,metadata->>'schema' AS schema FROM cajeer_book.identity_state WHERE installation=? FOR SHARE",[$this->installation])->fetch(PDO::FETCH_ASSOC);
+                if(!$state||(int)$state['format']!==1||$state['schema']!=='4')throw new \RuntimeException('Invalid identity state.');$locked=true;
+            }finally{Observability::operation('sql_identity_lock',$lockStart,$locked);}
+            $owner=$state['owner_anchor'];$anchor=\CajeerEngine\Update\OperationFiles::path($root,'identity.required');
+            if(file_exists($anchor)&&(!is_file($anchor)||filesize($anchor)!==33||$owner===null||file_get_contents($anchor)!==$owner."\n"))throw new \RuntimeException('Identity anchor mismatch.');
+            if($owner!==null){$r=self::query($pdo,"SELECT 1 FROM cajeer_book.identity_users WHERE installation=? AND record_key=? AND value->>'owner'='true' AND value->>'enabled'='true'",[$this->installation,$owner])->fetchColumn();if($r===false)throw new \RuntimeException('Identity owner anchor mismatch.');}
+            elseif(self::query($pdo,'SELECT 1 FROM cajeer_book.identity_users WHERE installation=? LIMIT 1',[$this->installation])->fetchColumn()!==false)throw new \RuntimeException('Identity owner anchor missing.');
+            $condition=match($kind){'workspace'=>'w.record_key=?','legacy'=>"w.content_scope='legacy'",'domain'=>"jsonb_exists(CAST(w.value->'domains' AS jsonb),?)",default=>throw new \LogicException('Unknown public registry lookup.')};
+            $args=$kind==='legacy'?[$this->installation]:[$this->installation,$value];
+            $rows=self::query($pdo,"SELECT w.record_key AS wid,w.value::text AS workspace,o.record_key AS oid,o.value::text AS organization FROM cajeer_book.identity_workspaces w LEFT JOIN cajeer_book.identity_organizations o ON o.installation=w.installation AND o.record_key=w.organization_id WHERE w.installation=? AND $condition",$args)->fetchAll(PDO::FETCH_ASSOC);
+            if(count($rows)>1)throw new \RuntimeException('Ambiguous public workspace registry.');
+            $db=['workspaces'=>[],'organizations'=>[]];
+            foreach($rows as $row){$w=self::decode($row['workspace']);$o=self::decode($row['organization']);
+                if(($w['id']??null)!==$row['wid']||($w['organization']??null)!==$row['oid']||($o['id']??null)!==$row['oid']||!is_bool($o['archived']??null)||($o['members']??null)!==[]||($o['roles']??[])!==[]||($w['roles']??[])!==[])throw new \RuntimeException('Invalid public workspace registry.');
+                $db['workspaces'][$row['wid']]=$w;$db['organizations'][$row['oid']]=$o;
+            }
+            Workspaces::validate($db);CustomDomains::validate($db);
+            $result=$fn($db);$pdo->commit();$ok=true;return $result;
+        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        finally{Observability::operation('sql_identity_transaction',$start,$ok);}
+    }
     private function load(PDO $pdo,bool $lock=false,bool $shared=false):array
     {
         $start=hrtime(true);$ok=false;try{$state=self::query($pdo,'SELECT format,owner_anchor,metadata::text AS metadata FROM cajeer_book.identity_state WHERE installation=?'.($lock?($shared?' FOR SHARE':' FOR UPDATE'):''),[$this->installation])->fetch(PDO::FETCH_ASSOC);

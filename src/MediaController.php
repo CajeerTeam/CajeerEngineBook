@@ -73,14 +73,14 @@ final class MediaController
         return $h.'</div>';
     }
     private static function size(int $n): string {return $n>=1048576?number_format($n/1048576,1).' MiB':number_format($n/1024,1).' KiB';}
-    public function serve(string $id,bool $private,string $method,?callable $authorized=null): void
+    public function serve(string $id,bool $private,string $method,?callable $authorized=null,?array $publishedAccess=null): void
     {
         header('Cache-Control: private, no-store');header('X-Robots-Tag: noindex');
         if(($private||$authorized) && isset($_GET['thumb']) && !isset($_GET['download'])){
-            $thumbnail=$this->media->thumbnail($id,$private?null:$authorized);
+            $thumbnail=$this->media->thumbnail($id,$private?null:$authorized,$private?null:$publishedAccess);
             if($thumbnail){[$size,$stream]=$thumbnail;try{header('Content-Type: image/png');header('Content-Length: '.$size);header("Content-Security-Policy: default-src 'none'; sandbox");if($method!=='HEAD')fpassthru($stream);}finally{fclose($stream);}return;}
         }
-        $result=$this->media->open($id,$private,$authorized);
+        $result=$this->media->open($id,$private,$authorized,$publishedAccess);
         if(!$result){http_response_code(404);echo 'Media not found';return;}
         [$item,$stream]=$result;
         try{

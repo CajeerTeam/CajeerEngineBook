@@ -20,6 +20,7 @@ final class PostgresContentStore
     private static ?PDO $backupConnection=null;
     private static ?string $backupNamespace=null;
     private bool $wake=false;
+    private ?array $readPlans=null;
     public function __construct(private readonly string $namespace,private readonly string $scope,private readonly string $binding) {}
 
     private static function rootOf(string $dir):string
@@ -111,7 +112,10 @@ final class PostgresContentStore
     }
     private function query(PDO $pdo,string $sql,array $args=[]):\PDOStatement
     {
-        $start=hrtime(true);$ok=false;try{$s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;}finally{Observability::operation('sql_content_query',$start,$ok);}
+        $start=hrtime(true);$ok=false;try{
+            if($this->readPlans!==null&&str_starts_with($sql,'SELECT ')){$ex=$pdo->prepare('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '.$sql);$ex->execute($args);$this->readPlans[]=self::decode($ex->fetchColumn());}
+            $s=$pdo->prepare($sql);$s->execute($args);$ok=true;return $s;
+        }finally{Observability::operation('sql_content_query',$start,$ok);}
     }
     private function params():array{return [$this->namespace,$this->scope];}
     private static function json(mixed $v):string{return json_encode($v,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRESERVE_ZERO_FRACTION);}
@@ -209,15 +213,130 @@ final class PostgresContentStore
             $position++;
             if(!$array)continue;
             $old=is_array($old)?$old:[];$positions=array_flip(array_keys($old));$i=0;
-            foreach($old as $key=>$unused)if(!array_key_exists($key,$value))$this->query($pdo,'DELETE FROM cajeer_book.content_record WHERE installation=? AND scope=? AND section=? AND record_key=?',[...$p,$name,(string)$key]);
+            // Bound both parameter count and bytes. A bulk publish/import no longer
+            // incurs one SQL round trip per changed record, while preserving JSON
+            // array ordering, FK constraints and the surrounding transaction.
+            $removed=[];foreach($old as $key=>$unused)if(!array_key_exists($key,$value))$removed[]=(string)$key;
+            foreach(array_chunk($removed,128) as $chunk)$this->query($pdo,'DELETE FROM cajeer_book.content_record WHERE installation=? AND scope=? AND section=? AND record_key IN ('.implode(',',array_fill(0,count($chunk),'?')).')',[...$p,$name,...$chunk]);
+            $batch=[];$bytes=0;
+            $flush=function()use($pdo,&$batch,&$bytes){
+                if(!$batch)return;
+                $this->query($pdo,'INSERT INTO cajeer_book.content_record(installation,scope,section,record_key,position,value) VALUES '.implode(',',array_fill(0,count($batch),'(?,?,?,?,?,CAST(? AS json))')).' ON CONFLICT(installation,scope,section,record_key) DO UPDATE SET position=EXCLUDED.position,value=EXCLUDED.value',array_merge(...$batch));
+                $batch=[];$bytes=0;
+            };
             foreach($value as $key=>$item){
                 if(str_contains((string)$key,"\0"))throw new \DomainException('Invalid PostgreSQL record key.');
-                if(!array_key_exists($key,$old)||$positions[$key]!==$i||$old[$key]!==$item)$this->query($pdo,'INSERT INTO cajeer_book.content_record(installation,scope,section,record_key,position,value) VALUES(?,?,?,?,?,CAST(? AS json)) ON CONFLICT(installation,scope,section,record_key) DO UPDATE SET position=EXCLUDED.position,value=EXCLUDED.value',[...$p,$name,(string)$key,$i,self::json($item)]);
+                if(!array_key_exists($key,$old)||$positions[$key]!==$i||$old[$key]!==$item){
+                    $json=self::json($item);$size=strlen($json)+strlen((string)$key);
+                    if(count($batch)>=64||($batch&&$bytes+$size>2097152))$flush();
+                    $batch[]=[...$p,$name,(string)$key,$i,$json];$bytes+=$size;
+                }
                 $i++;
             }
+            $flush();
         }
         $this->query($pdo,'UPDATE cajeer_book.content_store SET revision=revision+1 WHERE installation=? AND scope=?',$p);
         PostgresSearch::sync($pdo,$p,$previous,$next);
+    }
+    /** Selective published reads. The scope lock pins both authorization and publication
+     * until the result (or media file descriptor) has been obtained. No draft/history load.
+     */
+    private function publishedRead(callable $fn):mixed
+    {
+        if(self::$backupConnection!==null)throw new \LogicException('Reader projection is not a backup snapshot.');
+        $pdo=$this->db();$pdo->beginTransaction();$start=hrtime(true);$ok=false;
+        try{$this->lock($pdo,false);$result=$fn($pdo);$pdo->commit();$ok=true;return $result;}
+        catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        finally{Observability::operation('sql_content_transaction',$start,$ok);}
+    }
+    private const PUBLIC_KEY="coalesce(cajeer_book.reader_json(p.value)->>'published_key',p.record_key)";
+    private const PUBLISHED="json_typeof(cajeer_book.reader_json(p.value)->'published')='object'";
+    private static function publishedWhere(string $visibility,string $role):string
+    {
+        $where='p.installation=? AND p.scope=? AND '.self::PUBLISHED." AND split_part(p.record_key,'/',1)=split_part(".self::PUBLIC_KEY.", '/',1) AND split_part(p.record_key,'/',2)=split_part(".self::PUBLIC_KEY.", '/',2)";
+        if(Permissions::allows($role,'read'))return $where;
+        if($visibility!=='public')return $where.' AND false';
+        // A missing book row is the legacy implicit public book. The publication
+        // key is validated to remain in the draft's book/version by BookStore.
+        return $where." AND NOT EXISTS (SELECT 1 FROM cajeer_book.books b WHERE b.installation=p.installation AND b.scope=p.scope AND b.section='root:books' AND b.record_key=split_part(".self::PUBLIC_KEY.", '/', 1) AND (cajeer_book.reader_json(b.value)->'visibility' IS NULL OR cajeer_book.reader_json(b.value)->>'visibility' IN ('inherit','public')) IS NOT TRUE)";
+    }
+    private function publishedRows(PDO $pdo,string $visibility,string $role,?string $key=null,?string $id=null,string $projection='full',bool $legacyId=false):array
+    {
+        $where=self::publishedWhere($visibility,$role);$args=$this->params();
+        if($key!==null){$where.=' AND '.self::PUBLIC_KEY.'=?';$args[]=$key;}
+        if($id!==null){$where.=$legacyId?" AND cajeer_book.reader_json(p.value)->>'id' IS NULL AND substr(encode(sha256(convert_to('cajeerbook-page:'||p.record_key,'UTF8')),'hex'),1,32)=?":" AND cajeer_book.reader_json(p.value)->>'id'=?";$args[]=$id;}
+        // Only routing metadata is sanitized by reader_json. For rare escaped NULs
+        // (or a literal backslash-u0000 sequence), decode the original entry in PHP.
+        // This preserves arbitrary valid Markdown and exact legacy snapshot values.
+        $snapshot=match($projection){
+            'navigation'=>"(SELECT json_object_agg(k,v ORDER BY n) FROM json_each(cajeer_book.reader_json(p.value)->'published') WITH ORDINALITY f(k,v,n) WHERE k IN ('title','section','order','locale','translation_group'))::text",
+            'list'=>"(SELECT json_object_agg(k,v ORDER BY n) FROM json_each(cajeer_book.reader_json(p.value)->'published') WITH ORDINALITY f(k,v,n) WHERE k NOT IN ('body','link_base','playground','source_digest','translation_group'))::text",
+            'full'=>"(cajeer_book.reader_json(p.value)->'published')::text",default=>throw new \LogicException('Unknown published projection.')};
+        $raw="strpos(p.value::text,chr(92)||'u0000')>0";
+        $sql="SELECT p.record_key, ".self::PUBLIC_KEY." AS public_key,cajeer_book.reader_json(p.value)->>'id' AS id,($raw) AS raw_entry,CASE WHEN $raw THEN p.value::text ELSE $snapshot END AS snapshot FROM cajeer_book.pages p WHERE $where ORDER BY p.position";
+        $out=[];$seen=[];foreach($this->query($pdo,$sql,$args) as $row){
+            $p=self::decode($row['snapshot']);
+            if($row['raw_entry']){$p=$p['published']??null;if(!is_array($p))throw new \RuntimeException('Invalid published snapshot.');$p=match($projection){'navigation'=>array_intersect_key($p,array_flip(['title','section','order','locale','translation_group'])),'list'=>array_diff_key($p,array_flip(['body','link_base','playground','source_digest','translation_group'])),'full'=>$p};}
+            $draft=$row['record_key'];$public=$row['public_key'];
+            if(!PageTree::validKey($draft)||!PageTree::validKey($public)||PageTree::scope($draft)!==PageTree::scope($public)||isset($seen[$public])||!is_array($p)||!is_string($p['title']??null)||!is_string($p['section']??null)||!is_int($p['order']??null)||($row['id']!==null&&!preg_match('/\A[a-f0-9]{32}\z/D',$row['id'])))throw new \RuntimeException('Invalid published row.');
+            Locale::language($p);if(isset($p['translation_group'])&&(!is_string($p['translation_group'])||!preg_match('/\A[a-f0-9]{32}\z/D',$p['translation_group'])))throw new \RuntimeException('Invalid translation group.');
+            if($projection==='full'){if(!is_string($p['body']??null)||!is_string($p['updated']??null)||!is_array($p['media']??[]))throw new \RuntimeException('Invalid published snapshot.');ApiPlayground::validateSnapshot($p);Locale::validateSnapshot($p);}
+            $seen[$public]=true;$entry=['published'=>$p,'published_key'=>$public];if($row['id']!==null)$entry['id']=$row['id'];$out[$draft]=$entry;
+        }
+        return $out;
+    }
+    private function rootRecords(PDO $pdo,string $section,?string $key=null):array
+    {
+        $sql='SELECT record_key,value::text AS value FROM cajeer_book.content_record WHERE installation=? AND scope=? AND section=?';$args=[...$this->params(),'root:'.$section];
+        if($key!==null){$sql.=' AND record_key=?';$args[]=$key;}
+        $sql.=' ORDER BY position';$out=[];foreach($this->query($pdo,$sql,$args) as $row)$out[$row['record_key']]=self::decode($row['value']);return $out;
+    }
+    /** Return the exact published snapshot, or a visible redirect, without reading siblings. */
+    public function publishedPage(string $key,string $visibility,string $role):array
+    {
+        if(!PageTree::validKey($key))return ['page'=>null,'redirect'=>null];
+        return $this->publishedRead(function(PDO $pdo)use($key,$visibility,$role){
+            $rows=$this->publishedRows($pdo,$visibility,$role,$key);
+            if($rows){$entry=reset($rows);return ['page'=>$entry['published']+['id'=>PageTree::id((string)array_key_first($rows),$entry)],'redirect'=>null];}
+            $id=$this->rootRecords($pdo,'redirects',$key)[$key]??null;
+            if(is_string($id)&&preg_match('/\A[a-f0-9]{32}\z/D',$id)){
+                $targets=$this->publishedRows($pdo,$visibility,$role,null,$id,'navigation');
+                if(!$targets)$targets=$this->publishedRows($pdo,$visibility,$role,null,$id,'navigation',true);
+                foreach($targets as $draft=>$entry){$target=PageTree::publicKey($draft,$entry);if($target!==$key&&PageTree::scope($target)===PageTree::scope($key))return ['page'=>null,'redirect'=>$target];}
+            }
+            return ['page'=>null,'redirect'=>null];
+        });
+    }
+    /** Only the requested document has its body loaded; navigation uses compact snapshots. */
+    public function readerSnapshot(string $visibility,string $role,?string $key,bool $apiList=false):array
+    {
+        return $this->publishedRead(function(PDO $pdo)use($visibility,$role,$key,$apiList){
+            $db=['pages'=>$this->publishedRows($pdo,$visibility,$role,null,null,$apiList?'list':'navigation'),'books'=>$this->rootRecords($pdo,'books')];
+            if($apiList)return $db;
+            foreach(['redirects','retired_paths'] as $section)$db[$section]=$this->rootRecords($pdo,$section);
+            if($key!==null){foreach($this->publishedRows($pdo,$visibility,$role,$key) as $draft=>$entry)$db['pages'][$draft]=$entry;
+                // OpenAPI operation buttons need the reviewed specification; other Reader pages don't.
+                if(preg_match('~/operations/(?:get|head|post|put|patch|delete|options)-[a-f0-9]{24}$~D',$key))$db['openapi']=$this->rootRecords($pdo,'openapi');}
+            return $db;
+        });
+    }
+    /** Authorize a published reference in SQL, then open the blob under the scope lock. */
+    public function publishedMedia(string $id,string $visibility,string $role,callable $fn):mixed
+    {
+        return $this->publishedRead(function(PDO $pdo)use($id,$visibility,$role,$fn){
+            $sql="SELECT 1 FROM cajeer_book.pages p WHERE ".self::publishedWhere($visibility,$role)." AND CAST(cajeer_book.reader_json(p.value)->'published'->'media' AS jsonb) @> CAST(? AS jsonb) LIMIT 1";
+            if($this->query($pdo,$sql,[...$this->params(),self::json([$id])])->fetchColumn()===false)return null;
+            $item=$this->rootRecords($pdo,'media',$id)[$id]??null;return $item===null?null:$fn($item);
+        });
+    }
+    /** CLI-only profiling of the actual optimized queries, not a synthetic substitute. */
+    public function profilePublished(string $key,string $mediaId):array
+    {
+        if(PHP_SAPI!=='cli'||$this->readPlans!==null)throw new \LogicException('Published profiling requires an isolated CLI invocation.');
+        $out=[];
+        try{foreach(['page'=>fn()=>$this->publishedPage($key,'public','none'),'navigation'=>fn()=>$this->readerSnapshot('public','none',$key),'media'=>fn()=>$this->publishedMedia($mediaId,'public','none',fn($item)=>$item)] as $name=>$fn){
+            $this->readPlans=[];$result=$fn();$out[$name]=['plans'=>$this->readPlans,'result_bytes'=>strlen(self::json($result))];
+        }return $out;}finally{$this->readPlans=null;}
     }
     public function search(string $visibility,string $role,array $options,bool $navigation):array
     {

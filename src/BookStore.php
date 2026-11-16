@@ -41,6 +41,18 @@ final class BookStore {
         if($pg=$this->backend())return $pg->search($visibility,$role,$options,$navigation);
         return $this->snapshot(fn($db)=>Search::portable($db,$visibility,$role,$options,$navigation));
     }
+    public function publishedPage(string $key,string $visibility,string $role):array {
+        if($pg=$this->backend())return $pg->publishedPage($key,$visibility,$role);
+        return $this->snapshot(function($db)use($key,$visibility,$role){$pages=Visibility::pages($db,$visibility,$role);$target=PageTree::redirect($db,$key);return ['page'=>$pages[$key]??null,'redirect'=>$target!==null&&isset($pages[$target])?$target:null];});
+    }
+    public function readerSnapshot(string $visibility,string $role,?string $key=null,bool $apiList=false):array {
+        if($pg=$this->backend())return $pg->readerSnapshot($visibility,$role,$key,$apiList);
+        return $this->read();
+    }
+    public function publishedMedia(string $id,string $visibility,string $role,callable $fn):mixed {
+        if($pg=$this->backend())return $pg->publishedMedia($id,$visibility,$role,$fn);
+        return $this->snapshot(fn($db)=>isset($db['media'][$id])&&Visibility::media($db,$id,$visibility,$role)?$fn($db['media'][$id]):null);
+    }
     public function searchInfo():array {
         if($pg=$this->backend())return $pg->searchInfo();
         return $this->snapshot(fn($db)=>['engine'=>'portable','documents'=>count(self::published($db)),'revision'=>null]);

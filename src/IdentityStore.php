@@ -328,7 +328,10 @@ final class IdentityStore
         return $result;
     }
     /** Always anonymous, even if a caller supplies a valid main-host session cookie. */
-    public function withDomain(string $host,callable $fn):mixed{return $this->transaction(fn($db)=>$fn(CustomDomains::find($db,$host)),false,true);}
+    public function withDomain(string $host,callable $fn):mixed{
+        if(!$this->portable&&($pg=PostgresIdentityStore::forDirectory(dirname($this->dir)))!==null)return $pg->publicRegistry(dirname($this->dir),'domain',$host,fn($db)=>$fn(CustomDomains::find($db,$host)));
+        return $this->transaction(fn($db)=>$fn(CustomDomains::find($db,$host)),false,true);
+    }
     public function operatorWorkspaces():array{return $this->transaction(fn($db)=>array_values($db['workspaces']));}
     public function checkWorkspaceStores(string $root):void{$this->transaction(function($db)use($root){Workspaces::assertRegistryDirectories($root,$db);PostgresContentStore::assertRegistry($root,$db);(new BookStore($root,Workspaces::legacy($db)===null))->checkReady();foreach($db['workspaces'] as $w)if(!$w['legacy'])(new BookStore(Workspaces::directory($root,$w),false))->checkReady();},false,true);}
     public function workspaces(string $token):array{return $this->transaction(fn($db)=>Workspaces::list($db,self::requireSession($db,$token)['user']));}
@@ -375,6 +378,7 @@ final class IdentityStore
     }
     public function withWorkspace(string $token,string $org,string $id,callable $fn,bool $publishedRead=false):mixed{
         $shared=$token===''&&$publishedRead;
+        if($shared&&!$this->portable&&($pg=PostgresIdentityStore::forDirectory(dirname($this->dir)))!==null)return $pg->publicRegistry(dirname($this->dir),'workspace',$id,fn($db)=>$fn(null,Workspaces::publicAccess($db,'',$org,$id)));
         return $this->transaction(function(&$db,$flush)use($token,$org,$id,$fn,$publishedRead){
             $ctx=self::context($db,$token);$uid=$ctx['user']['id']??'';
             $w=Workspaces::access($db,$uid,$org,$id);
@@ -387,6 +391,7 @@ final class IdentityStore
     /** Root/legacy routes cannot bypass the current workspace or book visibility policy. */
     public function withLegacy(string $token,callable $fn,bool $publishedRead=false):mixed{
         $shared=$token===''&&$publishedRead;
+        if($shared&&!$this->portable&&($pg=PostgresIdentityStore::forDirectory(dirname($this->dir)))!==null)return $pg->publicRegistry(dirname($this->dir),'legacy','',function($db)use($fn){$w=Workspaces::legacy($db);$o=$w?$db['organizations'][$w['organization']]:null;return $fn(null,'none',$w,!$o||(!$o['archived']&&!$w['archived']&&Visibility::workspace($w)==='public'));});
         return $this->transaction(function(&$db,$flush)use($token,$fn){
             $ctx=self::context($db,$token);$u=$ctx['user']??null;$w=Workspaces::legacy($db);$o=$w?$db['organizations'][$w['organization']]:null;
             $role=$o?(($o['archived']||$w['archived'])?'none':Permissions::workspace($o,$w,$u['id']??'')):(($u['owner']??false)?'owner':'none');

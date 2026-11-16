@@ -9,8 +9,8 @@ try{
     $cmd=$argv[1]??'';
     $read=in_array($cmd,['status','plan','preflight','verify'],true)&&$argc===2;
     $apply=$cmd==='apply'&&$argc===3&&$argv[2]==='--offline';
-    $rollback=$cmd==='rollback'&&$argc===4&&$argv[2]==='1'&&$argv[3]==='--offline';
-    if(!$read&&!$apply&&!$rollback)throw new InvalidArgumentException('Usage: php bin/migrations.php status | plan | preflight | verify | apply --offline | rollback 1 --offline');
+    $rollback=$cmd==='rollback'&&$argc===4&&in_array($argv[2],['1','2'],true)&&$argv[3]==='--offline';
+    if(!$read&&!$apply&&!$rollback)throw new InvalidArgumentException('Usage: php bin/migrations.php status | plan | preflight | verify | apply --offline | rollback 1|2 --offline');
     $user=getenv('BOOK_MIGRATION_PG_USER');$password=getenv('BOOK_MIGRATION_PG_PASSWORD');
     if(($user===false)!==($password===false)||$user==='')throw new InvalidArgumentException('Set both BOOK_MIGRATION_PG_USER and BOOK_MIGRATION_PG_PASSWORD, or neither.');
     $pdo=PostgresContentStore::connect($user===false?null:$user,$password===false?null:$password);
@@ -22,7 +22,7 @@ try{
         // to change an existing installation without its matching binding marker.
         if($pdo->query("SELECT to_regclass('cajeer_book.content_installation') IS NOT NULL")->fetchColumn()===true&&$pdo->query('SELECT 1 FROM cajeer_book.content_installation LIMIT 1')->fetchColumn()!==false)throw new RuntimeException('A matching installed data directory is required for schema changes on a populated database.');
     }
-    $result=$apply?DatabaseMigrations::apply($pdo):($rollback?DatabaseMigrations::rollback($pdo,1):($cmd==='preflight'?DatabaseMigrations::preflight($pdo):DatabaseMigrations::status($pdo)));
+    $result=$apply?DatabaseMigrations::apply($pdo):($rollback?DatabaseMigrations::rollback($pdo,(int)$argv[2]):($cmd==='preflight'?DatabaseMigrations::preflight($pdo):DatabaseMigrations::status($pdo)));
     $exit=0;
     if($cmd==='verify'&&!$result['compatible'])$exit=1;
     if($cmd==='preflight'&&(!$result['exclusive_available']||($result['current']===0&&!$result['database_create_privilege'])))$exit=1;

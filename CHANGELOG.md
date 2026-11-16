@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 — PostgreSQL Performance Stable
+
+- Indexed point reads for published REST pages and stable-ID redirects; compact Reader navigation and list projections, with draft/history/CI bodies excluded. SQL filters workspace and book visibility before fetching rows.
+- Published media reference lookup through GIN, with immutable file opening under the content scope lock. Anonymous workspace/legacy/domain routing reads only selected identity registry records under the shared identity lock.
+- Bounded multi-row content/search writes and batched deletes preserve ordering, JSON snapshots and transactional search/audit behavior.
+- Database schema 3: reversible published path, stable ID and media indexes; exact JSON retained for unusual escaped NUL values. Existing PostgreSQL installations must apply offline migration 0003.
+- Actual optimized read query EXPLAIN ANALYZE/BUFFERS in benchmark output and regression coverage of privacy, redirects, media, language, batching, upgrade and rollback. PostgreSQL infrastructure qualification and large-load SLO remain required; existing quotas are unchanged.
+
 ## 0.5.4 — Performance Benchmarking
 
 - Real quota-bounded synthetic corpora through identity/content/media transactions, linked translations, versions, draft/publication controls and history; 100k public pages across 100 workspaces.
