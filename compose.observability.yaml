@@ -22,7 +22,9 @@ services:
       BOOK_OBSERVABILITY: '1'
   diagnostics:
     logging: *book-logs
-    build: .
+    build:
+      context: .
+      target: ${BOOK_IMAGE_TARGET:-production}
     environment:
       BOOK_OBSERVABILITY: '1'
       BOOK_OBSERVABILITY_EXPORTER: '1'

@@ -79,7 +79,7 @@ final class Diagnostics
     }
     public static function serve():void{
         header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');
-        $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);$method=$_SERVER['REQUEST_METHOD']??'GET';
+        try{$path=RequestSecurity::path($_SERVER['REQUEST_URI']??'/');}catch(\InvalidArgumentException){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
         if(!in_array($path,['/metrics','/diagnostics'],true)){http_response_code(404);return;}
         if(!Observability::enabled()||!Observability::authorized()){http_response_code(404);return;}
         if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}

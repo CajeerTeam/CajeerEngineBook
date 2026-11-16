@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export BOOK_IMAGE_TARGET=test
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${BOOK_GATE_PROJECT:?Use release-gate.py}"

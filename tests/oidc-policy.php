@@ -17,6 +17,8 @@ try{
  ok(Oidc::verify($jwt($claims),$j,$c,$flow['nonce'],$now)===$claims,'valid RSA signature and claims');
  foreach(['iss'=>'https://wrong.example','aud'=>'other','nonce'=>'wrong','exp'=>$now-1,'iat'=>$now+600,'nbf'=>$now+600,'sub'=>'','azp'=>'other'] as $k=>$v)deny(fn()=>Oidc::verify($jwt(array_replace($claims,[$k=>$v])),$j,$c,$flow['nonce'],$now),'reject '.$k);
  deny(fn()=>Oidc::verify($jwt($claims,['alg'=>'none','kid'=>'key-1']),$j,$c,$flow['nonce'],$now),'reject algorithm confusion');deny(fn()=>Oidc::verify($jwt($claims,['alg'=>'RS256','kid'=>'unknown']),$j,$c,$flow['nonce'],$now),'reject unknown key');deny(fn()=>Oidc::verify($jwt($claims),['keys'=>[$j['keys'][0],$j['keys'][0]]],$c,$flow['nonce'],$now),'reject duplicate signing keys');
+ foreach([['unexpected'=>'book'],['book',7],array_fill(0,33,'book')] as $aud)deny(fn()=>Oidc::verify($jwt(array_replace($claims,['aud'=>$aud])),$j,$c,$flow['nonce'],$now),'reject malformed audience');
+ foreach([['sign'],['verify'=>true]] as $ops){$badKeys=$j;$badKeys['keys'][0]['key_ops']=$ops;deny(fn()=>Oidc::verify($jwt($claims),$badKeys,$c,$flow['nonce'],$now),'reject unsuitable JWK key_ops');}
  $bad=$jwt($claims);$bad=substr($bad,0,strrpos($bad,'.')+1).Oidc::b64(random_bytes(256));deny(fn()=>Oidc::verify($bad,$j,$c,$flow['nonce'],$now),'reject forged signature');
  $a=$s->federatedLogin($c,$claims);$uid=$a['user']['id'];ok($a['status']==='ok'&&!$a['user']['owner']&&$s->organization($a['token'],$oid)['role']==='editor','JIT account with mapped editor role');
  $w=$s->createWorkspace($ot,$oid,'Restricted','restricted');$w2=$s->createWorkspace($ot,$oid,'Editor','editor');$s->assignWorkspaceRole($ot,$w['id'],1,$uid,'none');$s->assignWorkspaceRole($ot,$w2['id'],1,$uid,'editor');

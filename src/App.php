@@ -30,7 +30,9 @@ final class App {
     }
     private function runRequest(string $id):void{
         header('X-Request-ID: '.$id);header('Content-Type: text/html; charset=utf-8');header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');header('Cache-Control: no-store');header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-        $path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH);if(!is_string($path)||!str_starts_with($path,'/')){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
+        try{$path=RequestSecurity::path($_SERVER['REQUEST_URI']??'/');}catch(\InvalidArgumentException){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
+        if(preg_match('~\A/(?:login|logout|recover|reset|auth|account|organizations|invite)(?:/|$)~D',$path))header('Referrer-Policy: no-referrer');
+        if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
         // Canonical unified route; preserve existing /studio/github bookmarks and forms.
         if(preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/studio/git\z~D',$path))$path=substr($path,0,-3).'github';
         WorkspaceUrls::set('');$this->documentHead='';
@@ -48,6 +50,7 @@ final class App {
                 }
             }
             if($this->domainGate($path,$method))return;
+            if(!RequestSecurity::browserPost($path,$method,$_SERVER,CustomDomains::primary())){http_response_code(403);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'Cross-origin form request denied']);return;}
             if(!$this->runtimeLimit($path,$method))return;
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/webhooks/(github|gitlab)\z~D',$path,$hook)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->receiveWebhook($hook);return;}

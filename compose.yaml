@@ -1,6 +1,8 @@
 services:
   book:
-    build: .
+    build:
+      context: .
+      target: ${BOOK_IMAGE_TARGET:-production}
     ports:
       - "127.0.0.1:8080:80"
     environment:
@@ -19,7 +21,9 @@ services:
       - book-data:/var/lib/cajeerbook
     restart: unless-stopped
   worker:
-    build: .
+    build:
+      context: .
+      target: ${BOOK_IMAGE_TARGET:-production}
     profiles: [automation]
     user: www-data
     init: true

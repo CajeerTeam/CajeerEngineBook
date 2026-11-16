@@ -23,7 +23,9 @@ services:
       - book-tls:/data
       - book-tls-config:/config
   domain-check:
-    build: .
+    build:
+      context: .
+      target: ${BOOK_IMAGE_TARGET:-production}
     user: www-data
     init: true
     command: [sh, -ec, 'while true; do php bin/domains.php recheck || echo "Domain DNS check failed" >&2; sleep 3600; done']

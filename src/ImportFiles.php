@@ -15,7 +15,7 @@ final class ImportFiles
         $this->temp=sys_get_temp_dir().'/book-import-'.bin2hex(random_bytes(16));
         if(!mkdir($this->temp,0700))throw new \RuntimeException('Cannot create import staging directory');
     }
-    public function __destruct(){foreach(glob($this->temp.'/*')?:[] as $p)if(is_file($p)&&!is_link($p))@unlink($p);if($this->temp!=='')@rmdir($this->temp);}
+    public function __destruct(){if($this->temp==='')return;foreach(glob($this->temp.'/*')?:[] as $p)if(is_file($p)&&!is_link($p))@unlink($p);if($this->temp!=='')@rmdir($this->temp);}
     public static function path(string $name):string{
         if(strlen($name)>512||!preg_match('//u',$name)||preg_match('~[\\\\:\x00-\x1f\x7f]|^/|//|(?:^|/)\.{1,2}(?:/|$)~',$name)||$name===''||str_ends_with($name,'/')||count(explode('/',$name))>24)throw new \InvalidArgumentException('Unsafe import path');
         foreach(explode('/',$name) as $part)if(strlen($part)>180||trim($part)!==$part||$part==='')throw new \InvalidArgumentException('Invalid import path component');
@@ -30,17 +30,25 @@ final class ImportFiles
     }
     public function add(string $name,string $source):void{
         if(is_link($source)||!is_file($source))throw new \InvalidArgumentException('Import source is not a regular file');
-        $size=filesize($source);if($size===false)throw new \InvalidArgumentException('Cannot read source');
-        $dest=$this->reserve($name,$size);Files::copy($source,$dest);$this->files[$name]=$dest;
+        $in=@fopen($source,'rb');if(!$in)throw new \InvalidArgumentException('Cannot read source');
+        $dest=null;$out=null;$size=0;$reserved=false;
+        try{
+            $stat=fstat($in);if(!$stat||($stat['mode']&0170000)!==0100000)throw new \InvalidArgumentException('Import source is not a regular file');
+            $size=$stat['size'];$dest=$this->reserve($name,$size);$reserved=true;
+            $out=fopen($dest,'xb');if(!$out||!chmod($dest,0600))throw new \RuntimeException('Cannot stage import file');
+            if(stream_copy_to_stream($in,$out,$size+1)!==$size||!feof($in)||!fflush($out)||!fsync($out))throw new \InvalidArgumentException('Import source changed or could not be copied');
+            $this->files[$name]=$dest;$reserved=false;
+        }finally{if(is_resource($out))fclose($out);fclose($in);if($reserved){$this->bytes-=$size;if(is_string($dest)&&is_file($dest))@unlink($dest);}}
     }
     /** CI uploads are decoded into random private staging files, never archive paths. */
     public function addBytes(string $name,string $bytes):void{
-        $dest=$this->reserve($name,strlen($bytes));Files::write($dest,$bytes);$this->files[$name]=$dest;
+        $size=strlen($bytes);$dest=$this->reserve($name,$size);try{Files::write($dest,$bytes);$this->files[$name]=$dest;}catch(\Throwable $e){$this->bytes-=$size;@unlink($dest);throw $e;}
     }
     public function zip(string $source):void{
         if(!class_exists(\ZipArchive::class))throw new \RuntimeException('PHP zip extension is required');
         if(is_link($source)||!is_file($source)||filesize($source)>self::MAX_ARCHIVE)throw new \InvalidArgumentException('ZIP exceeds 20 MiB');
         $zip=new \ZipArchive();if($zip->open($source,\ZipArchive::RDONLY|\ZipArchive::CHECKCONS)!==true)throw new \InvalidArgumentException('Invalid ZIP archive');
+        $before=$this->files;$beforeBytes=$this->bytes;$staged=[];
         try{
             if($zip->numFiles>self::MAX_FILES*2)throw new \InvalidArgumentException('Too many ZIP entries');
             $seen=[];
@@ -53,15 +61,15 @@ final class ImportFiles
                 if($opsys===\ZipArchive::OPSYS_UNIX&&$type!==0&&$type!==($dir?0040000:0100000))throw new \InvalidArgumentException('ZIP contains a symlink or special file');
                 if(($stat['encryption_method']??0)!==0)throw new \InvalidArgumentException('Encrypted ZIP entries are not supported');
                 if($dir){if($stat['size']!==0)throw new \InvalidArgumentException('Invalid ZIP directory');continue;}
-                $dest=$this->reserve($path,$stat['size']);
+                $dest=$this->reserve($path,$stat['size']);$staged[]=$dest;
                 $in=$zip->getStreamIndex($i);$out=fopen($dest,'xb');
-                try{if(!$in||!$out)throw new \InvalidArgumentException('Cannot read ZIP entry');chmod($dest,0600);$n=stream_copy_to_stream($in,$out,$stat['size']+1);if($n!==$stat['size']||!feof($in)||!fflush($out))throw new \InvalidArgumentException('ZIP entry size mismatch');}
+                try{if(!$in||!$out)throw new \InvalidArgumentException('Cannot read ZIP entry');if(!chmod($dest,0600))throw new \RuntimeException('Cannot protect staged entry');$n=stream_copy_to_stream($in,$out,$stat['size']+1);if($n!==$stat['size']||!feof($in)||!fflush($out))throw new \InvalidArgumentException('ZIP entry size mismatch');}
                 finally{if(is_resource($in))fclose($in);if(is_resource($out))fclose($out);}
                 if(hash_file('crc32b',$dest)!==sprintf('%08x',$stat['crc']))throw new \InvalidArgumentException('ZIP entry checksum mismatch');
                 $this->files[$path]=$dest;
             }
             foreach($seen as $path=>$dir){$parent=dirname((string)$path);while($parent!=='.'){if(isset($seen[$parent])&&!$seen[$parent])throw new \InvalidArgumentException('ZIP file/directory collision');$parent=dirname($parent);}}
-        }finally{$zip->close();}
+        }catch(\Throwable $e){foreach($staged as $dest)@unlink($dest);$this->files=$before;$this->bytes=$beforeBytes;throw $e;}finally{$zip->close();}
     }
     public static function uploads(array $uploads,string $mode):self{
         $set=new self();

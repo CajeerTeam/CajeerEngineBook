@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — Security Audit & Hardening
+
+- Shared pinned HTTPS transport with monotonic deadlines, strict framing/trailer validation and bounded responses for Git/OIDC/Playground/webhooks; retain explicit operator-trusted private GitLab/OIDC origins.
+- Reject ambiguous request targets for all deployments, supplement CSRF with browser-origin checks, tighten JWT audience/JWK usage and sensitive referrer policy, preserve machine authentication.
+- Bound upload staging and rollback partial ZIP imports; production Docker target excludes test fixtures; Apache TRACE and disclosure hardening.
+- Real HTTP/TLS regression tests and mandatory dependency/source/image security scanning in CI. Schema remains 3; independent audit and infrastructure qualification are not claimed.
+
 ## 0.6.2 — Load & Stress Qualification
 
 - Real timed open-loop arrival scheduling, bounded in-flight work, counted capacity/scheduler drops, per-operation latency/error SLOs and minute-window soak checks. Stress safety and stress SLO are reported separately; strict recovery is required.

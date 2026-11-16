@@ -3,7 +3,9 @@
 # receives remote repository credentials and the encryption key.
 services:
   backup:
-    build: .
+    build:
+      context: .
+      target: ${BOOK_IMAGE_TARGET:-production}
     profiles: [backup]
     user: www-data
     init: true

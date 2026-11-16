@@ -15,7 +15,7 @@ final class GitLabClient implements GitProvider
     public function __construct(string $origin,private readonly string $token='',private readonly ?\Closure $transport=null){
         $this->origin=self::allowedOrigin($origin);
         if($token!==''&&!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid GitLab token format.');
-        $this->deadline=microtime(true)+55;
+        $this->deadline=(hrtime(true)/1e9)+55;
     }
     public static function origin(string $value):string{
         $value=rtrim(trim($value),'/');
@@ -43,22 +43,17 @@ final class GitLabClient implements GitProvider
         $repo=self::repository($repo);if($this->projectId!==null){if($repo!==$this->projectPath)throw new \DomainException('GitLab client is bound to a different project.');return '/projects/'.$this->projectId;}return '/projects/'.rawurlencode($repo);
     }
     private function request(string $method,string $path,?array $payload=null,int $limit=4194304,bool $missing=false,bool $rawBody=false):array|string|null{
-        if(++$this->requests>650||microtime(true)>$this->deadline)throw new GitHubRemoteException('GitLab sync time/request budget exceeded. Reduce the documentation directory.');
+        if(++$this->requests>650||(hrtime(true)/1e9)>$this->deadline)throw new GitHubRemoteException('GitLab sync time/request budget exceeded. Reduce the documentation directory.');
         if($this->transport!==null)return ($this->transport)($method,$path,$payload,$missing,$rawBody);
-        $headers=($rawBody?"Accept: application/octet-stream\r\n":"Accept: application/json\r\n")."User-Agent: CajeerEngineBook/0.3.4\r\n";
-        if($this->token!=='')$headers.='PRIVATE-TOKEN: '.$this->token."\r\n";
-        if($payload!==null)$headers.="Content-Type: application/json\r\n";
-        $ctx=stream_context_create(['http'=>['method'=>$method,'header'=>$headers,'content'=>$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'timeout'=>min(8,max(0.1,$this->deadline-microtime(true)))],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
-        $handle=@fopen($this->origin.'/api/v4'.$path,'rb',false,$ctx);
-        if(!$handle)throw new GitHubRemoteException('GitLab connection failed. Check network and TLS configuration.');
-        try{
-            $meta=stream_get_meta_data($handle);$status=0;foreach($meta['wrapper_data']??[] as $line)if(preg_match('~^HTTP/\S+ (\d{3})~',$line,$m))$status=(int)$m[1];
-            if($missing&&$status===404)return null;
-            if($status<200||$status>=300)throw new GitHubRemoteException('GitLab returned HTTP '.$status.'. Check project, token permissions, branch and rate limits.');
-            $raw='';while(!feof($handle)){if(microtime(true)>$this->deadline)throw new GitHubRemoteException('GitLab request deadline exceeded.');$chunk=fread($handle,min(65536,$limit+1-strlen($raw)));if($chunk===false||($chunk===''&&!feof($handle)))throw new GitHubRemoteException('GitLab response interrupted.');$raw.=$chunk;if(strlen($raw)>$limit)throw new GitHubRemoteException('GitLab response exceeds limit.');}
-            if($rawBody)return $raw;
-            try{$v=json_decode($raw,true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new GitHubRemoteException('Invalid GitLab JSON response.');}if(!is_array($v))throw new GitHubRemoteException('Invalid GitLab response.');return $v;
-        }finally{fclose($handle);}
+        $headers=['Accept'=>$rawBody?'application/octet-stream':'application/json'];
+        if($this->token!=='')$headers['PRIVATE-TOKEN']=$this->token;
+        if($payload!==null)$headers['Content-Type']='application/json';
+        try{$r=ApiPlaygroundTransport::integration($this->origin.'/api/v4'.$path,$method,$headers,$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),$limit,min(8,$this->deadline-(hrtime(true)/1e9)), $this->origin==='https://gitlab.com');}
+        catch(\Throwable){throw new GitHubRemoteException('GitLab connection failed. Check network and TLS configuration.');}
+        $status=$r['status'];if($missing&&$status===404)return null;
+        if($status<200||$status>=300)throw new GitHubRemoteException('GitLab returned HTTP '.$status.'. Check project, token permissions, branch and rate limits.');
+        if($rawBody)return $r['body'];
+        try{$v=json_decode($r['body'],true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new GitHubRemoteException('Invalid GitLab JSON response.');}if(!is_array($v))throw new GitHubRemoteException('Invalid GitLab response.');return $v;
     }
     public function head(string $repo,string $branch):string{return GitHubClient::sha($this->request('GET',$this->base($repo).'/repository/branches/'.rawurlencode(GitHubClient::branch($branch)))['commit']['id']??null);}
     public function fetch(string $repo,string $commit,string $root,?string $cacheDir=null,bool $specifications=false):array{

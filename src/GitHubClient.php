@@ -3,6 +3,8 @@ declare(strict_types=1);
 namespace CajeerBook;
 
 require_once __DIR__.'/GitHubRemoteException.php';
+require_once __DIR__.'/ApiPlayground.php';
+require_once __DIR__.'/ApiPlaygroundTransport.php';
 require_once __DIR__.'/GitProvider.php';
 require_once __DIR__.'/GitBlobImport.php';
 
@@ -11,7 +13,7 @@ final class GitHubClient implements GitProvider
 {
     private float $deadline;
     private int $requests=0;
-    public function __construct(private readonly string $token='', private readonly ?\Closure $transport=null){if($token!==''&&!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid GitHub token format.');$this->deadline=microtime(true)+55;}
+    public function __construct(private readonly string $token='', private readonly ?\Closure $transport=null){if($token!==''&&!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid GitHub token format.');$this->deadline=(hrtime(true)/1e9)+55;}
     public static function repository(string $s):string{
         if(!preg_match('~\A[A-Za-z0-9-]{1,39}/[A-Za-z0-9_.-]{1,100}\z~D',$s)||in_array(basename($s),['.','..'],true))throw new \InvalidArgumentException('Use GitHub owner/repository.');return $s;
     }
@@ -20,19 +22,15 @@ final class GitHubClient implements GitProvider
     }
     public static function sha(mixed $s):string{if(!is_string($s)||!preg_match('/\A[a-f0-9]{40}\z/D',$s))throw new \DomainException('Invalid Git object identifier.');return $s;}
     private function request(string $method,string $path,?array $payload=null,int $limit=4194304):array{
-        if(++$this->requests>650||microtime(true)>$this->deadline)throw new GitHubRemoteException('GitHub sync time/request budget exceeded. Reduce the documentation directory.');
+        if(++$this->requests>650||(hrtime(true)/1e9)>$this->deadline)throw new GitHubRemoteException('GitHub sync time/request budget exceeded. Reduce the documentation directory.');
         if($this->transport!==null)return ($this->transport)($method,$path,$payload);
-        $headers="Accept: application/vnd.github+json\r\nUser-Agent: CajeerEngineBook/0.3.4\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
-        if($this->token!=='')$headers.='Authorization: Bearer '.$this->token."\r\n";
-        if($payload!==null)$headers.="Content-Type: application/json\r\n";
-        $ctx=stream_context_create(['http'=>['method'=>$method,'header'=>$headers,'content'=>$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'timeout'=>min(8,max(0.1,$this->deadline-microtime(true)))],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
-        $handle=@fopen('https://api.github.com'.$path,'rb',false,$ctx);
-        if(!$handle)throw new GitHubRemoteException('GitHub connection failed. Check network and TLS configuration.');
-        try{$meta=stream_get_meta_data($handle);$status=0;foreach($meta['wrapper_data']??[] as $line)if(preg_match('~^HTTP/\S+ (\d{3})~',$line,$m))$status=(int)$m[1];
-            if($status<200||$status>=300)throw new GitHubRemoteException('GitHub returned HTTP '.$status.'. Check repository, token permissions, branch and rate limits.');
-            $raw='';while(!feof($handle)){if(microtime(true)>$this->deadline)throw new GitHubRemoteException('GitHub request deadline exceeded.');$chunk=fread($handle,min(65536,$limit+1-strlen($raw)));if($chunk===false||($chunk===''&&!feof($handle)))throw new GitHubRemoteException('GitHub response interrupted.');$raw.=$chunk;if(strlen($raw)>$limit)throw new GitHubRemoteException('GitHub response exceeds limit.');}
-            try{$v=json_decode($raw,true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new GitHubRemoteException('Invalid GitHub JSON response.');}if(!is_array($v))throw new GitHubRemoteException('Invalid GitHub response.');return $v;
-        }finally{fclose($handle);}
+        $headers=['Accept'=>'application/vnd.github+json','X-GitHub-Api-Version'=>'2022-11-28'];
+        if($this->token!=='')$headers['Authorization']='Bearer '.$this->token;
+        if($payload!==null)$headers['Content-Type']='application/json';
+        try{$r=ApiPlaygroundTransport::integration('https://api.github.com'.$path,$method,$headers,$payload===null?'':json_encode($payload,JSON_THROW_ON_ERROR),$limit,min(8,$this->deadline-(hrtime(true)/1e9)),true);}
+        catch(\Throwable){throw new GitHubRemoteException('GitHub connection failed. Check network and TLS configuration.');}
+        $status=$r['status'];if($status<200||$status>=300)throw new GitHubRemoteException('GitHub returned HTTP '.$status.'. Check repository, token permissions, branch and rate limits.');
+        try{$v=json_decode($r['body'],true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new GitHubRemoteException('Invalid GitHub JSON response.');}if(!is_array($v))throw new GitHubRemoteException('Invalid GitHub response.');return $v;
     }
     private function base(string $repo):string{return '/repos/'.self::repository($repo);}
     public function head(string $repo,string $branch):string{return self::sha($this->request('GET',$this->base($repo).'/branches/'.rawurlencode(self::branch($branch)))['commit']['sha']??null);}

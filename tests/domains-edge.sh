@@ -1,4 +1,5 @@
 #!/bin/sh
+export BOOK_IMAGE_TARGET=test
 # Real PostgreSQL + Redis + two Apache replicas + Caddy HTTPS + DNS TXT.
 # Local CA only in this disposable CI environment; production Caddyfile is validated separately.
 set -eu

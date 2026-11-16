@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.6.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.7.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.7.0 — Security Audit & Hardening
+
+Bounded pinned TLS transport for Git/OIDC/Playground and webhooks, strict HTTP response framing, origin-form routing and browser Origin/Fetch Metadata protection, atomic bounded import staging, stricter OIDC claim/key validation, production-only Docker image, and an obligatory dependency/source/container security gate. Existing SQL schema 3 is unchanged. See [Security hardening](docs/admin/security-hardening.md) for findings, compatibility and validation limits. Independent penetration testing and full infrastructure/scanner qualification are still required before production certification.
 
 ## 0.6.2 — Load & Stress Qualification
 

@@ -10,8 +10,9 @@ final class Oidc
     public static function config():?array
     {
         $raw=getenv('BOOK_OIDC_CONFIG');if($raw===false||$raw==='')return null;
+        if(strlen($raw)>16384)throw new \RuntimeException('Invalid OIDC configuration.');
         $c=json_decode($raw,true,16,JSON_THROW_ON_ERROR);
-        if(!is_array($c)||strlen($raw)>16384)throw new \RuntimeException('Invalid OIDC configuration.');
+        if(!is_array($c))throw new \RuntimeException('Invalid OIDC configuration.');
         foreach(['issuer','client_id','redirect_uri','organization','label'] as $k)if(!is_string($c[$k]??null)||$c[$k]===''||strlen($c[$k])>512||preg_match('/[\x00-\x20\x7f]/',$k==='label'?str_replace(' ','',$c[$k]):$c[$k]))throw new \RuntimeException('Invalid OIDC configuration.');
         self::url($c['issuer']);self::url($c['redirect_uri']);
         if(str_ends_with($c['issuer'],'/')||parse_url($c['issuer'],PHP_URL_QUERY)!==null||parse_url($c['redirect_uri'],PHP_URL_PATH)!==self::CALLBACK||parse_url($c['redirect_uri'],PHP_URL_QUERY)!==null||!preg_match('/\A[a-f0-9]{32}\z/D',$c['organization']))throw new \RuntimeException('Invalid OIDC issuer, callback or organization.');
@@ -33,15 +34,12 @@ final class Oidc
     }
     private static function request(string $url,?array $form=null,string $authorization=''):array
     {
-        self::url($url);$headers="Accept: application/json\r\nConnection: close\r\n";
-        if($form!==null)$headers.="Content-Type: application/x-www-form-urlencoded\r\n";
-        if($authorization!=='')$headers.='Authorization: '.$authorization."\r\n";
-        $opts=['method'=>$form===null?'GET':'POST','header'=>$headers,'timeout'=>8,'follow_location'=>0,'max_redirects'=>0,'ignore_errors'=>true];
-        if($form!==null)$opts['content']=http_build_query($form,'','&',PHP_QUERY_RFC3986);
-        $ctx=stream_context_create(['http'=>$opts,'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false]]);
-        $h=@fopen($url,'rb',false,$ctx);if(!$h)throw new \RuntimeException('OIDC provider unavailable.');
-        try{$meta=stream_get_meta_data($h);$status=$meta['wrapper_data'][0]??'';if(!preg_match('~^HTTP/\S+ 200(?: |$)~',$status))throw new \RuntimeException('OIDC provider rejected request.');$raw=stream_get_contents($h,1048577);if(!is_string($raw)||strlen($raw)>1048576||!feof($h)||stream_get_meta_data($h)['timed_out'])throw new \RuntimeException('Invalid OIDC response size or timeout.');}finally{fclose($h);}
-        $data=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($data))throw new \RuntimeException('Invalid OIDC response.');return $data;
+        self::url($url);$headers=['Accept'=>'application/json'];
+        if($form!==null)$headers['Content-Type']='application/x-www-form-urlencoded';
+        if($authorization!=='')$headers['Authorization']=$authorization;
+        $r=ApiPlaygroundTransport::integration($url,$form===null?'GET':'POST',$headers,$form===null?'':http_build_query($form,'','&',PHP_QUERY_RFC3986),1048576,8,false);
+        if($r['status']!==200)throw new \RuntimeException('OIDC provider rejected request.');
+        $data=json_decode($r['body'],true,32,JSON_THROW_ON_ERROR);if(!is_array($data)||array_is_list($data))throw new \RuntimeException('Invalid OIDC response.');return $data;
     }
     public static function discovery(array $c):array
     {
@@ -83,10 +81,11 @@ final class Oidc
         if(strlen($jwt)>65536||count($parts=explode('.',$jwt))!==3)throw new \RuntimeException('Invalid ID token.');
         [$h,$p,$s]=$parts;$head=json_decode(self::decode($h),true,8,JSON_THROW_ON_ERROR);$claims=json_decode(self::decode($p),true,16,JSON_THROW_ON_ERROR);
         if(!is_array($head)||!is_array($claims)||($head['alg']??null)!=='RS256'||!is_string($head['kid']??null)||$head['kid']===''||strlen($head['kid'])>256||isset($head['crit'])||isset($head['jku'])||isset($head['jwk'])||isset($head['x5u']))throw new \RuntimeException('Unsupported ID token header.');
-        $matches=[];foreach($jwks['keys']??[] as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&($j['use']??'sig')==='sig'&&($j['alg']??'RS256')==='RS256'&&(!isset($j['key_ops'])||in_array('verify',$j['key_ops'],true)))$matches[]=$j;
+        $keys=$jwks['keys']??null;if(!is_array($keys)||!array_is_list($keys)||count($keys)>100)throw new \RuntimeException('Invalid OIDC key set.');
+        $matches=[];foreach($keys as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&($j['use']??'sig')==='sig'&&($j['alg']??'RS256')==='RS256'&&(!isset($j['key_ops'])||(is_array($j['key_ops'])&&array_is_list($j['key_ops'])&&in_array('verify',$j['key_ops'],true))))$matches[]=$j;
         if(count($matches)!==1||openssl_verify($h.'.'.$p,self::decode($s),self::key($matches[0]),OPENSSL_ALGO_SHA256)!==1)throw new \RuntimeException('Invalid ID token signature.');
         $aud=$claims['aud']??null;$aud=is_string($aud)?[$aud]:$aud;
-        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||($claims['nonce']??null)!==$nonce||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
+        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!array_is_list($aud)||count($aud)>32||count(array_filter($aud,'is_string'))!==count($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||($claims['nonce']??null)!==$nonce||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
         if(!is_int($claims['exp']??null)||$claims['exp']<=$now||!is_int($claims['iat']??null)||$claims['iat']>$now+60||$claims['iat']<$now-600||$claims['exp']<=$claims['iat']||(isset($claims['nbf'])&&(!is_int($claims['nbf'])||$claims['nbf']>$now+60)))throw new \RuntimeException('Invalid ID token time claims.');
         return $claims;
     }
