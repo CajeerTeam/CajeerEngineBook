@@ -8,7 +8,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 ADMIN = ROOT/'docs/admin'
-CURRENT = ('README.md','operations.md','configuration.md','incidents.md','cli-reference.md','verification.md')
+CURRENT = ('README.md','operations.md','configuration.md','incidents.md','cli-reference.md','verification.md','production-qualification.md')
 
 
 def main():

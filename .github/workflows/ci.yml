@@ -56,9 +56,11 @@ jobs:
   docker-release:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -133,28 +135,61 @@ jobs:
           name: security-scan
           path: ${{ runner.temp }}/book-security
           if-no-files-found: warn
-  enterprise-release:
+  production-qualification:
+    # Never schedule untrusted pull requests/branches on the dedicated long-run host.
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_protected }}
     needs: [test, docker-release, postgres-content, distributed-release, domains-edge, security-scan]
+    runs-on: [self-hosted, linux, book-load]
+    environment: qualification
+    timeout-minutes: 2400
+    concurrency:
+      group: book-production-qualification
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release source before long qualification
+        run: |
+          set -eu
+          test "${GITHUB_REF}" = "refs/tags/v$(cat VERSION)"
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: sh bin/install-mermaid.sh
+      - run: python3 tests/production-qualification.py --mode full --report-dir "$RUNNER_TEMP/book-production-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: book-production-qualification-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/book-production-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+  enterprise-release:
+    needs: [test, docker-release, postgres-content, distributed-release, domains-edge, security-scan, production-qualification]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     env:
       GATE_RESULTS: ${{ toJSON(needs) }}
+      RELEASE_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Require every enterprise release gate to pass
         run: |
           python3 - <<'PY'
           import os, json, sys
           results = json.loads(os.environ['GATE_RESULTS'])
-          expected = {'test','docker-release','postgres-content','distributed-release','domains-edge','security-scan'}
+          expected = {'test','docker-release','postgres-content','distributed-release','domains-edge','security-scan','production-qualification'}
           print(json.dumps({k:v['result'] for k,v in results.items()}, indent=2))
-          sys.exit(0 if set(results)==expected and all(v['result']=='success' for v in results.values()) else 1)
+          long_expected='success' if os.environ['RELEASE_TAG']=='true' else 'skipped'
+          sys.exit(0 if set(results)==expected and all(v['result']==(long_expected if k=='production-qualification' else 'success') for k,v in results.items()) else 1)
           PY
   release-candidate:
     # Tag builds must pass every gate from this exact workflow run first.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: [test, postgres-content, docker-release, distributed-release, domains-edge, security-scan, enterprise-release]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     permissions:
       contents: read
       packages: write
@@ -180,7 +215,11 @@ jobs:
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - run: bash bin/release-build.sh "$RUNNER_TEMP/book-candidate"
+      - uses: actions/download-artifact@v4
+        with:
+          name: book-production-qualification-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/book-production-evidence
+      - run: bash bin/release-build.sh "$RUNNER_TEMP/book-candidate" "$RUNNER_TEMP/book-production-evidence/qualification.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

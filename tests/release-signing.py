@@ -15,6 +15,8 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('release_package',ROOT/'bin/release-package.py')
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+spec=importlib.util.spec_from_file_location('qualification_fixture',ROOT/'tests/production-qualification-fixture.py')
+fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
 
 
 class Signing(unittest.TestCase):
@@ -31,6 +33,7 @@ class Signing(unittest.TestCase):
         self.key=self.base/'private.pem'; self.pub=self.base/'public.pem'; self.make_key(self.key,self.pub)
         self.digests=['sha256:'+'1'*64,'sha256:'+'2'*64]; self.images={r:m.image_ref(self.repo,r,d) for r,d in zip(m.ROLES,self.digests)}
         self.e={'version':self.version,'commit':self.commit,'repository':self.repo,'run_id':'123','run_attempt':'1','gates':{g:'success' for g in m.GATES},'images':self.images,'image_checks':{r:{'smoke':'success','scan':'success'} for r in m.ROLES}}
+        if tuple(map(int,self.version.split('.'))) >= (0,9,0):self.e['production_qualification']=fixture.qualification_fixture(self.version,self.commit,self.images)
         m.dump(self.evidence/'gate-evidence.json',self.e)
         for r,d in zip(m.ROLES,self.digests):
             m.dump(self.evidence/f'{r}-sbom.spdx.json',{'spdxVersion':'SPDX-2.3','packages':[{'name':'fixture'}]})
@@ -96,6 +99,12 @@ class Signing(unittest.TestCase):
         self.e['gates']['security-scan']='failure'; m.dump(self.evidence/'gate-evidence.json',self.e); self.rejected('assemble'); self.assertFalse(self.out.exists())
     def test_missing_gate(self):
         del self.e['gates']['enterprise-release']; m.dump(self.evidence/'gate-evidence.json',self.e); self.rejected('assemble')
+    def test_qualification_required(self):
+        self.e.pop('production_qualification',None);m.dump(self.evidence/'gate-evidence.json',self.e);self.rejected('assemble')
+    def test_qualification_slo(self):
+        self.e['production_qualification']['candidate_rto_seconds']=3601;m.dump(self.evidence/'gate-evidence.json',self.e);self.rejected('assemble')
+    def test_qualification_wrong_image(self):
+        self.e['production_qualification']['candidate_images']={};m.dump(self.evidence/'gate-evidence.json',self.e);self.rejected('assemble')
     def test_wrong_digest(self):
         m.dump(self.evidence/'book-build-metadata.json',{'containerimage.digest':self.digests[1]}); self.rejected('assemble')
     def test_empty_sbom(self):

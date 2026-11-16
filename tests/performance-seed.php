@@ -69,6 +69,8 @@ $make=function(int $w,int $i,string $media)use($topics,$seed):array{
     return ['title'=>$title,'section'=>$topic,'order'=>$i,'body'=>$body,'updated'=>'2025-01-01T00:00:00+00:00','media'=>$i===0?[$media]:[]];
 };
 for($w=0;$remaining>0;$w++){
+    // Large corpus construction can outlive the normal idle timeout. Keep the real session alive.
+    if(!$s->current($token)){$auth=$s->login('benchowner',$password,'192.0.2.1');if($auth['status']!=='ok')throw new RuntimeException('Benchmark authentication expired.');$token=$auth['token'];$csrf=$auth['session']['csrf'];}
     $n=min($per,$remaining);$remaining-=$n;$slug=sprintf('bench-%03d',$w);
     $workspace=$s->createWorkspace($token,$org['id'],'Benchmark '.$w,$slug);$s->mutateWorkspace($token,$workspace['id'],1,'visibility','public','');
     $dir=Workspaces::directory($root,$workspace);$store=new BookStore($dir,false);$store->setHistoryActor($owner);
@@ -90,4 +92,6 @@ for($w=0;$remaining>0;$w++){
 }
 // Legacy scope is separate from the 100 registered workspaces; keep negative controls here.
 $legacy=new BookStore($root);$legacy->change(function(&$db)use($id){$db['pages']=[];$db['books']=['guard'=>['slug'=>'guard','id'=>$id('guard'),'title'=>'Guard'],'private'=>['slug'=>'private','id'=>$id('private'),'title'=>'Private','visibility'=>'private']];foreach(['guard/1/draft'=>false,'private/1/hidden'=>true] as $key=>$published){$p=['title'=>'Hidden benchmark','section'=>'Guard','order'=>1,'body'=>'hiddenbenchmark secret control','updated'=>'2025-01-01T00:00:00+00:00','media'=>[]];$db['pages'][$key]=['id'=>$id($key),'revision'=>1,'draft'=>$p,'published'=>$published?$p:null];if($published)$db['pages'][$key]['published_key']=$key;}});
+// Start the measured workload with a fresh real session, not an aged seed session.
+$s->logout($token);$auth=$s->login('benchowner',$password,'192.0.2.1');if($auth['status']!=='ok')throw new RuntimeException('Benchmark login failed.');$token=$auth['token'];$csrf=$auth['session']['csrf'];
 echo json_encode(['published_pages'=>$total,'workspace_count'=>count($manifest),'per_workspace'=>$per,'translations'=>$translations,'body_bytes'=>$bytes,'history_samples'=>$history,'seed'=>$seed,'seconds'=>(hrtime(true)-$start)/1e9,'workspaces'=>$manifest,'token'=>$token,'csrf'=>$csrf],JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);

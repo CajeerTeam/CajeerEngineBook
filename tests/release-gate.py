@@ -115,6 +115,7 @@ def native(g):
         args = shlex.split(command)
         if args[0] == '@php': args[0] = 'php'
         g.run(f'composer-{i+1:02d}-{Path(args[1]).stem}', args)
+    g.run('production-qualification-policy',['python3','tests/production-qualification-policy.py'])
     g.run('performance-policy',['python3','tests/performance-policy.py'])
     g.run('load-qualification-policy',['python3','tests/load-qualification-policy.py'])
     g.run('load-qualification-file',['python3','tests/performance-benchmark.py','--qualify','--pages','100','--per-workspace','50','--concurrency','8','--offered-rps','8','--phase-seconds','8','--soak-seconds','20','--min-samples','3','--telemetry','--report-dir',str(g.report/'load-qualification-file')],300)
@@ -203,6 +204,7 @@ def main():
                     g.require(suite,['bash', 'tests/domains-edge.sh' if suite=='domains' else f'tests/gate-{suite}.sh'],3600)
                     if suite=='docker':
                         g.require('secure-update-compose',(['sudo','-n'] if os.geteuid()!=0 else [])+['python3','tests/update-compose-gate.py'],3600)
+                        g.require('production-lifecycle',(['sudo','-n'] if os.geteuid()!=0 else [])+['python3','tests/production-lifecycle.py','--report-dir',str(g.report/'production-lifecycle')],10800)
                 ok=not any(r['exit_code'] for r in g.rows)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 (dest/'gate-error.log').write_text(str(exc)+'\n');g.rows.append({'name':'gate-error','exit_code':1,'seconds':0,'log':'gate-error.log'})

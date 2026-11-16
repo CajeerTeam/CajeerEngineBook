@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.8.2 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.9.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.9.0 — Production Qualification
+
+Executable [production qualification](docs/admin/production-qualification.md) couples an actual historical 0.8.2 deployment, signed-update lifecycle, app/Redis interruption and physical total-loss recovery with a strict 100,000-page, 24-hour SQL/Redis soak. The protected tag pipeline requires full evidence for the same source, then repeats historical upgrade/recovery on the exact OCI candidates. No release is certified by a smoke run or a fabricated evidence file. Schema 3 is unchanged. Full qualification requires the dedicated Linux Docker lab and the existing security, distributed, domain and recovery gates.
 
 ## 0.8.2 — Administrator Documentation
 

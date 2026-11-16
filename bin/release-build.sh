@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${GITHUB_SHA:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${GITHUB_REF:?}" "${GITHUB_REF_PROTECTED:?}" "${GATE_RESULTS:?}"
 report=${1:?new evidence directory}
+qualification=${2:?full production qualification report}
 version=$(cat VERSION)
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$GITHUB_REF" == "refs/tags/v$version" && "$GITHUB_REF_PROTECTED" == true ]]
 [[ $(git rev-parse HEAD) == "$GITHUB_SHA" && $(git cat-file -t "$GITHUB_REF") == tag && $(git rev-parse "$GITHUB_REF^{commit}") == "$GITHUB_SHA" ]]
@@ -67,10 +68,17 @@ book=$(cat "$work/book.ref"); pitr=$(cat "$work/postgres-pitr.ref")
 unset BOOK_TEST_URL
 # The existing destructive source-loss gate must run with the exact PITR image.
 BOOK_RELEASE_PITR_IMAGE="$pitr" bash tests/pitr-gate.sh > "$report/postgres-pitr-smoke.log" 2>&1 || { tail -100 "$report/postgres-pitr-smoke.log"; exit 1; }
+# Test the exact pulled candidates across a historical upgrade and physical disaster recovery.
+sudo -n python3 tests/production-lifecycle.py --report-dir "$work/candidate-lifecycle" \
+  --candidate-book "$book" --candidate-pitr "$pitr" >> "$report/book-smoke.log" 2>&1 || { tail -60 "$report/book-smoke.log"; exit 1; }
+cat "$work/candidate-lifecycle/lifecycle.json" >> "$report/book-smoke.log"
+export RELEASE_QUALIFICATION="$qualification" RELEASE_CANDIDATE_LIFECYCLE="$work/candidate-lifecycle/lifecycle.json"
 export RELEASE_BOOK_REF="$book" RELEASE_PITR_REF="$pitr" RELEASE_VERSION="$version" RELEASE_REPORT="$report"
 python3 - <<'PY'
-import os,json,pathlib
+import os,json,pathlib,importlib.util
 v=os.environ
+spec=importlib.util.spec_from_file_location("qualification",pathlib.Path("tests/production-qualification.py")); q=importlib.util.module_from_spec(spec);spec.loader.exec_module(q)
 out={'version':v['RELEASE_VERSION'],'commit':v['GITHUB_SHA'],'repository':v['GITHUB_REPOSITORY'],'run_id':v['GITHUB_RUN_ID'],'run_attempt':v['GITHUB_RUN_ATTEMPT'],'gates':{k:r['result'] for k,r in json.loads(v['GATE_RESULTS']).items()},'images':{'book':v['RELEASE_BOOK_REF'],'postgres-pitr':v['RELEASE_PITR_REF']},'image_checks':{r:{'smoke':'success','scan':'success'} for r in ('book','postgres-pitr')}}
+out['production_qualification']=q.release_evidence(v['RELEASE_QUALIFICATION'],v['RELEASE_CANDIDATE_LIFECYCLE'],out['images'],out['commit'],out['version'])
 (pathlib.Path(v['RELEASE_REPORT'])/'gate-evidence.json').write_text(json.dumps(out,indent=2)+'\n')
 PY

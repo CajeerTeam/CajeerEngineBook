@@ -87,7 +87,12 @@ class Dependencies:
             at=time.monotonic()-self.started
             try:
                 data=json.loads(subprocess.check_output(['php','tests/performance-seed.php','stats'],cwd=self.root,env=self.env,stderr=subprocess.DEVNULL,timeout=15))
-                # JSON contains only fixed numeric database and Redis counters.
+                # Missing resource counters are failures, never implicit zero usage.
+                for field in ('connections','lock_waiters'):
+                    if int(data['postgres'][field])<0:raise ValueError('Invalid PostgreSQL resource counter')
+                if self.env.get('BOOK_REDIS_HOST') or self.env.get('BOOK_REDIS_SENTINELS'):
+                    for field in ('used_memory','keys'):
+                        if int(data['redis']['resources'][field])<0:raise ValueError('Invalid Redis resource counter')
                 self.samples.append({'elapsed_seconds':round(at,3),'status':'ok',**data})
             except Exception:
                 self.samples.append({'elapsed_seconds':round(at,3),'status':'unavailable'})

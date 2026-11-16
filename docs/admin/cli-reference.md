@@ -1,4 +1,4 @@
-# Administrator CLI reference — 0.8.2
+# Administrator CLI reference — 0.9.0
 
 All PHP commands run from the verified release root, as the same OS user/environment as the intended application service. `BOOK_DATA_DIR` selects installation unless a command takes an explicit directory. For SQL commands keep the matching DSN, role, namespace and binding markers. For backup/monitoring commands use the service with the correct separately mounted credentials. Paths in examples must be new or existing as stated; protect every generated file. Operator commands are not web endpoints. Use `admin.php report` when sharing diagnostics internally; other CLIs can disclose identifiers and exception details.
 

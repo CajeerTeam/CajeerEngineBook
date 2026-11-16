@@ -98,6 +98,14 @@ def validate_evidence(e, version, commit, repository, images):
     require(e['gates'] == {g: 'success' for g in GATES}, 'Required gates did not all pass')
     require(re.fullmatch(r'[1-9]\d*', e['run_id']) and re.fullmatch(r'[1-9]\d*', e['run_attempt']), 'Invalid workflow run')
     require(e['images'] == images and e['image_checks'] == {r: {'smoke': 'success', 'scan': 'success'} for r in ROLES}, 'Exact image checks missing')
+    if tuple(map(int,version.split('.'))) >= (0,9,0):
+        q=e.get('production_qualification',{})
+        require(q.get('status')=='lab-qualified' and q.get('version')==version and q.get('commit')==commit and q.get('candidate_images')==images, 'Production qualification source or image mismatch')
+        require(q.get('soak_seconds')==86400 and q.get('soak_requests')==1728000 and q.get('minute_windows')==1440, '24h qualification missing')
+        for field in ('source_digest','report_sha256','lifecycle_sha256','soak_sha256','candidate_lifecycle_sha256'):
+            require(isinstance(q.get(field),str) and re.fullmatch(r'[0-9a-f]{64}',q[field]), 'Missing qualification evidence hash')
+        for field,limit in [('rpo_seconds',900),('rto_seconds',3600),('candidate_rpo_seconds',900),('candidate_rto_seconds',3600)]:
+            value=q.get(field);require(type(value) in (int,float) and 0<=value<=limit and ('rto' not in field or value>0), 'Recovery SLO failed')
 
 
 def validate_metadata(directory, images):

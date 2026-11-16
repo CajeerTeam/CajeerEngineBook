@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 0.8.2
+# Administrator handbook — CajeerEngine Book 0.9.0
 
 **Current PostgreSQL schema: 3.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -17,6 +17,7 @@
 | Install a signed release, recover interrupted upgrade or rollback | [Secure updates](secure-updates.md) |
 | SQL migration to schema 3 and performance | [PostgreSQL performance](postgres-performance.md) |
 | Measure capacity and qualify production SLOs | [Performance](performance.md), [load qualification](load-qualification.md) |
+| Qualify historical upgrade, total-loss recovery and long load | [Production qualification](production-qualification.md) |
 | Reproduce documentation checks | [Verification](verification.md) |
 
 ## Support boundaries

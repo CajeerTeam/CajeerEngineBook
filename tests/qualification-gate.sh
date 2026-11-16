@@ -16,9 +16,16 @@ php -r 'foreach(["pdo_pgsql","redis","mbstring","zip"] as $m) if(!extension_load
 ID=$(openssl rand -hex 8); PG=book-qualify-$ID-pg; REDIS=book-qualify-$ID-redis
 PASS=$(openssl rand -hex 24); ADMIN=$(openssl rand -hex 24)
 cleanup() {
+    rc=$?; trap - EXIT; failed=0
     docker logs "$PG" >"$REPORT/postgres.log" 2>&1 || :
     docker logs "$REDIS" >"$REPORT/redis.log" 2>&1 || :
-    docker rm -fv "$PG" "$REDIS" >/dev/null 2>&1 || :
+    for container in "$PG" "$REDIS"; do
+        if docker container inspect "$container" >/dev/null 2>&1; then
+            docker rm -fv "$container" >/dev/null 2>&1 || failed=1
+        elif ! docker info >/dev/null 2>&1; then failed=1; fi
+    done
+    [ "$failed" -eq 0 ] || rc=1
+    exit "$rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 — Production Qualification
+
+- Real historical 0.8.2-to-current OCI build, signed updater enrollment, upgrade/rollback/re-upgrade, two app/worker replicas, Redis restart, physical backup/WAL, deletion of source volumes and isolated recovery with public HTTP and deep integrity verification.
+- Mandatory RPO/RTO measurement, exact published page/media fingerprints, pre/post-WAL marker and session-revocation verification; evidence bound to historical/current Git revisions and tested image identities.
+- Production coordinator requires a complete 24h/100k SQL/Redis load report, all 1440 minute windows, per-operation SLOs, maintenance and dependency resources. Smoke is explicitly not qualification.
+- Protected version tags require the full dedicated lab gate; candidate publication repeats lifecycle against exact candidate images and signs qualification evidence hashes. Existing gates remain mandatory. Schema 3 unchanged.
+- Large corpus seeding refreshes the actual authentication session; resource sampling and disposable infrastructure cleanup fail closed.
+
 ## 0.8.2 — Administrator Documentation
 
 - Current administrator handbook with deployment/owner initialization, topology, settings, maintenance, incident response, recovery and update procedures; indexes all existing specialist guides.
