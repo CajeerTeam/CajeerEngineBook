@@ -62,7 +62,7 @@ final class PostgresSearch
         $result=['hits'=>[],'total'=>0,'pages'=>$pages,'engine'=>'postgresql','match'=>'fulltext'];if(!$o['groups'])return $result;
         foreach(['book','version'] as $f)if($o[$f]!==''){$where.=' AND d.'.$f.'=?';$params[]=$o[$f];}
         $query=Search::query($o['groups'],false);$prefix=Search::query($o['groups'],true);
-        $cte="WITH q AS (SELECT to_tsquery('pg_catalog.simple',?) AS s,to_tsquery('pg_catalog.english',?) AS e,to_tsquery('pg_catalog.russian',?) AS r) ";
+        $cte="WITH q AS NOT MATERIALIZED (SELECT to_tsquery('pg_catalog.simple',?) AS s,to_tsquery('pg_catalog.english',?) AS e,to_tsquery('pg_catalog.russian',?) AS r) ";
         $args=[$prefix,$query,$query,...$params];
         // Exact quoted phrases use the simple configuration. For other queries a stemmed
         // alternative may not silently drop a term (e.g. a language stop word).
@@ -74,7 +74,9 @@ final class PostgresSearch
         $condition=' FROM cajeer_book.search_document d CROSS JOIN q WHERE '.$where.' AND (d.simple_vector @@ q.s OR '.$english.' OR '.$russian.')';
         // Concatenated vectors have adjacent positions across fields. Confirm each phrase
         // in one actual field rather than matching an artificial title/body boundary.
-        foreach($o['groups'] as $g)if($g['phrase']){
+        // A single quoted lexeme cannot cross field boundaries. Reuse the stored vector
+        // instead of tokenizing every candidate body (especially costly under concurrent load).
+        foreach($o['groups'] as $g)if($g['phrase']&&count($g['words'])>1){
             $condition.=" AND (to_tsvector('pg_catalog.simple',d.title) @@ to_tsquery('pg_catalog.simple',?) OR to_tsvector('pg_catalog.simple',d.section) @@ to_tsquery('pg_catalog.simple',?) OR to_tsvector('pg_catalog.simple',regexp_replace(d.page_key,'[^a-zA-Z0-9]+',' ','g')) @@ to_tsquery('pg_catalog.simple',?) OR to_tsvector('pg_catalog.simple',d.body) @@ to_tsquery('pg_catalog.simple',?))";
             $phrase=Search::query([$g],false);array_push($args,$phrase,$phrase,$phrase,$phrase);
         }

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Policy regressions with real Git history and explicitly synthetic evidence."""
 import copy
+import os
+import stat
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -50,6 +52,17 @@ class Qualification(unittest.TestCase):
             with self.assertRaises(RuntimeError):q.life.revisions(repo,head)
             (repo/'application.php').write_text('dirty')
             with self.assertRaises(RuntimeError):q.life.revisions(repo,prior)
+
+    def test_historical_archive_readable_by_container_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); repo=root/'repo';repo.mkdir();git=lambda *a:q.life.git(repo,*a)
+            git('init','-q');(repo/'src').mkdir();(repo/'src/main.php').write_text('<?php echo "historic";')
+            git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','historical')
+            previous=os.umask(0o077)
+            try:q.life.archive(repo,git('rev-parse','HEAD'),root/'export')
+            finally:os.umask(previous)
+            for path in (root/'export',root/'export/src'):self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o755)
+            self.assertEqual((root/'export/src/main.php').read_bytes(),(repo/'src/main.php').read_bytes())
 
     def test_lifecycle_valid(self):self.assertEqual(q.validate_lifecycle(lifecycle(),V,C,P)['rto_seconds'],120)
     def test_lifecycle_missing_step(self):

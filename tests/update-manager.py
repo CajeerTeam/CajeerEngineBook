@@ -148,6 +148,32 @@ class ComposeRendering(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,'Container entrypoint differs'):
                         c.validate_container(obj,config,'book')
 
+    def test_signed_healthcheck_changes_only_for_application(self):
+        root=Path('/release')
+        before={'services':{'book':{'image':'old'},'worker':{'image':'old','healthcheck':{'disable':True}},'postgres':{'image':'pg','healthcheck':{'test':['CMD','pg_isready']}}}}
+        after=json.loads(json.dumps(before));after['services']['worker']['healthcheck']={'test':['CMD','php','bin/worker.php','--check']}
+        self.assertEqual(u.normalized(before,root),u.normalized(after,root))
+        after['services']['postgres']['healthcheck']={'disable':True}
+        self.assertNotEqual(u.normalized(before,root),u.normalized(after,root))
+        after=json.loads(json.dumps(before));after['services']['worker']['command']=['unexpected']
+        self.assertNotEqual(u.normalized(before,root),u.normalized(after,root))
+
+    def test_disabled_worker_waits_for_stable_replicas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'compose.yaml').touch();(root/'env').touch();calls=[]
+            def adapter(args,**kw):
+                calls.append(args)
+                if 'inspect' in args:return json.dumps([{'State':{'Running':True,'Restarting':False,'StartedAt':'started'},'RestartCount':0}]).encode()
+                if 'ps' in args:return b'one\ntwo\n'
+                return b''
+            c=u.Compose(root,{'project':'test','env':str(root/'env'),'overlays':[]},adapter)
+            conf={'services':{'worker':{'healthcheck':{'disable':True}},'book':{'healthcheck':{'disable':True}}}}
+            with mock.patch.object(u.time,'sleep'):c.start_service(conf,'worker',2)
+            self.assertNotIn('--wait',calls[0]);self.assertEqual(sum('inspect' in a for a in calls),4)
+            with self.assertRaisesRegex(ValueError,'readiness check disabled'):c.start_service(conf,'book',1)
+            conf['services']['worker']['healthcheck']={'test':['CMD','php','bin/worker.php','--check']}
+            c.start_service(conf,'worker',2);self.assertIn('--wait',calls[-1])
+
 class Update(unittest.TestCase):
     def setUp(self):
         self.f=signing.Signing('test_real_package_and_reproducibility'); self.f.setUp(); self.addCleanup(self.f.doCleanups)
