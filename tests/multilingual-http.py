@@ -9,7 +9,7 @@ STORAGE='--storage-only' in sys.argv; PG='--postgres' in sys.argv
 
 def exercise(base,env):
     owner,guest=Client(base),Client(base);owner.login()
-    def post(path,action,status=303,**fields):return owner.request(path,status,{'csrf':owner.csrf('/account'),'action':action}|fields)
+    def post(route,action,status=303,**fields):return owner.request(route,status,{'csrf':owner.csrf('/account'),'action':action}|fields)
     key='guide/1/start';ru='guide/1/ru/start'
     def save(path,title,body,rev='0',action='publish'):
         return post('/studio',action,book='guide',version='1',path=path,title=title,body=body,section='Guide',order='10',revision=rev)
@@ -36,6 +36,9 @@ def exercise(base,env):
     pages=json.loads(guest.request('/api/v1/pages',200)[1]);assert pages[key]['locale']=='en' and pages[ru]['locale']=='ru' and 'translation_group' not in pages[ru]
     _,html=owner.request('/studio/translations?source='+key,200);assert 'Актуален'.encode() in html
     if not STORAGE:
+        # Numeric PHP array keys must not turn version labels into integers.
+        _,original=guest.request('/docs/'+key,200)
+        assert re.search(rb'<a[^>]*class="active"[^>]*>1</a>',original), 'numeric version must render as active'
         h,html=guest.request('/docs/'+ru,200);assert h['Content-Language']=='ru' and b'<html lang="ru"' in html and b'hreflang="en"' in html and b'href="/docs/guide/1/start"' in html
         h,body=guest.request('/api/v1/search?q=quasar&locale=ru',200);assert h['X-Total-Count']=='1' and [p['key'] for p in json.loads(body)]==[ru]
         guest.request('/api/v1/search?q=quasar&locale=invalid',422)

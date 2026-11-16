@@ -1,6 +1,6 @@
 ARG NODE_BASE=node:22-bookworm-slim
 ARG COMPOSER_BASE=composer:2
-ARG PHP_BASE=php:8.4-apache
+ARG PHP_BASE=php:8.4-apache-bookworm
 FROM ${NODE_BASE} AS mermaid-assets
 WORKDIR /build
 COPY bin/install-mermaid.sh bin/install-mermaid.sh
@@ -9,11 +9,17 @@ FROM ${COMPOSER_BASE} AS composer-bin
 FROM ${PHP_BASE} AS runtime
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
 WORKDIR /opt/cajeerbook
-RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev unzip ca-certificates awscli \
+# Refresh OS security packages and retain only runtime libraries after extension compilation.
+RUN apt-get update && apt-get upgrade -y --with-new-pkgs \
+ && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev \
+    libonig5 libpng16-16 libjpeg62-turbo libwebp7 libzip4 libpq5 unzip ca-certificates awscli \
  && docker-php-ext-configure gd --with-jpeg --with-webp \
  && docker-php-ext-install mbstring gd zip pdo_pgsql pcntl \
  && pecl install redis-6.1.0 && docker-php-ext-enable redis \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get purge -y --auto-remove libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev \
+    autoconf dpkg-dev g++ gcc libc6-dev make pkg-config re2c \
+ && php -r 'foreach (["mbstring","gd","zip","pdo_pgsql","pcntl","redis"] as $ext) { if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); } }' \
+ && rm -rf /var/lib/apt/lists/* /tmp/pear
 COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock ./
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
