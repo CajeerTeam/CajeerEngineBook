@@ -15,18 +15,19 @@ try{
     $id=str_repeat('a',32);$body='Public original [file](/media/'.$mid.')';$snapshot=fn($title,$text,$media=[])=>['title'=>$title,'section'=>'Guide','order'=>10,'body'=>$text,'updated'=>'2025-01-01T00:00:00+00:00','media'=>$media];
     $s->change(function(&$db)use($snapshot,$id,$body,$mid,$private){
         $db['books']=['guide'=>['slug'=>'guide','title'=>'Guide','id'=>str_repeat('b',32)],'secret'=>['slug'=>'secret','title'=>'Secret','id'=>str_repeat('c',32),'visibility'=>'private']];
-        $original=$snapshot('Original',$body,[$mid]);$draft=$original;$draft['body']='UNPUBLISHED DRAFT';
+        $original=$snapshot('Original',$body,[$mid]);$draft=$original;$draft['body']='UNPUBLISHED DRAFT';$draft['media']=[];
         $db['pages']['guide/1/new-draft']=['id'=>$id,'draft'=>$draft,'published'=>$original,'published_key'=>'guide/1/current','revision'=>2];
         $db['redirects']['guide/1/old']=$id;$db['retired_paths']['guide/1/retired']=$id;
         $translated=$snapshot('Перевод','Русский документ')+['locale'=>'ru','translation_group'=>$id,'source_digest'=>Locale::digest($original)];
         $db['pages']['guide/1/ru']=['id'=>str_repeat('d',32),'draft'=>$translated,'published'=>$translated,'revision'=>1];
-        $p=$snapshot('Private','PRIVATE BODY',[$private]);$db['pages']['secret/1/private']=['draft'=>$p,'published'=>$p,'revision'=>1];
+        $p=$snapshot('Private','PRIVATE BODY [file](/media/'.$private.')',[$private]);$db['pages']['secret/1/private']=['draft'=>$p,'published'=>$p,'revision'=>1];
         $db['pages']['guide/1/unpublished']=['draft'=>$p,'published'=>null,'revision'=>1];
         $nul=$snapshot("NUL\0Title","NUL\0body and literal \\u0000");$db['pages']['guide/1/nul']=['draft'=>$nul,'published'=>$nul,'revision'=>1];
         $db['pages']['legacy/1/start']=['draft'=>$snapshot('Legacy','Implicit book'),'published'=>$snapshot('Legacy','Implicit book'),'revision'=>1];
         $db['redirects']['legacy/1/old']=PageTree::id('legacy/1/start',[]);
         for($j=0;$j<130;$j++){$key=sprintf('guide/1/page-%03d',$j);$p=$snapshot('Topic '.$j,str_repeat('Large document body. ',100).'batchmarker');$p['order']=$j;$db['pages'][$key]=['draft'=>$p,'published'=>$p,'revision'=>1];}
     });
+    ok((new CajeerBook\StoreAudit($s,$m))->run()['reference_mismatches']===0,'fixture media index matches actual Markdown');
     $expected=$s->read();if($pg){putenv('BOOK_PG_DSN='.$dsn);P::migrate($root);$s=new BookStore($dir,false);$m=new MediaStore($dir,$s);ok($s->read()===$expected,'batch SQL import preserves exact JSON content, ordering and metadata');}
     $pages=Visibility::pages($expected,'public','none');
     foreach([['public','none'],['private','none'],['private','viewer']] as [$visibility,$role]){
