@@ -65,7 +65,11 @@ LUA;
         $topology=RedisTopology::config();
         if($topology!==null&&self::clock()>=$this->primaryUntil){
             $primary=RedisTopology::discover($topology,function($host,$port,$name){$r=$this->dial($host,$port,true);try{return $r->rawCommand('SENTINEL','get-master-addr-by-name',$name);}finally{$r->close();}});
-            if($primary!==$this->primary){if($this->client!==null)$this->client->close();$this->client=null;$this->groupReady=false;$this->primary=$primary;}
+            if($primary!==$this->primary){
+                // A dead socket may throw during close; the newly elected primary is still valid.
+                if($this->client!==null){try{$this->client->close();}catch(\Throwable){}}
+                $this->client=null;$this->groupReady=false;$this->primary=$primary;
+            }
             // Recheck role even on an existing worker connection after each discovery interval.
             if($this->client!==null){$role=$this->client->rawCommand('ROLE');if(!is_array($role)||($role[0]??null)!=='master')throw new \RuntimeException('Redis primary changed role.');}
             $this->primaryUntil=self::clock()+5;
@@ -79,7 +83,10 @@ LUA;
     private function failed():void
     {
         if($this->client!==null){try{$this->client->close();}catch(\Throwable){}$this->client=null;}
-        $this->retryAt=self::clock()+random_int(1000,2500)/1000;$this->groupReady=false;$this->primaryUntil=0;$this->primary=null;
+        // Calls during an existing cooldown must not move its deadline. Otherwise
+        // polling or a busy worker can indefinitely prevent Sentinel rediscovery.
+        $now=self::clock();if($now>=$this->retryAt)$this->retryAt=$now+random_int(1000,2500)/1000;
+        $this->groupReady=false;$this->primaryUntil=0;$this->primary=null;
     }
     private function invoke(callable $fn,?string $allowedError=null):mixed
     {
