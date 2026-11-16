@@ -2,13 +2,14 @@
 declare(strict_types=1);
 namespace CajeerBook;
 require_once __DIR__.'/GitLabClient.php';
+require_once __DIR__.'/SecretKeys.php';
 
 /** Workspace-owned integration. Cursor and draft changes commit together. */
 final class GitHubSync
 {
     public function __construct(private readonly BookStore $store,private readonly MarkdownImport $importer,private readonly ?\Closure $clientFactory=null,private readonly ?string $cacheDir=null){}
     private static function key():string{
-        $key=getenv('BOOK_GITHUB_KEY')?:'';if(!preg_match('/\A[a-fA-F0-9]{64}\z/D',$key))throw new \DomainException('Set BOOK_GITHUB_KEY to a private 32-byte hex key on the server before storing a Git access token.');return hex2bin($key);
+        return SecretKeys::active('BOOK_GITHUB_KEY');
     }
     public static function provider(array $c):string{return $c['provider']??'github';}
     public static function label(array $c):string{return self::provider($c)==='gitlab'?'GitLab':'GitHub';}
@@ -18,9 +19,15 @@ final class GitHubSync
         if($token==='')return '';if(!preg_match('/\A[A-Za-z0-9_-]{10,512}\z/D',$token))throw new \InvalidArgumentException('Invalid Git access token format.');
         $iv=random_bytes(12);$tag='';$cipher=openssl_encrypt($token,'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,$iv,$tag,self::aad($c));if($cipher===false)throw new \RuntimeException('Credential encryption failed.');return base64_encode($iv.$tag.$cipher);
     }
-    private static function decrypt(array $c):string{
-        if($c['credential']==='')return '';$raw=base64_decode($c['credential'],true);$plain=openssl_decrypt(substr($raw,28),'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,substr($raw,0,12),substr($raw,12,16),self::aad($c));if($plain===false)throw new \DomainException('Git credential cannot be decrypted. Restore the master key or rotate the token.');return $plain;
+    private static function decrypt(array $c,bool $activeOnly=false):string{
+        if($c['credential']==='')return '';$raw=base64_decode($c['credential'],true);if($raw===false||strlen($raw)<38)throw new \RuntimeException('Invalid Git credential.');return SecretKeys::decrypt('BOOK_GITHUB_KEY',$raw,self::aad($c),$activeOnly);
     }
+    /** Rewrap without changing remote identity, cursor or token privileges. */
+    public static function rewrap(array &$db):bool{
+        if(empty($db['github']['credential']))return false;$c=$db['github'];try{self::decrypt($c,true);return false;}catch(\DomainException){}$plain=self::decrypt($c);
+        $c['credential']=self::encrypt($plain,$c);$c['revision']++;$db['github']=$c;return true;
+    }
+    public static function verifyKey(array $db):void{if(!empty($db['github']['credential']))self::decrypt($db['github'],true);}
     private function makeClient(array $c,string $token):GitProvider{
         $provider=self::provider($c);if($provider==='gitlab')GitLabClient::allowedOrigin($c['origin']);
         return $this->clientFactory!==null?($this->clientFactory)($token,$c):($provider==='gitlab'?new GitLabClient($c['origin'],$token):new GitHubClient($token));

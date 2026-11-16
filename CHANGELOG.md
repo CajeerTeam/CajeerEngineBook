@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 — Enterprise Security Lifecycle
+
+- Private file-based Git/automation/backup keyrings, bounded retained keys, active-key verification and offline credential rewrap across registered workspaces without changing durable jobs.
+- CI token rotation preserving scope/principal/publish permission; incoming webhook overlap with explicit retirement and stale-form protection; outgoing signing rotation preserves delivery identity.
+- Owner/operator session revocation, OIDC secret files, optional signed subject-wide back-channel logout and replay-resistant logout watermarks.
+- External Ed25519 audit checkpoints verify retained PostgreSQL chain continuity against independently pinned public keys.
+- Two-node HTTP and HTTPS OIDC regressions, old encrypted backup restoration after key rotation, PostgreSQL lifecycle gate. Schema remains 3; mixed-version rollback and independent infrastructure qualification require operator attention.
+
 ## 0.7.0 — Security Audit & Hardening
 
 - Shared pinned HTTPS transport with monotonic deadlines, strict framing/trailer validation and bounded responses for Git/OIDC/Playground/webhooks; retain explicit operator-trusted private GitLab/OIDC origins.

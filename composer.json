@@ -23,6 +23,8 @@
     },
     "scripts": {
         "test": [
+            "@php tests/security-lifecycle.php",
+            "python3 tests/security-lifecycle-http.py",
             "@php tests/security-hardening.php --require-zip",
             "python3 tests/security-http.py",
             "python3 tests/security-transport.py",

@@ -27,7 +27,7 @@ final class RequestSecurity
      *  Machine CI/webhooks have separate bearer/signature authentication. */
     public static function browserPost(string $path,string $method,array $server,?string $primary):bool
     {
-        if($method!=='POST'||preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/(?:api/v1/ci|webhooks/(?:github|gitlab))\z~D',$path))return true;
+        if($method!=='POST'||$path==='/auth/oidc/backchannel-logout'||preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?/(?:api/v1/ci|webhooks/(?:github|gitlab))\z~D',$path))return true;
         $site=$server['HTTP_SEC_FETCH_SITE']??null;
         if($site!==null&&(!is_string($site)||!in_array($site,['same-origin','none'],true)))return false;
         $origin=$server['HTTP_ORIGIN']??null;if($origin===null)return true; // CLI/legacy browsers: CSRF still mandatory.

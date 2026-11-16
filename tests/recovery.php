@@ -32,10 +32,13 @@ try{
   try{deny(fn()=>$m->drill($id),'alternate DSN to source database rejected');}finally{putenv('BOOK_BACKUP_DRILL_PG_DSN='.$old);putenv('BOOK_BACKUP_DRILL_PG_USER='.$ou);putenv('BOOK_BACKUP_DRILL_PG_PASSWORD='.$op);}
  }
  ok($m->health(300)['status']==='ok','fresh verified capture is healthy');
+ $nextKey=bin2hex(random_bytes(32));Files::write($base.'/key',json_encode(['active'=>'next','keys'=>['next'=>$nextKey,'previous'=>$key]],JSON_THROW_ON_ERROR));
+ ok(CajeerBook\RecoveryEnvelope::key()===hex2bin($nextKey),'new active backup key selected');
  // Remove local copy: restore must read remote bytes, not the local repository or live source.
  unlink($file);$result=$m->restore($id,$base.'/restored',true);$restored=new BookStore(Workspaces::directory($base.'/restored',$w),false,true);$ri=new IdentityStore($base.'/restored',true);
  ok($result['users']===1&&$ri->backup()['organizations'][$org['id']]['id']===$org['id']&&$ri->current($token)===null,'remote-only restore retains identity and revokes old sessions');
  ok($restored->read()['books']['guide']['title']==='Private documentation'&&file_get_contents((new MediaStore(Workspaces::directory($base.'/restored',$w),$restored))->blob($mid))===$mediaText,'remote-only restore preserves private content and media');
+ ok(CajeerBook\RecoveryEnvelope::key()===hex2bin($nextKey),'old encrypted remote restored after key rotation');
  if(!$storage)ok(count($restored->read()['pages'])===1&&count($restored->read()['history'])>0,'published page and revisions restored');
  deny(fn()=>$m->restore($id,$root,true),'cannot overwrite source');deny(fn()=>$m->restore('../escape',$base.'/bad',true),'invalid recovery ID rejected');
  Files::write($base.'/key',str_repeat('0',64)."\n");deny(fn()=>$m->restore($id,$base.'/wrong-key',true),'wrong key rejected');ok(!file_exists($base.'/wrong-key'),'wrong key leaves no restore target');Files::write($base.'/key',$key."\n");
@@ -44,9 +47,9 @@ try{
   file_put_contents($remoteFile,$original."x");deny(fn()=>$m->restore($id,$base.'/trailing',true),'appended bytes rejected');file_put_contents($remoteFile,$original);
   // Restore local copy for retention and simulate an unavailable remote after manager initialization.
   Files::copy($remoteFile,$file);rename($remote,$base.'/offline');deny(fn()=>$m->run(true),'remote outage fails backup rather than claiming success');$pending=$m->status()['state']['pending'];$telemetry=CajeerBook\Observability::backupSnapshot();ok($telemetry['failures']>0&&$telemetry['pending']===1&&$telemetry['capture']===$a['captured_at'],'remote outage exposes pending and failures without claiming a fresh capture');ok(is_array($pending)&&is_file($spool.'/'.$pending['id'].'.cbk'),'verified encrypted local copy retained for retry');
-  ok($m->run()['status']==='not_due','retry backoff is persistent');rename($base.'/offline',$remote);$b=$m->run(true);ok($b['id']===$pending['id']&&$b['sha256']===$pending['sha256'],'retry uploads same immutable local backup');
+  ok($m->run()['status']==='not_due','retry backoff is persistent');Files::write($base.'/key',json_encode(['active'=>'next','keys'=>['next'=>$nextKey,'previous'=>$key]],JSON_THROW_ON_ERROR));rename($base.'/offline',$remote);$b=$m->run(true);ok($b['id']===$pending['id']&&$b['sha256']===$pending['sha256'],'retry uploads same immutable local backup');
   $otherFile=$remote.'/'.$b['id'].'.cbk';$otherBytes=file_get_contents($otherFile);file_put_contents($otherFile,$original);deny(fn()=>$m->restore($b['id'],$base.'/swapped',true),'valid older encrypted artifact cannot be substituted for a different ID');file_put_contents($otherFile,$otherBytes);
-  $r=Files::read($spool.'/'.$id.'.json');$r['verified_at']=time()-3*86400;Files::json($spool.'/'.$id.'.json',$r);$c=$m->run(true);ok(!is_file($file)&&is_file($remoteFile)&&is_file($spool.'/'.$b['id'].'.cbk')&&is_file($spool.'/'.$c['id'].'.cbk'),'retention keeps two newest local backups and never deletes remote objects');
+  $r=Files::read($spool.'/'.$id.'.json');$r['verified_at']=time()-3*86400;Files::json($spool.'/'.$id.'.json',$r);$c=$m->run(true);ok(CajeerBook\RecoveryEnvelope::keyFor($spool.'/'.$c['id'].'.cbk',$c['id'])===hex2bin($nextKey),'new snapshot sealed with active key after pending retry');ok(!is_file($file)&&is_file($remoteFile)&&is_file($spool.'/'.$b['id'].'.cbk')&&is_file($spool.'/'.$c['id'].'.cbk'),'retention keeps two newest local backups and never deletes remote objects');
  }
  $lock=fopen($spool.'/scheduler.lock','c+b');flock($lock,LOCK_EX);ok($m->health(300)['status']==='ok','RPO probe remains available while scheduler locked');deny(fn()=>$m->run(true),'concurrent scheduler excluded');fclose($lock);
  $saved=Files::read($spool.'/state.json');$aged=$saved;$aged['last_capture']=time()-301;Files::json($spool.'/state.json',$aged);ok($m->health(300)['status']==='unavailable','RPO uses capture time rather than completion');Files::json($spool.'/state.json',$saved);

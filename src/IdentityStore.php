@@ -128,11 +128,11 @@ final class IdentityStore
         foreach($db['users'] as $id=>$u){
             if(!is_string($id)||!self::hex($id,32)||!is_array($u)||($u['id']??null)!==$id||!is_string($u['username']??null)||self::username($u['username'])!==$u['username']||!is_string($u['name']??null)||self::name($u['name'])!==$u['name']||!is_string($u['email']??null)||self::email($u['email'],true)!==$u['email']||!is_string($u['hash']??null)||!self::validHash($u['hash'])||!is_bool($u['owner']??null)||!is_bool($u['enabled']??null)||!is_int($u['created']??null))throw new \RuntimeException('Invalid identity user');
             if(isset($names[$u['username']])||($u['email']!==''&&isset($emails[$u['email']])))throw new \RuntimeException('Duplicate identity');$names[$u['username']]=true;$emails[$u['email']]=true;
-            if(isset($u['oidc'])){ $link=$u['oidc'];if($u['owner']||!is_array($link)||!is_string($link['issuer']??null)||!is_string($link['subject']??null)||$link['subject']===''||strlen($link['subject'])>255||!is_string($link['organization']??null)||!self::hex($link['organization'],32))throw new \RuntimeException('Invalid federated identity');if(isset($link['restrictions'])){if(!is_array($link['restrictions'])||count($link['restrictions'])>1000)throw new \RuntimeException('Invalid federated restrictions');foreach($link['restrictions'] as $wid=>$role)if(!is_string($wid)||!self::hex($wid,32)||!in_array($role,['none','viewer','editor','admin'],true))throw new \RuntimeException('Invalid federated restriction');}$key=hash('sha256',$link['issuer']."\0".$link['subject']);if(isset($external[$key]))throw new \RuntimeException('Duplicate federated identity');$external[$key]=true;}
+            if(isset($u['oidc'])){ $link=$u['oidc'];if(isset($link['logout_at'])&&(!is_int($link['logout_at'])||$link['logout_at']<0))throw new \RuntimeException('Invalid federated logout watermark');if($u['owner']||!is_array($link)||!is_string($link['issuer']??null)||!is_string($link['subject']??null)||$link['subject']===''||strlen($link['subject'])>255||!is_string($link['organization']??null)||!self::hex($link['organization'],32))throw new \RuntimeException('Invalid federated identity');if(isset($link['restrictions'])){if(!is_array($link['restrictions'])||count($link['restrictions'])>1000)throw new \RuntimeException('Invalid federated restrictions');foreach($link['restrictions'] as $wid=>$role)if(!is_string($wid)||!self::hex($wid,32)||!in_array($role,['none','viewer','editor','admin'],true))throw new \RuntimeException('Invalid federated restriction');}$key=hash('sha256',$link['issuer']."\0".$link['subject']);if(isset($external[$key]))throw new \RuntimeException('Duplicate federated identity');$external[$key]=true;}
             if($u['owner']){if(!$u['enabled'])throw new \RuntimeException('Disabled owner');$owners++;}
         }
         if($db['users']!==[]&&$owners!==1)throw new \RuntimeException('Identity owner invariant failed');
-        foreach($db['sessions'] as $key=>$s)if(!is_string($key)||!self::hex($key,64)||!is_array($s)||!isset($db['users'][$s['user']??''])||!is_string($s['id']??null)||!self::hex($s['id'],32)||!is_string($s['csrf']??null)||!self::hex($s['csrf'],64)||!is_int($s['created']??null)||!is_int($s['seen']??null)||!is_int($s['expires']??null))throw new \RuntimeException('Invalid identity session');
+        foreach($db['sessions'] as $key=>$s)if(!is_string($key)||!self::hex($key,64)||!is_array($s)||!isset($db['users'][$s['user']??''])||!is_string($s['id']??null)||!self::hex($s['id'],32)||!is_string($s['csrf']??null)||!self::hex($s['csrf'],64)||!is_int($s['created']??null)||!is_int($s['seen']??null)||!is_int($s['expires']??null)||(isset($s['oidc_iat'])&&(!is_int($s['oidc_iat'])||$s['oidc_iat']<1)))throw new \RuntimeException('Invalid identity session');
         foreach($db['resets'] as $key=>$r)if(!is_string($key)||!self::hex($key,64)||!is_array($r)||!isset($db['users'][$r['user']??''])||!is_int($r['expires']??null))throw new \RuntimeException('Invalid reset record');
         foreach($db['attempts'] as $k=>$a)if(!is_string($k)||!self::hex($k,64)||!is_array($a)||!is_int($a['count']??null)||!is_int($a['until']??null)||$a['count']<1)throw new \RuntimeException('Invalid rate limit');
         $flows=$db['oidc_flows']??[];if(!is_array($flows)||count($flows)>500)throw new \RuntimeException('Invalid OIDC flow state');
@@ -174,7 +174,39 @@ final class IdentityStore
         if(!$u['enabled'])return false;
         if($u['owner'])return true;
         if(!isset($u['oidc']))return !Oidc::required();
-        try{$c=Oidc::config();return $c!==null&&($s['oidc_policy']??null)===Oidc::fingerprint($c)&&$u['oidc']['issuer']===$c['issuer']&&$u['oidc']['organization']===$c['organization'];}catch(\Throwable){return false;}
+        try{$c=Oidc::config();return $c!==null&&($s['oidc_policy']??null)===Oidc::fingerprint($c)&&$u['oidc']['issuer']===$c['issuer']&&$u['oidc']['organization']===$c['organization']&&($s['oidc_iat']??$s['created'])>($u['oidc']['logout_at']??0);}catch(\Throwable){return false;}
+    }
+    public function allowOidcLogout(string $ip):bool{
+        return $this->transaction(function(&$db)use($ip){$now=time();self::prune($db,$now);$key=hash('sha256','oidc-logout:ip:'.$ip);
+            if(($db['attempts'][$key]['count']??0)>=120||(!isset($db['attempts'][$key])&&count($db['attempts'])>=4096))return false;
+            $db['attempts'][$key]??=['count'=>0,'until'=>$now+60];$db['attempts'][$key]['count']++;return true;
+        });
+    }
+    /** Monotonic subject watermark makes logout retries idempotent and rejects stale in-flight logins. */
+    public function federatedLogout(array $c,array $claims):void
+    {
+        $this->transaction(function(&$db)use($c,$claims){
+            foreach($db['users'] as $id=>$u){$link=$u['oidc']??null;
+                if(!$link||$link['issuer']!==$c['issuer']||$link['organization']!==$c['organization']||$link['subject']!==$claims['sub'])continue;
+                $at=$claims['iat'];if($at<=($link['logout_at']??0))return;
+                $db['users'][$id]['oidc']['logout_at']=$at;
+                foreach($db['sessions'] as $k=>$session)if($session['user']===$id&&($session['oidc_iat']??$session['created'])<=$at)unset($db['sessions'][$k]);
+                ActivityJournal::record($db,null,'account.sessions','Federated logout',$id);return;
+            }
+        });
+    }
+    private static function revokeAccount(array &$db,array $u,?array $actor):int{
+        $id=$u['id'];$count=count(array_filter($db['sessions'],fn($s)=>$s['user']===$id));self::revoke($db,$id);
+        if(isset($u['oidc'])){$db['users'][$id]['oidc']['logout_at']=max(time(),$u['oidc']['logout_at']??0);$db['oidc_flows']=[];}
+        ActivityJournal::record($db,$actor,'account.sessions','Account sessions revoked',$id);return $count;
+    }
+    /** Local operator recovery: revoke sessions and reset tokens, invalidate pending SSO flows. */
+    public function operatorRevoke(string $username):int
+    {
+        return $this->transaction(function(&$db)use($username){$u=self::find($db,self::username($username));if(!$u)throw new \InvalidArgumentException('Unknown account.');return self::revokeAccount($db,$u,null);});
+    }
+    public function revokeUserSessions(string $token,string $id):int{
+        return $this->transaction(function(&$db)use($token,$id){$session=self::requireSession($db,$token);$actor=$db['users'][$session['user']];if(!$actor['owner'])throw new \DomainException('Owner permission required.');$u=$db['users'][$id]??null;if(!$u||$u['owner'])throw new \InvalidArgumentException('Use personal session controls for the owner.');return self::revokeAccount($db,$u,$actor);});
     }
     public function checkOidcOrganization(string $id):void{$this->transaction(function($db)use($id){if(!$db['users']||!isset($db['organizations'][$id])||$db['organizations'][$id]['archived'])throw new \DomainException('OIDC organization unavailable.');},false);}
     /** Short-lived, browser-bound authorization transactions. No network calls under the identity lock. */
@@ -206,7 +238,7 @@ final class IdentityStore
             $now=time();self::prune($db,$now);$oid=$c['organization'];$o=$db['organizations'][$oid]??null;
             if($db['users']===[]||!$o||$o['archived']||$claims['exp']<=$now)return ['status'=>'invalid'];
             $u=null;foreach($db['users'] as $candidate)if(($candidate['oidc']['issuer']??null)===$c['issuer']&&($candidate['oidc']['subject']??null)===$claims['sub']){$u=$candidate;break;}
-            if($u&&(!$u['enabled']||$u['owner']||$u['oidc']['organization']!==$oid))return ['status'=>'invalid'];
+            if($u&&(!$u['enabled']||$u['owner']||$u['oidc']['organization']!==$oid||($claims['iat']??0)<=($u['oidc']['logout_at']??0)))return ['status'=>'invalid'];
             $role=Oidc::role($c,$claims);
             if($role==='none'){
                 if($u){self::revoke($db,$u['id']);$id=$u['id'];if(isset($o['members'][$id])&&$o['owner']!==$id){unset($o['members'][$id],$o['roles'][$id]);$o['revision']++;$o['updated']=$now;$db['organizations'][$oid]=$o;foreach($db['workspaces'] as &$w)if($w['organization']===$oid&&isset($w['roles'][$id])){$db['users'][$id]['oidc']['restrictions'][$w['id']]=$w['roles'][$id];unset($w['roles'][$id]);$w['revision']++;$w['updated']=$now;}unset($w);ActivityJournal::record($db,$u,'organization.remove','SSO group access removed',$id,$oid);}}
@@ -232,7 +264,7 @@ final class IdentityStore
             }
             unset($db['users'][$id]['oidc']['restrictions']);
             // Preserve explicit workspace restrictions. Organization role is a ceiling.
-            self::revoke($db,$id);$r=self::session($db,$u,$now);$r['session']['expires']=min($claims['exp'],$now+3600);$r['session']['oidc_policy']=Oidc::fingerprint($c);$db['sessions'][hash('sha256',$r['token'])]=$r['session'];
+            self::revoke($db,$id);$r=self::session($db,$u,$now);$r['session']['expires']=min($claims['exp'],$now+3600);$r['session']['oidc_policy']=Oidc::fingerprint($c);$r['session']['oidc_iat']=$claims['iat']??$now;$db['sessions'][hash('sha256',$r['token'])]=$r['session'];
             ActivityJournal::record($db,$u,'login','SSO sign in',$id);return ['status'=>'ok']+$r;
         });
     }

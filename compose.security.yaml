@@ -1,0 +1,22 @@
+# Optional, after compose.yaml and other app overlays. Use two host directories: shared Git/automation keys, and the OIDC client secret.
+# Use private files readable by the app UID; do not place backup keys here.
+services:
+  book:
+    environment:
+      BOOK_GITHUB_KEY: ""
+      BOOK_AUTOMATION_KEY: ""
+      BOOK_OIDC_CLIENT_SECRET: ""
+      BOOK_GITHUB_KEY_FILE: /run/book-secrets/git.json
+      BOOK_AUTOMATION_KEY_FILE: /run/book-secrets/automation.json
+      BOOK_OIDC_CLIENT_SECRET_FILE: /run/book-oidc/client-secret
+    volumes:
+      - ${BOOK_SECURITY_SECRET_DIR:?Set private application secret directory}:/run/book-secrets:ro
+      - ${BOOK_OIDC_SECRET_DIR:?Set private OIDC secret directory}:/run/book-oidc:ro
+  worker:
+    environment:
+      BOOK_GITHUB_KEY: ""
+      BOOK_AUTOMATION_KEY: ""
+      BOOK_GITHUB_KEY_FILE: /run/book-secrets/git.json
+      BOOK_AUTOMATION_KEY_FILE: /run/book-secrets/automation.json
+    volumes:
+      - ${BOOK_SECURITY_SECRET_DIR:?Set private application secret directory}:/run/book-secrets:ro

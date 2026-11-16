@@ -33,6 +33,13 @@ final class AuthController
     }
     private function oidc(string $path,string $method,callable $page):void{
         header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
+        if($path==='/auth/oidc/backchannel-logout'){
+            if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}
+            try{$c=Oidc::config();if(!$c||($c['backchannel_logout']??false)!==true){http_response_code(404);return;}
+                $jwt=self::post('logout_token');if($jwt===''||strlen($jwt)>65536){http_response_code(400);return;}if(!$this->store->allowOidcLogout(self::ip())){http_response_code(429);header('Retry-After: 60');return;}$this->store->federatedLogout($c,Oidc::logoutClaims($c,$jwt));http_response_code(200);
+            }catch(\Throwable){http_response_code(400);}
+            return;
+        }
         if($path==='/auth/oidc/complete'){if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}$page('Sign-in complete','<h1>'.self::e(Locale::t('Corporate sign-in complete')).'</h1><p><a href="/workspaces">'.self::e(Locale::t('Continue to your workspaces')).'</a></p>');return;}
         try{
             $c=Oidc::config();if(!$c){http_response_code(404);$page('SSO unavailable','<h1>SSO is not configured</h1>');return;}
@@ -60,7 +67,7 @@ final class AuthController
         try{$c=Oidc::config();return $c&&self::secure()?self::form('/auth/oidc/start',$csrf,'','Sign in with '.$c['label']):'';}catch(\Throwable){return '<p>Corporate sign-in is unavailable. Contact your administrator.</p>';}
     }
     public function dispatch(string $path,string $method,callable $page):void{
-        if(in_array($path,['/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete'],true)){$this->oidc($path,$method,$page);return;}
+        if(in_array($path,['/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/auth/oidc/backchannel-logout'],true)){$this->oidc($path,$method,$page);return;}
         header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
         if(!in_array($path,['/login','/logout','/account','/account/users','/account/reset'],true)){http_response_code(404);return;}
         $ctx=$this->current();$token=$this->token();$error='';
@@ -99,6 +106,7 @@ final class AuthController
                 $action=self::post('action');
                 if($path==='/account/users'){
                     if($action==='create')$this->store->createUser($token,self::post('username'),self::post('name'),self::post('email'),self::post('password'));
+                    elseif($action==='revoke-sessions')$this->store->revokeUserSessions($token,self::post('id'));
                     elseif(in_array($action,['enable','disable'],true))$this->store->setEnabled($token,self::post('id'),$action==='enable');
                     else throw new \InvalidArgumentException('Unknown user action.');
                 }elseif($action==='profile')$this->store->profile($token,self::post('name'),self::post('email'));
@@ -117,7 +125,7 @@ final class AuthController
         $html='<div class="auth-panel"><h1>'.self::e(Locale::t($path==='/account/users'?'User management':'Your account')).'</h1>'.self::notice($error).(isset($_GET['updated'])?'<p>Changes saved.</p>':'').'<p><a href="/account">'.self::e(Locale::t('Account')).'</a> · <a href="/organizations">'.self::e(Locale::t('Organizations')).'</a>'.($user['owner']?' · <a href="/studio">'.self::e(Locale::t('Studio')).'</a> · <a href="/account/users">Users</a>':'').'</p>';
         if($path==='/account/users'){
             $html.=self::oidcStatus().'<h2>Create user</h2>'.self::form($path,$csrf,self::field('username','Username','text','','username').self::field('name','Display name').self::field('email','Email','email').self::field('password','Initial password (12–72 bytes)','password','','new-password'),'Create account','create').'<h2>Accounts</h2>';
-            foreach($this->store->users($token) as $u){$html.='<div class="account-row"><strong>'.self::e($u['name']).'</strong><p>'.self::e($u['username'].' · '.$u['email']).' · '.($u['owner']?'Installation owner':(($u['enabled']?'Active':'Disabled').(!empty($u['federated'])?' · SSO':''))).'</p>';if(!$u['owner'])$html.=self::form($path,$csrf,'<input type="hidden" name="id" value="'.$u['id'].'">',$u['enabled']?'Disable account':'Enable account',$u['enabled']?'disable':'enable');$html.='</div>';}
+            foreach($this->store->users($token) as $u){$html.='<div class="account-row"><strong>'.self::e($u['name']).'</strong><p>'.self::e($u['username'].' · '.$u['email']).' · '.($u['owner']?'Installation owner':(($u['enabled']?'Active':'Disabled').(!empty($u['federated'])?' · SSO':''))).'</p>';if(!$u['owner'])$html.=self::form($path,$csrf,'<input type="hidden" name="id" value="'.$u['id'].'">',$u['enabled']?'Disable account':'Enable account',$u['enabled']?'disable':'enable').self::form($path,$csrf,'<input type="hidden" name="id" value="'.$u['id'].'">','Revoke all sessions','revoke-sessions');$html.='</div>';}
         }else{
             $html.='<p>Signed in as <strong>'.self::e($user['username']).'</strong>'.($user['owner']?' · Installation owner':' · Personal account').'</p><h2>Profile</h2>'.self::form('/account',$csrf,self::field('name','Display name','text',$user['name']).self::field('email','Email','email',$user['email'],'email'),'Save profile','profile').(!empty($user['federated'])?'<p>Corporate credentials are managed by your identity provider.</p>':'<h2>Change password</h2>'.self::form('/account',$csrf,self::field('old','Current password','password','','current-password').self::field('password','New password (12–72 bytes)','password','','new-password').self::field('confirm','Confirm password','password','','new-password'),'Change password','password')).'<h2>Active sessions</h2><p>Changing your password or recovering access signs out all previous sessions.</p>';
             foreach($this->store->sessions($token) as $s)$html.='<div class="account-row"><p>Created '.self::e(gmdate('Y-m-d H:i',$s['created']).' UTC · Last active '.gmdate('Y-m-d H:i',$s['seen']).' UTC').($s['id']===$ctx['session']['id']?' · Current session':'').'</p>'.self::form('/account',$csrf,'<input type="hidden" name="id" value="'.$s['id'].'">','Revoke session','revoke').'</div>';

@@ -59,8 +59,8 @@ final class Permissions
             '/studio/history'=>$action==='restore'?'edit':'',
             '/studio/team'=>$action==='read'?'edit':'',
             '/studio/static-export'=>$action==='download'?'export':'',
-            '/studio/ci'=>in_array($action,['issue','revoke','build','approve','publish','cancel','prune','rollback'],true)?'manage':'',
-            '/studio/automation'=>in_array($action,['configure','retry'],true)?'manage':'',
+            '/studio/ci'=>in_array($action,['issue','rotate','revoke','build','approve','publish','cancel','prune','rollback'],true)?'manage':'',
+            '/studio/automation'=>in_array($action,['configure','rotate','retire','retry'],true)?'manage':'',
             '/studio/reviews'=>match($action){'submit','comment','cancel'=>'edit','approve','changes','reject','publish'=>'publish','policy','prune'=>'ownership',default=>''},default=>'',
         };
         return self::allows($role,$permission);

@@ -57,12 +57,13 @@ def main():
         idp=http.server.ThreadingHTTPServer(('127.0.0.1',0),Provider);idp.issuer='https://127.0.0.1:'+str(idp.server_port)+'/realm';idp.key=key;idp.jwk={'kty':'RSA','kid':'test-key','alg':'RS256','use':'sig','n':b64(bytes.fromhex(mod)),'e':'AQAB'};idp.codes={};idp.groups=['writers'];idp.subject='employee-1';idp.bad_nonce=False
         tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);tls.load_cert_chain(cert,key);idp.socket=tls.wrap_socket(idp.socket,server_side=True);threading.Thread(target=idp.serve_forever,daemon=True).start()
         env=os.environ.copy();dsn=env.pop('BOOK_PG_DSN',None);env.pop('BOOK_REDIS_HOST',None);env.update(BOOK_DATA_DIR=str(tmp/'data'),BOOK_SECURE_COOKIE='1',BOOK_OIDC_REQUIRED='0',BOOK_PG_NAMESPACE=uuid.uuid4().hex)
-        for k in ['BOOK_OIDC_CONFIG','BOOK_OIDC_CLIENT_SECRET']:env.pop(k,None)
+        for k in ['BOOK_OIDC_CONFIG','BOOK_OIDC_CLIENT_SECRET','BOOK_OIDC_CLIENT_SECRET_FILE']:env.pop(k,None)
         setup=json.loads(php(env,r'''$s=new CajeerBook\IdentityStore(getenv('BOOK_DATA_DIR'));$s->initialize('owner','Owner','owner@example.org','owner-password-123');$t=$s->login('owner','owner-password-123','192.0.2.1')['token'];$o=$s->createOrganization($t,'Team','team');echo json_encode(['org'=>$o['id'],'token'=>$t]);'''))
         if '--postgres' in sys.argv:
             if not dsn:raise RuntimeError('PostgreSQL required')
             env['BOOK_PG_DSN']=dsn;php(env,r'''CajeerBook\PostgresContentStore::migrate(getenv('BOOK_DATA_DIR'));''')
-        env.update(BOOK_OIDC_CONFIG=json.dumps({'issuer':idp.issuer,'client_id':'book','redirect_uri':'https://book.example.org/auth/oidc/callback','organization':setup['org'],'label':'Corporate ID','groups':{'writers':'editor','readers':'viewer'}}),BOOK_OIDC_CLIENT_SECRET='test-secret')
+        secret=tmp/'oidc-secret';secret.write_text('test-secret\n');secret.chmod(0o600)
+        env.update(BOOK_OIDC_CONFIG=json.dumps({'backchannel_logout':True,'issuer':idp.issuer,'client_id':'book','redirect_uri':'https://book.example.org/auth/oidc/callback','organization':setup['org'],'label':'Corporate ID','groups':{'writers':'editor','readers':'viewer'}}),BOOK_OIDC_CLIENT_SECRET_FILE=str(secret))
         processes=[];logs=[]
         try:
             ports=[freeport(),freeport()]
@@ -88,6 +89,17 @@ def main():
             idp.bad_nonce=True;path,browser=begin();check(request(b,path,cookies={'__Host-book_oidc':browser})[0]==401,'signed token with wrong nonce rejected');idp.bad_nonce=False
             idp.groups=['readers'];path,browser=begin();status,h,_=request(b,path,cookies={'__Host-book_oidc':browser});assert status==303;new,_=cookie(h,'__Host-book_session');check(request(a,'/account',cookies={'__Host-book_session':session})[0]==401,'group reauthentication revokes prior session')
             check(request(a,'/account',cookies={'__Host-book_session':new})[0]==200,'new downgraded session valid')
+            # Verify a real signed back-channel token through HTTPS discovery/JWKS on the other node.
+            def logout_token(**overrides):
+                claims={'iss':idp.issuer,'sub':idp.subject,'aud':'book','iat':int(time.time()),'jti':uuid.uuid4().hex,'events':{'http://schemas.openid.net/event/backchannel-logout':{}}};claims.update(overrides)
+                data=b64(json.dumps({'alg':'RS256','kid':'test-key'}).encode())+'.'+b64(json.dumps(claims).encode());sig=subprocess.check_output(['openssl','dgst','-sha256','-sign',str(key)],input=data.encode());return data+'.'+b64(sig)
+            logout='/auth/oidc/backchannel-logout'
+            check(request(b,logout,'POST',{'logout_token':logout_token(aud='wrong')})[0]==400 and request(a,'/account',cookies={'__Host-book_session':new})[0]==200,'wrong logout audience denied without session change')
+            check(request(b,logout,'POST',{'logout_token':logout_token(nonce='wrong')})[0]==400,'logout token with nonce rejected')
+            check(request(b,logout,'POST',{'logout_token':logout_token(events={})})[0]==400,'logout event required')
+            token=logout_token();check(request(b,logout,'POST',{'logout_token':token})[0]==200 and request(a,'/account',cookies={'__Host-book_session':new})[0]==401,'signed backchannel logout revokes session on other node')
+            time.sleep(1.1);path,browser=begin();status,h,_=request(b,path,cookies={'__Host-book_oidc':browser});assert status==303;new,_=cookie(h,'__Host-book_session')
+            check(request(b,logout,'POST',{'logout_token':token})[0]==200 and request(a,'/account',cookies={'__Host-book_session':new})[0]==200,'replayed logout cannot revoke newer login')
             idp.groups=[];path,browser=begin();check(request(b,path,cookies={'__Host-book_oidc':browser})[0]==401 and request(a,'/account',cookies={'__Host-book_session':new})[0]==401,'group removal denies and revokes across nodes')
             data=json.loads(php(env,r'''echo json_encode((new CajeerBook\IdentityStore(getenv('BOOK_DATA_DIR')))->backup());'''));users=[u for u in data['users'].values() if 'oidc' in u];check(len(users)==1 and users[0]['oidc']['subject']=='employee-1' and 'oidc_flows' not in data,'stable JIT identity, backup excludes temporary flow')
         except Exception:

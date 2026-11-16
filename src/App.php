@@ -76,7 +76,7 @@ final class App {
                 $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){$this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();$this->dispatch($path,$method);});return;
             }
             // Account, control-plane and health routes must remain reachable even when legacy content is private.
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/workspaces','/domains','/organizations','/team','/audit','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/auth/oidc/backchannel-logout','/workspaces','/domains','/organizations','/team','/audit','/health/live','/health/ready','/diagram-frame'],true)||str_starts_with($path,'/organizations/')){$this->dispatch($path,$method);return;}
             $this->identityStore->withLegacy($this->auth->token(),function($ctx,$role,$w,$visible)use($path,$method){
                 $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->readerVisibility=$w?Visibility::workspace($w):'public';if($w)$this->useLegacyStore();
                 header('Cache-Control: private, no-store');header('Vary: Cookie');if($ctx||!$visible||$this->readerVisibility==='private')header('X-Robots-Tag: noindex, nofollow');
@@ -135,6 +135,7 @@ final class App {
         $inner=preg_replace('~\\A/w/[a-f0-9]{32}/[a-f0-9]{32}(?=/)~D','',$path);
         $policy=match(true){
             $method==='POST'&&$path==='/auth/oidc/start'=>['oidc-start',30,900,true],
+            $path==='/auth/oidc/backchannel-logout'=>['oidc-logout',120,60,false],
             $path==='/auth/oidc/callback'=>['oidc-callback',60,60,false],
             $method==='POST'&&$path==='/login'=>['login',30,900,true],
             $method==='POST'&&$path==='/account/reset'=>['reset',30,900,true],
@@ -330,7 +331,7 @@ final class App {
         try{
             if($path==='/diagram-frame'){DiagramFrame::serve($method);return;}
             if(!in_array($method,['GET','HEAD','POST'],true)){http_response_code(405);header('Allow: GET, HEAD, POST');return;}
-            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
+            if(in_array($path,['/login','/logout','/account','/account/users','/account/reset','/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/auth/oidc/backchannel-logout'],true)){$this->auth->dispatch($path,$method,fn($title,$body)=>$this->page($title,$body));return;}
             if($path==='/audit'){$this->audit($method);return;}
             if($path==='/team'){
                 header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
@@ -473,6 +474,7 @@ final class App {
                 $str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';$actor=$identity['user'];$users=$identity['review_users']??[];$action=$str('action');$id=$str('id');$notice='';$secret='';
                 try{$this->store->change(function(&$db)use($str,$actor,$users,$action,&$id,&$secret){switch($action){
                     case 'issue':$secret=CiPublishing::issue($db,$actor,$str('scope'),$str('label'),(int)$str('days'),$str('publish')==='1');break;
+                    case 'rotate':if(!ctype_digit($str('days'))||!ctype_digit($str('overlap')))throw new \InvalidArgumentException('Invalid rotation duration.');$secret=CiPublishing::rotate($db,$actor,$id,(int)$str('days'),(int)$str('overlap'),$users);$id='';break;
                     case 'revoke':CiPublishing::revoke($db,$actor,$id);$id='';break;
                     case 'build':$b=CiPublishing::build($db,$actor,$str('scope'),bin2hex(random_bytes(16)),'',$this->media,$str('expected'));$id=$b['id'];break;
                     case 'approve':CiPublishing::approve($db,$actor,$users,$id,$str('digest'),$str('note'));break;
@@ -486,7 +488,7 @@ final class App {
             }
             if($path==='/studio/automation'){
                 $str=fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';$notice='';
-                try{$this->store->change(function(&$db)use($str,$identity){if($str('action')==='configure'){AutomationQueue::configure($db,$identity['user']['id'],$str('expected'),$str('incoming'),$str('destination'),$str('outgoing'),is_array($_POST['events']??null)?array_filter($_POST['events'],'is_string'):[]);ActivityJournal::record($db,$identity['user'],'automation.configure','Webhook configuration',$db['automation']['config']['id']??'');}else{AutomationQueue::retry($db,$str('id'));ActivityJournal::record($db,$identity['user'],'automation.retry','Automation job',$str('id'));}});$notice='Automation configuration or job updated.';}catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$notice=$e->getMessage();}
+                try{$this->store->change(function(&$db)use($str,$identity){if($str('action')==='configure'){AutomationQueue::configure($db,$identity['user']['id'],$str('expected'),$str('incoming'),$str('destination'),$str('outgoing'),is_array($_POST['events']??null)?array_filter($_POST['events'],'is_string'):[]);ActivityJournal::record($db,$identity['user'],'automation.configure','Webhook configuration',$db['automation']['config']['id']??'');}elseif($str('action')==='rotate'){if(!ctype_digit($str('overlap')))throw new \InvalidArgumentException('Invalid rotation overlap.');AutomationQueue::assertRotation($db,$str('stamp'));AutomationQueue::rotate($db,$str('expected'),$str('kind'),$str('secret'),(int)$str('overlap'));ActivityJournal::record($db,$identity['user'],'automation.configure','Webhook credential rotated',$db['automation']['config']['id']);}elseif($str('action')==='retire'){AutomationQueue::assertRotation($db,$str('stamp'));AutomationQueue::retirePrevious($db,$str('expected'));ActivityJournal::record($db,$identity['user'],'automation.configure','Previous credential retired',$db['automation']['config']['id']);}elseif($str('action')==='retry'){AutomationQueue::retry($db,$str('id'));ActivityJournal::record($db,$identity['user'],'automation.retry','Automation job',$str('id'));}else throw new \InvalidArgumentException('Unknown automation action.');});$notice='Automation configuration or job updated.';}catch(\InvalidArgumentException|\DomainException $e){http_response_code($e instanceof \DomainException?409:422);$notice=$e->getMessage();}
                 $this->page('Webhooks & Automation',AutomationView::render($this->store->read(),$csrf,$notice));return;
             }
             if($path==='/studio/team'){

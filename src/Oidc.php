@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/SecretKeys.php';
 
 /** Operator-configured OIDC confidential client. Only a pinned HTTPS issuer is trusted. */
 final class Oidc
@@ -20,7 +21,7 @@ final class Oidc
         foreach($c['groups'] as $g=>$role)if(!is_string($g)||strlen($g)>256||$g===''||!in_array($role,['viewer','editor'],true))throw new \RuntimeException('Invalid OIDC group mapping.');
         $c['group_claim']??='groups';if(!is_string($c['group_claim'])||!preg_match('/\A[a-zA-Z0-9_.-]{1,64}\z/D',$c['group_claim']))throw new \RuntimeException('Invalid OIDC group claim.');
         $c['auth_method']??='client_secret_basic';if(!in_array($c['auth_method'],['client_secret_basic','client_secret_post'],true))throw new \RuntimeException('Invalid OIDC client authentication.');
-        $c['secret']=getenv('BOOK_OIDC_CLIENT_SECRET')?:'';if($c['secret']===''||strlen($c['secret'])>4096)throw new \RuntimeException('Missing OIDC client secret.');
+        $c['secret']=SecretKeys::value('BOOK_OIDC_CLIENT_SECRET');if(isset($c['backchannel_logout'])&&!is_bool($c['backchannel_logout']))throw new \RuntimeException('Invalid OIDC logout configuration.');if($c['secret']===''||strlen($c['secret'])>4096)throw new \RuntimeException('Missing OIDC client secret.');
         return $c;
     }
     public static function fingerprint(array $c):string{return hash('sha256',json_encode($c,JSON_THROW_ON_ERROR));}
@@ -76,7 +77,7 @@ final class Oidc
         if(!$key||openssl_pkey_get_details($key)['bits']<2048)throw new \RuntimeException('Invalid RSA key.');return $key;
     }
     /** Verify signed claims before they reach identity storage. No JWT-supplied URLs or keys. */
-    public static function verify(string $jwt,array $jwks,array $c,string $nonce,int $now):array
+    private static function signed(string $jwt,array $jwks,array $c):array
     {
         if(strlen($jwt)>65536||count($parts=explode('.',$jwt))!==3)throw new \RuntimeException('Invalid ID token.');
         [$h,$p,$s]=$parts;$head=json_decode(self::decode($h),true,8,JSON_THROW_ON_ERROR);$claims=json_decode(self::decode($p),true,16,JSON_THROW_ON_ERROR);
@@ -85,9 +86,28 @@ final class Oidc
         $matches=[];foreach($keys as $j)if(is_array($j)&&($j['kid']??null)===$head['kid']&&($j['kty']??null)==='RSA'&&($j['use']??'sig')==='sig'&&($j['alg']??'RS256')==='RS256'&&(!isset($j['key_ops'])||(is_array($j['key_ops'])&&array_is_list($j['key_ops'])&&in_array('verify',$j['key_ops'],true))))$matches[]=$j;
         if(count($matches)!==1||openssl_verify($h.'.'.$p,self::decode($s),self::key($matches[0]),OPENSSL_ALGO_SHA256)!==1)throw new \RuntimeException('Invalid ID token signature.');
         $aud=$claims['aud']??null;$aud=is_string($aud)?[$aud]:$aud;
-        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!array_is_list($aud)||count($aud)>32||count(array_filter($aud,'is_string'))!==count($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||($claims['nonce']??null)!==$nonce||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
+        if(($claims['iss']??null)!==$c['issuer']||!is_array($aud)||!array_is_list($aud)||count($aud)>32||count(array_filter($aud,'is_string'))!==count($aud)||!in_array($c['client_id'],$aud,true)||(count($aud)>1&&($claims['azp']??null)!==$c['client_id'])||(isset($claims['azp'])&&$claims['azp']!==$c['client_id'])||!is_string($claims['sub']??null)||$claims['sub']===''||strlen($claims['sub'])>255||!preg_match('/\A[\x21-\x7e]+\z/D',$claims['sub']))throw new \RuntimeException('Invalid ID token identity claims.');
+        return $claims;
+    }
+    public static function verify(string $jwt,array $jwks,array $c,string $nonce,int $now):array
+    {
+        $claims=self::signed($jwt,$jwks,$c);
+        if(($claims['nonce']??null)!==$nonce||isset($claims['events']))throw new \RuntimeException('Invalid ID token nonce or type.');
         if(!is_int($claims['exp']??null)||$claims['exp']<=$now||!is_int($claims['iat']??null)||$claims['iat']>$now+60||$claims['iat']<$now-600||$claims['exp']<=$claims['iat']||(isset($claims['nbf'])&&(!is_int($claims['nbf'])||$claims['nbf']>$now+60)))throw new \RuntimeException('Invalid ID token time claims.');
         return $claims;
+    }
+    /** Subject-wide OIDC back-channel logout. SID-only tokens are not supported. */
+    public static function verifyLogout(string $jwt,array $jwks,array $c,int $now):array
+    {
+        $claims=self::signed($jwt,$jwks,$c);$event='http://schemas.openid.net/event/backchannel-logout';$object=json_decode(self::decode(explode('.',$jwt)[1]),false,16,JSON_THROW_ON_ERROR);
+        if(!(($object->events??null) instanceof \stdClass)||!(($object->events->{$event}??null) instanceof \stdClass))throw new \RuntimeException('Invalid logout event object.');
+        if(array_key_exists('nonce',$claims)||!is_array($claims['events']??null)||array_keys($claims['events'])!==[$event]||$claims['events'][$event]!==[]||!is_string($claims['jti']??null)||$claims['jti']===''||strlen($claims['jti'])>255||!is_int($claims['iat']??null)||$claims['iat']>$now||$claims['iat']<$now-300||(array_key_exists('exp',$claims)&&(!is_int($claims['exp'])||$claims['exp']<=$now||$claims['exp']<=$claims['iat']))||(array_key_exists('nbf',$claims)&&(!is_int($claims['nbf'])||$claims['nbf']>$now)))throw new \RuntimeException('Invalid logout token.');
+        return $claims;
+    }
+    public static function logoutClaims(array $c,string $jwt):array
+    {
+        if(($c['backchannel_logout']??false)!==true||$jwt===''||strlen($jwt)>65536)throw new \RuntimeException('Back-channel logout unavailable.');
+        $d=self::discovery($c);return self::verifyLogout($jwt,self::request($d['jwks_uri']),$c,time());
     }
     public static function role(array $c,array $claims):string
     {

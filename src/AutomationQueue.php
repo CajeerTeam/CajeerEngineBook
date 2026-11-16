@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace CajeerBook;
+require_once __DIR__.'/SecretKeys.php';
 
 /** Durable per-workspace inbox/outbox. All mutations occur inside BookStore::change. */
 final class AutomationQueue
@@ -11,16 +12,52 @@ final class AutomationQueue
     private static function id(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{32}\z/D',$v)===1;}
     private static function hash(mixed $v):bool{return is_string($v)&&preg_match('/\A[a-f0-9]{64}\z/D',$v)===1;}
     private static function key():string{
-        $v=getenv('BOOK_AUTOMATION_KEY')?:'';if(!preg_match('/\A[a-fA-F0-9]{64}\z/D',$v))throw new \DomainException('Configure BOOK_AUTOMATION_KEY (32-byte hex) first.');return hex2bin($v);
+        return SecretKeys::active('BOOK_AUTOMATION_KEY');
     }
     private static function seal(string $secret,string $id,string $kind):string{
         if(strlen($secret)<32||strlen($secret)>128||!preg_match('/\A[!-~]+\z/D',$secret))throw new \InvalidArgumentException('Webhook secret must be 32–128 printable non-space ASCII characters.');
         $iv=random_bytes(12);$tag='';$cipher=openssl_encrypt($secret,'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,$iv,$tag,'book-automation:'.$id.':'.$kind,16);if($cipher===false)throw new \RuntimeException('Cannot encrypt webhook secret.');return base64_encode($iv.$tag.$cipher);
     }
-    public static function secret(array $config,string $kind):string{
+    public static function secret(array $config,string $kind,bool $activeOnly=false):string{
         $raw=base64_decode($config[$kind.'_secret'],true);if($raw===false||strlen($raw)<60)throw new \RuntimeException('Invalid webhook credential.');
-        $plain=openssl_decrypt(substr($raw,28),'aes-256-gcm',self::key(),OPENSSL_RAW_DATA,substr($raw,0,12),substr($raw,12,16),'book-automation:'.$config['id'].':'.$kind);
-        if($plain===false)throw new \DomainException('Webhook credential unavailable. Reconfigure automation.');return $plain;
+        return SecretKeys::decrypt('BOOK_AUTOMATION_KEY',$raw,'book-automation:'.$config['id'].':'.$kind,$activeOnly);
+    }
+    private static function previous(array $c,bool $activeOnly=false):string{
+        $copy=$c;$copy['in_secret']=$c['in_previous'];return self::secret($copy,'in',$activeOnly);
+    }
+    public static function verifyKey(array $db):void{
+        $c=$db['automation']['config']??null;if(!$c)return;
+        foreach(['in','out'] as $kind)if($c[$kind.'_secret']!=='')self::secret($c,$kind,true);
+        if(isset($c['in_previous'])&&$c['in_until']>time())self::previous($c,true);
+    }
+    public static function rewrap(array &$db):bool{
+        $c=$db['automation']['config']??null;if(!$c)return false;$before=$c;
+        foreach(['in','out'] as $kind)if($c[$kind.'_secret']!==''){
+            try{self::secret($c,$kind,true);}catch(\DomainException){$c[$kind.'_secret']=self::seal(self::secret($c,$kind),$c['id'],$kind);}
+        }
+        if(isset($c['in_previous'])){if($c['in_until']<=time())unset($c['in_previous'],$c['in_until']);else{
+            try{self::previous($c,true);}catch(\DomainException){$c['in_previous']=self::seal(self::previous($c),$c['id'],'in');}
+        }}
+        if($c===$before)return false;$db['automation']['config']=$c;ActivityJournal::record($db,null,'automation.configure','Credentials rewrapped',$c['id']);return true;
+    }
+    public static function rotationStamp(array $c):string{return hash('sha256',json_encode($c,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES));}
+    public static function assertRotation(array $db,string $stamp):void{
+        $c=$db['automation']['config']??null;if(!$c||!hash_equals(self::rotationStamp($c),$stamp))throw new \DomainException('Webhook configuration changed. Reload.');
+    }
+    /** Rotate signing credentials without replacing the integration or cancelling queued jobs. */
+    public static function rotate(array &$db,string $expected,string $kind,string $secret,int $overlap):void{
+        $c=$db['automation']['config']??null;if(!$c||$c['id']!==$expected||!in_array($kind,['in','out'],true)||$c[$kind.'_secret']==='')throw new \DomainException('Enabled webhook configuration required.');
+        if($overlap<0||$overlap>86400||($kind==='out'&&$overlap!==0))throw new \InvalidArgumentException('Invalid webhook overlap.');
+        $new=self::seal($secret,$c['id'],$kind);
+        if(hash_equals(self::secret($c,$kind),$secret))throw new \InvalidArgumentException('Choose a new webhook secret.');
+        if($kind==='in'){
+            if(isset($c['in_previous'])&&$c['in_until']>time()&&$overlap>0)throw new \DomainException('Previous overlap still active; finish it or rotate immediately.');
+            unset($c['in_previous'],$c['in_until']);if($overlap>0){$c['in_previous']=$c['in_secret'];$c['in_until']=time()+$overlap;}
+        }
+        $c[$kind.'_secret']=$new;$db['automation']['config']=$c;
+    }
+    public static function retirePrevious(array &$db,string $expected):void{
+        $c=$db['automation']['config']??null;if(!$c||$c['id']!==$expected)throw new \DomainException('Webhook configuration changed.');unset($db['automation']['config']['in_previous'],$db['automation']['config']['in_until']);
     }
     public static function destination(string $url,bool $check=true):string{
         $origin=ApiPlayground::origin($url);$path=parse_url($url,PHP_URL_PATH)??'/';
@@ -34,8 +71,12 @@ final class AutomationQueue
         $a=$db['automation']??null;if($a===null){if(($db['schema']??null)===5)throw new \RuntimeException('Automation store missing.');return;}
         if(!in_array($db['schema']??null,[5,6],true)||!is_array($a)||array_diff(array_keys($a),['config','jobs','receipts'])||!array_key_exists('config',$a)||!is_array($a['jobs']??null)||count($a['jobs'])>self::MAX_JOBS||!is_array($a['receipts']??null)||count($a['receipts'])>self::MAX_RECEIPTS)throw new \RuntimeException('Invalid automation store.');
         $c=$a['config'];if($c!==null){
-            if(!is_array($c)||array_diff(array_keys($c),['id','actor','git','url','events','in_secret','out_secret'])||!self::id($c['id']??null)||!self::id($c['actor']??null)||!is_string($c['git']??null)||($c['git']!==''&&!self::id($c['git']))||!is_string($c['url']??null)||!is_array($c['events']??null)||!array_is_list($c['events'])||count($c['events'])>count(self::EVENTS)||count(array_filter($c['events'],'is_string'))!==count($c['events'])||count(array_unique($c['events']))!==count($c['events'])||array_diff($c['events'],self::EVENTS))throw new \RuntimeException('Invalid automation configuration.');
+            if(!is_array($c)||array_diff(array_keys($c),['id','actor','git','url','events','in_secret','out_secret','in_previous','in_until'])||!self::id($c['id']??null)||!self::id($c['actor']??null)||!is_string($c['git']??null)||($c['git']!==''&&!self::id($c['git']))||!is_string($c['url']??null)||!is_array($c['events']??null)||!array_is_list($c['events'])||count($c['events'])>count(self::EVENTS)||count(array_filter($c['events'],'is_string'))!==count($c['events'])||count(array_unique($c['events']))!==count($c['events'])||array_diff($c['events'],self::EVENTS))throw new \RuntimeException('Invalid automation configuration.');
             foreach(['in','out'] as $kind){$s=$c[$kind.'_secret']??null;$bytes=is_string($s)?base64_decode($s,true):false;if(!is_string($s)||($s!==''&&($bytes===false||strlen($bytes)<60||strlen($bytes)>156)))throw new \RuntimeException('Invalid automation credential.');}
+            if(array_key_exists('in_previous',$c)||array_key_exists('in_until',$c)){
+                $raw=is_string($c['in_previous']??null)?base64_decode($c['in_previous'],true):false;
+                if($c['in_secret']===''||$raw===false||strlen($raw)<60||strlen($raw)>156||!is_int($c['in_until']??null)||$c['in_until']<1)throw new \RuntimeException('Invalid previous webhook credential.');
+            }
             if(($c['git']==='')!==($c['in_secret']==='')||($c['url']==='')!==($c['out_secret']==='')||($c['url']!==''&&(!$c['events']||self::destination($c['url'],false)!==$c['url'])))throw new \RuntimeException('Invalid automation destination.');
         }
         foreach($a['jobs'] as $id=>$j){
@@ -73,6 +114,7 @@ final class AutomationQueue
         $secret=self::secret($c,'in');
         if($provider==='github'){$valid=hash_equals('sha256='.hash_hmac('sha256',$body,$secret),$headers['signature']??'');$event=$headers['event']??'';$delivery=$headers['delivery']??'';}
         elseif($provider==='gitlab'){$valid=hash_equals($secret,$headers['signature']??'');$event=$headers['event']??'';$delivery=$headers['delivery']??'';}else throw new \InvalidArgumentException('Unknown provider.');
+        if(!$valid&&isset($c['in_previous'])&&$c['in_until']>time()){$previous=self::previous($c);$valid=hash_equals($provider==='github'?'sha256='.hash_hmac('sha256',$body,$previous):$previous,$headers['signature']??'');}
         if(!$valid)throw new OrganizationAccessException('Invalid webhook signature.');
         if($provider==='github'&&$event==='ping')return ['status'=>'ignored'];
         $push=$event===($provider==='github'?'push':'Push Hook');$merge=$event===($provider==='github'?'pull_request':'Merge Request Hook');

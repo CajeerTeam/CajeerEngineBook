@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/SecretKeys.php';
 
 /** Streaming authenticated encryption; no tar extraction or untrusted paths. */
 final class RecoveryEnvelope
@@ -12,12 +13,20 @@ final class RecoveryEnvelope
     private const MAX_HEADER=262144;
     public static function key():string
     {
-        $file=getenv('BOOK_BACKUP_KEY_FILE')?:'';
-        if($file===''||!is_file($file)||is_link($file)||filesize($file)>66||(fileperms($file)&0077)!==0)throw new \RuntimeException('Set BOOK_BACKUP_KEY_FILE to a private 32-byte hex key file.');
-        $hex=trim((string)file_get_contents($file));
-        if(!preg_match('/\A[a-fA-F0-9]{64}\z/D',$hex))throw new \RuntimeException('Invalid backup encryption key.');
         if(!function_exists('sodium_crypto_secretstream_xchacha20poly1305_init_push'))throw new \RuntimeException('PHP sodium is required.');
-        return hex2bin($hex);
+        return SecretKeys::active('BOOK_BACKUP_KEY',true);
+    }
+    /** Authenticate only the bounded metadata frame to choose a retained key. Full open still verifies every frame. */
+    public static function keyFor(string $source,string $id):string{
+        RecoveryManager::id($id);if(!is_file($source)||is_link($source))throw new \RuntimeException('Invalid recovery source.');
+        $in=fopen($source,'rb');if(!$in)throw new \RuntimeException('Cannot open encrypted backup.');
+        try{if(self::read($in,strlen(self::MAGIC))!==self::MAGIC)throw new \RuntimeException('Unknown recovery envelope.');
+            $header=self::read($in,SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_HEADERBYTES);$n=unpack('N',self::read($in,4))[1];
+            if($n<SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES||$n>self::MAX_HEADER+SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES)throw new \RuntimeException('Invalid encrypted metadata frame.');$cipher=self::read($in,$n);
+            foreach(SecretKeys::ring('BOOK_BACKUP_KEY',true) as $key){$state=sodium_crypto_secretstream_xchacha20poly1305_init_pull($header,$key);$r=sodium_crypto_secretstream_xchacha20poly1305_pull($state,$cipher);if($r===false)continue;
+                $m=json_decode($r[0],true,16,JSON_THROW_ON_ERROR);if($r[1]!==0||($m['id']??null)!==$id)throw new \RuntimeException('Recovery envelope ID mismatch.');return $key;}
+            throw new \RuntimeException('Backup key unavailable or authentication failed.');
+        }finally{fclose($in);}
     }
     private static function name(string $name):bool{return (bool)preg_match('/\A(?:manifest\.json|identity\.json|legacy\.tar|[a-f0-9]{32}\.tar|audit-[a-f0-9]{32}\.jsonl)\z/D',$name);}
     private static function read($f,int $n):string{

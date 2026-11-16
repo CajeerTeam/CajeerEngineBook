@@ -53,8 +53,8 @@ final class RecoveryManager
     }
     /** A real restore, never against live BOOK_DATA_DIR. Optional SQL drill uses a new namespace
      * in an operator-provisioned separate database and validates indexes and the new audit chain. */
-    private function drillFile(string $file,string $stage,string $key,string $id):array{
-        $bundle=$stage.'/bundle';mkdir($bundle,0700);RecoveryEnvelope::open($file,$bundle,$key,$id);
+    private function drillFile(string $file,string $stage,string $id):array{
+        $bundle=$stage.'/bundle';mkdir($bundle,0700);$key=RecoveryEnvelope::keyFor($file,$id);try{RecoveryEnvelope::open($file,$bundle,$key,$id);}finally{sodium_memzero($key);}
         $restored=$stage.'/restored';InstallationBackup::restore($bundle,$restored,$this->public);
         $report=InstallationBackup::audit($restored,$this->public,true);
         $dsn=getenv('BOOK_BACKUP_DRILL_PG_DSN')?:'';
@@ -100,7 +100,7 @@ final class RecoveryManager
                 $captured=time();$id=gmdate('Ymd\THis\Z',$captured).'-'.bin2hex(random_bytes(16));$tmp=$stage.'/snapshot.cbk';
                 InstallationBackup::create($this->root,$stage.'/source',$this->public);RecoveryEnvelope::seal($stage.'/source',$tmp,$key,$id);self::clean($stage.'/source');
                 // Prove the local copy is recoverable before it is uploaded or published.
-                $checked=$this->drillFile($tmp,$stage,$key,$id);
+                $checked=$this->drillFile($tmp,$stage,$id);
                 $sha=Files::hash($tmp);if(!link($tmp,$this->artifact($id)))throw new \RuntimeException('Cannot publish local backup.');Files::syncDir($this->spool);
                 $s['pending']=['id'=>$id,'sha256'=>$sha,'captured_at'=>$captured];$this->save($s);
             }
@@ -110,7 +110,7 @@ final class RecoveryManager
                 $this->remote->upload($id,$file);$download=$stage.'/download.cbk';$this->remote->download($id,$download);
                 if(!hash_equals($sha,Files::hash($download)))throw new \RuntimeException('Remote read-back digest mismatch.');$file=$download;
             }
-            $checked=($this->remote->mode()==='local'&&$checked!==null)?$checked:$this->drillFile($file,$stage,$key,$id);
+            $checked=($this->remote->mode()==='local'&&$checked!==null)?$checked:$this->drillFile($file,$stage,$id);
             $report=['id'=>$id,'sha256'=>$sha,'bytes'=>filesize($file),'captured_at'=>$s['pending']['captured_at'],'verified_at'=>time(),'remote'=>$this->remote->mode(),'restore'=>$checked];
             $this->audit('backup.verified');Files::json($this->report($id),$report);
             $s['last_success']=time();$s['last_capture']=$s['pending']['captured_at'];$s['last_id']=$id;$s['pending']=null;$s['failures']=0;$this->save($s);
@@ -134,14 +134,14 @@ final class RecoveryManager
     /** Restore from a local or remote ID. No requirement for the source installation to be online. */
     public function restore(string $id,string $target,bool $remote=false):array{return $this->locked(function()use($id,$target,$remote){
         self::id($id);$target=DataDirectory::resolve($target,$this->public);RecoveryRemote::separate($target,$this->root);RecoveryRemote::separate($target,$this->spool);if(file_exists($target)||is_link($target)||!is_dir(dirname($target)))throw new \InvalidArgumentException('Restore requires a new directory with existing parent.');
-        $stage=$this->stage();$key=null;try{$key=RecoveryEnvelope::key();
+        $stage=$this->stage();$key=null;try{
             $file=$this->artifact($id);if($remote){$file=$stage.'/download.cbk';$this->remote->download($id,$file);}
-            mkdir($stage.'/bundle',0700);RecoveryEnvelope::open($file,$stage.'/bundle',$key,$id);
+            mkdir($stage.'/bundle',0700);$key=RecoveryEnvelope::keyFor($file,$id);RecoveryEnvelope::open($file,$stage.'/bundle',$key,$id);
             InstallationBackup::restore($stage.'/bundle',$target,$this->public);return InstallationBackup::audit($target,$this->public,true);
         }finally{if(is_string($key))sodium_memzero($key);self::clean($stage);}
     });}
     public function drill(string $id,bool $remote=false):array{return $this->locked(function()use($id,$remote){
-        self::id($id);$stage=$this->stage();$key=null;try{$key=RecoveryEnvelope::key();$file=$this->artifact($id);if($remote){$file=$stage.'/download.cbk';$this->remote->download($id,$file);}return $this->drillFile($file,$stage,$key,$id);}
-        finally{if(is_string($key))sodium_memzero($key);self::clean($stage);}
+        self::id($id);$stage=$this->stage();try{$file=$this->artifact($id);if($remote){$file=$stage.'/download.cbk';$this->remote->download($id,$file);}return $this->drillFile($file,$stage,$id);}
+        finally{self::clean($stage);}
     });}
 }

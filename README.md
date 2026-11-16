@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.7.0 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+Self-hosted documentation and knowledge-base platform based on CajeerEngine 1.3.0 (source snapshot `8edfc810c0fa690118bb3a599b7e349e0847420c`). Book 0.7.1 is a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, not the full CMS kernel or its database. Apache-2.0; see LICENSE and NOTICE.
+
+## 0.7.1 — Enterprise Security Lifecycle
+
+Private file-based keyrings with retained decryption keys, offline credential rewrap across all workspaces, CI token and webhook signing rotation, backward-readable encrypted backups, owner/operator session revocation, opt-in signed OIDC back-channel logout and externally signed audit checkpoints. Existing schema 3 remains unchanged. See [Security lifecycle](docs/admin/security-lifecycle.md) for rotation order, key retention, SSO requirements and rollback constraints. SQL infrastructure and independent security qualification remain required.
 
 ## 0.7.0 — Security Audit & Hardening
 

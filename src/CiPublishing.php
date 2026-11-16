@@ -19,6 +19,18 @@ final class CiPublishing
         $id=bin2hex(random_bytes(16));$secret=bin2hex(random_bytes(32));$db['ci']['tokens'][$id]=['id'=>$id,'hash'=>hash('sha256',$secret),'scope'=>$scope,'label'=>$label,'actor'=>self::actor($actor),'expires'=>time()+$days*86400,'publish'=>$publish];
         ActivityJournal::record($db,$actor,'ci.token','CI token created',$id);return 'cbci_'.$id.'.'.$secret;
     }
+    /** Replace a credential without widening scope, principal or publication rights. */
+    public static function rotate(array &$db,array $actor,string $id,int $days,int $overlap,array $admins):string{
+        $old=$db['ci']['tokens'][$id]??null;$now=time();
+        if(!$old||$old['expires']<=$now||!self::permitted($admins,$old['actor']['id']))throw new \DomainException('Active CI credential required.');
+        if($overlap<0||$overlap>86400)throw new \InvalidArgumentException('Overlap must be 0–86400 seconds.');
+        if($days<1||$days>90)throw new \InvalidArgumentException('Expiry must be 1–90 days.');
+        $next=$db;foreach($next['ci']['tokens'] as $key=>$t)if($t['expires']<=$now)unset($next['ci']['tokens'][$key]);
+        if($overlap===0)unset($next['ci']['tokens'][$id]);else $next['ci']['tokens'][$id]['expires']=min($old['expires'],$now+$overlap);
+        if(count($next['ci']['tokens'])>=self::MAX_TOKENS)throw new \DomainException('Revoke an unused CI token first.');
+        $new=bin2hex(random_bytes(16));$secret=bin2hex(random_bytes(32));$next['ci']['tokens'][$new]=array_replace($old,['id'=>$new,'hash'=>hash('sha256',$secret),'expires'=>$now+$days*86400]);
+        ActivityJournal::record($next,$actor,'ci.token','CI token rotated',$id);ActivityJournal::record($next,$actor,'ci.token','Replacement token created',$new);$db=$next;return 'cbci_'.$new.'.'.$secret;
+    }
     public static function revoke(array &$db,array $actor,string $id):void{if(!isset($db['ci']['tokens'][$id]))throw new \InvalidArgumentException('CI token not found.');unset($db['ci']['tokens'][$id]);ActivityJournal::record($db,$actor,'ci.token','CI token revoked',$id);}
     public static function authenticate(array $db,string $credential,array $admins):array{
         if(!preg_match('/\Acbci_([a-f0-9]{32})\.([a-f0-9]{64})\z/D',$credential,$m))throw new OrganizationAccessException('Invalid CI credential.');
