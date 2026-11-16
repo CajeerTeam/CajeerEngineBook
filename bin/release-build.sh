@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${GITHUB_SHA:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${GITHUB_REF:?}" "${GITHUB_REF_PROTECTED:?}" "${GATE_RESULTS:?}"
 report=${1:?new evidence directory}
-qualification=${2:?full production qualification report}
+[[ $# == 1 ]] || { echo "Usage: release-build.sh NEW_CANDIDATE_DIR" >&2; exit 2; }
 version=$(cat VERSION)
+[[ "$version" == 1.0.0 ]] || { echo 'Hosted release profile only authorized for 1.0.0; update release policy for later versions' >&2; exit 1; }
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$GITHUB_REF" == "refs/tags/v$version" && "$GITHUB_REF_PROTECTED" == true ]]
 [[ $(git rev-parse HEAD) == "$GITHUB_SHA" && $(git cat-file -t "$GITHUB_REF") == tag && $(git rev-parse "$GITHUB_REF^{commit}") == "$GITHUB_SHA" ]]
 git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
@@ -13,7 +14,7 @@ git diff --quiet HEAD --
 mkdir -m 700 "$report"; report=$(cd "$report" && pwd)
 python3 - <<'PY'
 import json,os
-n=json.loads(os.environ['GATE_RESULTS']); expected={'test','postgres-content','docker-release','distributed-release','domains-edge','security-scan','enterprise-release','production-qualification'}
+n=json.loads(os.environ['GATE_RESULTS']); expected={'test','postgres-content','docker-release','distributed-release','domains-edge','security-scan','enterprise-release'}
 if set(n)!=expected or any(v['result']!='success' for v in n.values()): raise SystemExit('Release gates not passed')
 PY
 # No ambient runtime credentials in the disposable qualification processes.
@@ -72,17 +73,27 @@ BOOK_RELEASE_PITR_IMAGE="$pitr" bash tests/pitr-gate.sh > "$report/postgres-pitr
 sudo -n python3 tests/production-lifecycle.py --report-dir "$work/candidate-lifecycle" \
   --candidate-book "$book" --candidate-pitr "$pitr" >> "$report/book-smoke.log" 2>&1 || { tail -60 "$report/book-smoke.log"; exit 1; }
 cat "$work/candidate-lifecycle/lifecycle.json" >> "$report/book-smoke.log"
-export RELEASE_QUALIFICATION="$qualification" RELEASE_CANDIDATE_LIFECYCLE="$work/candidate-lifecycle/lifecycle.json"
+export RELEASE_CANDIDATE_LIFECYCLE="$work/candidate-lifecycle/lifecycle.json"
 export RELEASE_BOOK_REF="$book" RELEASE_PITR_REF="$pitr" RELEASE_VERSION="$version" RELEASE_REPORT="$report"
 python3 - <<'PY'
-import os,json,pathlib,importlib.util
-v=os.environ
-spec=importlib.util.spec_from_file_location("qualification",pathlib.Path("tests/production-qualification.py")); q=importlib.util.module_from_spec(spec);spec.loader.exec_module(q)
-out={'version':v['RELEASE_VERSION'],'commit':v['GITHUB_SHA'],'repository':v['GITHUB_REPOSITORY'],'run_id':v['GITHUB_RUN_ID'],'run_attempt':v['GITHUB_RUN_ATTEMPT'],'gates':{k:r['result'] for k,r in json.loads(v['GATE_RESULTS']).items()},'images':{'book':v['RELEASE_BOOK_REF'],'postgres-pitr':v['RELEASE_PITR_REF']},'image_checks':{r:{'smoke':'success','scan':'success'} for r in ('book','postgres-pitr')}}
-out['production_qualification']=q.release_evidence(v['RELEASE_QUALIFICATION'],v['RELEASE_CANDIDATE_LIFECYCLE'],out['images'],out['commit'],out['version'])
-import shutil
-report=pathlib.Path(v['RELEASE_REPORT']); summary=pathlib.Path(v['RELEASE_QUALIFICATION'])
-for name,path in {'qualification.json':summary,'qualification-lifecycle.json':summary.parent/'lifecycle/lifecycle.json','qualification-soak.json':summary.parent/'load/qualification/report.json','qualification-candidate.json':pathlib.Path(v['RELEASE_CANDIDATE_LIFECYCLE'])}.items():
-    shutil.copyfile(path,report/name)
-(report/'gate-evidence.json').write_text(json.dumps(out,indent=2)+'\n')
+import importlib.util, json, os, pathlib, shutil
+v=os.environ; report=pathlib.Path(v['RELEASE_REPORT']); candidate=pathlib.Path(v['RELEASE_CANDIDATE_LIFECYCLE'])
+spec=importlib.util.spec_from_file_location('release_package',pathlib.Path('bin/release-package.py')); r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+spec=importlib.util.spec_from_file_location('qualification_policy',pathlib.Path('bin/qualification_policy.py')); q=importlib.util.module_from_spec(spec);spec.loader.exec_module(q)
+images={'book':v['RELEASE_BOOK_REF'],'postgres-pitr':v['RELEASE_PITR_REF']}
+life=r.json_read(candidate)
+q.validate_lifecycle(life,v['RELEASE_VERSION'],v['GITHUB_SHA'],life['previous_commit'])
+r.require(life['images']['new'].get('candidate_ref')==images['book'] and life['images']['pitr'].get('candidate_ref')==images['postgres-pitr'],'Actual OCI candidates were not qualified')
+source=r.source_fingerprint((name, body) for name, _, body in r.source_files(pathlib.Path.cwd(),v['GITHUB_SHA']))
+shutil.copyfile(candidate,report/'qualification-candidate.json')
+out={'version':v['RELEASE_VERSION'],'commit':v['GITHUB_SHA'],'repository':v['GITHUB_REPOSITORY'],
+     'run_id':v['GITHUB_RUN_ID'],'run_attempt':v['GITHUB_RUN_ATTEMPT'],
+     'release_profile':'hosted-ci',
+     'gates':{k:entry['result'] for k,entry in json.loads(v['GATE_RESULTS']).items()},
+     'images':images,'image_checks':{role:{'smoke':'success','scan':'success'} for role in ('book','postgres-pitr')},
+     'production_qualification':r.HOSTED_NO_24H.copy(),
+     'candidate_lifecycle':{'status':'passed','previous_commit':life['previous_commit'],
+         'candidate_images':images,'source_digest':source,'report_sha256':r.sha(report/'qualification-candidate.json'),
+         'rpo_seconds':life['rpo_seconds'],'rto_seconds':life['rto_seconds']}}
+r.dump(report/'gate-evidence.json',out)
 PY

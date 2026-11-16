@@ -2,6 +2,10 @@
 
 This gate executes infrastructure and application operations; it does not certify an arbitrary existing production installation. A successful result means **lab-qualified** for the tested commit, images, profile and host. Keep the existing security, domain/TLS, distributed, physical recovery and updater gates. Independent security assessment, external storage/HA failure and production capacity acceptance remain operator responsibilities.
 
+## v1.0.0 hosted release distinction
+
+The full 24-hour qualification described below remains a **separate optional assessment**, not a gate for the revised `v1.0.0` GitHub-hosted release. Publishing `v1.0.0` produces a signed `hosted-ci` release with `production_qualification.status=not-run`; it must not be labelled `lab-qualified`. Only an actually completed and verified 24-hour run can support that claim. No virtual machine or self-hosted `book-load` runner is needed for the hosted 1.0.0 publication, but the optional manual full assessment still requires a dedicated runner.
+
 ## Prerequisites and isolation
 
 Use a dedicated disposable Linux amd64 host with local Docker Engine, Compose 2.24.4+, BuildKit, Git full history, PHP 8.4 with the runtime extensions, Composer, Node/npm, OpenSSL and Python 3.12+. Provide enough storage for two application images, the PostgreSQL/PITR image, a 100k-page corpus, encrypted physical backups and portable restore copies. Use a non-root CI account with local Docker access and passwordless sudo for the isolated lifecycle test only. Do not share this daemon with production or run simultaneous qualification jobs: the existing Compose edge network uses a fixed subnet. The test destroys its own randomly named Compose project and volumes. Never point it at a production database, remote Docker context or existing project. The coordinator pins the local Unix socket and strips inherited Book/database/Redis settings.

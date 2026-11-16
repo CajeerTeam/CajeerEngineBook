@@ -31,8 +31,8 @@ SERVICES = ROLES | INFRA | {'proxy', 'prometheus', 'alertmanager', 'grafana'}
 OVERLAYS = ('postgres', 'redis', 'redis-sentinel', 'distributed', 'domains', 'backup', 'enterprise',
             'observability', 'security', 'shared-storage', 'pitr')
 ALL_FILES = release.FILES | {'release.json', 'release.json.sig', 'source.zip.sig', 'deployment.zip.sig'}
-def all_files(v):
-    return release.files_for(v) | {'release.json', 'release.json.sig', 'source.zip.sig', 'deployment.zip.sig'}
+def all_files(v, profile=release.FULL_PROFILE):
+    return release.files_for(v,profile) | {'release.json', 'release.json.sig', 'source.zip.sig', 'deployment.zip.sig'}
 
 
 HOSTS = {'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
@@ -129,7 +129,8 @@ def manifest_header(bundle, pub, repo, v):
     m = release.json_read(bundle/'release.json')
     require(m['format']==1 and m['product']=='CajeerEngineBook' and m['version']==v and m['repository']==repo and release.COMMIT.fullmatch(m['commit']), 'Unexpected signed release identity')
     require(m['signing_key_sha256']==hashlib.sha256(release.key_der(pub,True)).hexdigest(), 'Wrong release key')
-    require(set(m['artifacts'])==release.files_for(v), 'Unexpected signed artifact set')
+    profile=release.profile_for(v,{'release_profile':m.get('release_profile',release.FULL_PROFILE)})
+    require(set(m['artifacts'])==release.files_for(v,profile), 'Unexpected signed artifact set')
     total = 0
     for name, a in m['artifacts'].items():
         require(type(a['size']) is int and 0 < a['size'] <= limit(name) and re.fullmatch(r'[0-9a-f]{64}',a['sha256']), 'Invalid signed artifact size or hash')
@@ -450,14 +451,18 @@ class Manager:
             temp=Path(tmp); dest=temp/'bundle'; dest.mkdir(mode=0o700)
             def get(n,expected=None):
                 if bundle is not None:
-                    require(Path(bundle).is_dir() and not Path(bundle).is_symlink() and {p.name for p in Path(bundle).iterdir()}==all_files(v),'Unexpected or missing local release files')
+                    require(Path(bundle).is_dir() and not Path(bundle).is_symlink(),'Expected a local release directory')
                     p=release.regular(Path(bundle)/n)
                     with p.open('rb') as f: copy_stream(f,dest/n,limit(n),expected)
                 else: download(f'https://github.com/{repo}/releases/download/v{v}/{n}',dest/n,limit(n),expected)
             get('release.json'); get('release.json.sig',64)
             m=manifest_header(dest,self.pub,repo,v)
             require(commit is None or m['commit']==commit,'Unexpected commit')
-            for n in sorted(all_files(v)-{'release.json','release.json.sig'}): get(n,64 if n.endswith('.sig') else m['artifacts'][n]['size'])
+            profile=release.profile_for(v,{'release_profile':m.get('release_profile',release.FULL_PROFILE)})
+            assets=all_files(v,profile)
+            if bundle is not None:
+                require({p.name for p in Path(bundle).iterdir()}==assets,'Unexpected or missing local release files')
+            for n in sorted(assets-{'release.json','release.json.sig'}): get(n,64 if n.endswith('.sig') else m['artifacts'][n]['size'])
             m=verify_bundle(dest,self.pub,repo,v,commit)
             self.verify_oci(m)
             identifier=v+'-'+m['commit']; final=self.root/'releases'/identifier

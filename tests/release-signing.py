@@ -43,6 +43,83 @@ class Signing(unittest.TestCase):
             (self.evidence/f'{r}-smoke.log').write_text('TEST FIXTURE ONLY\n')
         self.out=self.base/'release'
 
+    def use_hosted_profile(self):
+        self.assertEqual(self.version,'1.0.0')
+        candidate=m.json_read(self.evidence/'qualification-candidate.json')
+        self.e['release_profile']=m.HOSTED_PROFILE
+        self.e['gates']={g:'success' for g in m.gates_for(self.version,m.HOSTED_PROFILE)}
+        self.e['production_qualification']=m.HOSTED_NO_24H.copy()
+        self.e['candidate_lifecycle']={
+            'status':'passed', 'previous_commit':candidate['previous_commit'],
+            'candidate_images':self.images,
+            'source_digest':m.source_fingerprint((n,b) for n,_,b in m.source_files(self.root,self.commit)),
+            'report_sha256':m.sha(self.evidence/'qualification-candidate.json'),
+            'rpo_seconds':candidate['rpo_seconds'], 'rto_seconds':candidate['rto_seconds'],
+        }
+        m.dump(self.evidence/'gate-evidence.json',self.e)
+
+    def test_hosted_signed_release_explicitly_unqualified(self):
+        self.use_hosted_profile();self.assemble()
+        result=self.verify();self.assertEqual(result.returncode,0,result.stderr)
+        names={x.name for x in self.out.iterdir()}
+        self.assertIn('qualification-candidate.json',names)
+        for missing in ('qualification.json','qualification-soak.json','qualification-lifecycle.json'):
+            self.assertNotIn(missing,names)
+        manifest=m.json_read(self.out/'release.json')
+        self.assertEqual(manifest['release_profile'],'hosted-ci')
+        self.assertEqual(manifest['production_qualification']['status'],'not-run')
+        signed=m.json_read(self.out/'gate-evidence.json')
+        self.assertEqual(signed['production_qualification'],m.HOSTED_NO_24H)
+        self.assertNotIn('production-qualification',signed['gates'])
+
+    def test_hosted_rejects_missing_or_faked_soak_claim(self):
+        self.use_hosted_profile()
+        for wrong in (None,{'status':'lab-qualified'},dict(m.HOSTED_NO_24H,soak_seconds=86400),dict(m.HOSTED_NO_24H,minute_windows=1440)):
+            with self.subTest(wrong=wrong):
+                if wrong is None:self.e.pop('production_qualification',None)
+                else:self.e['production_qualification']=wrong
+                m.dump(self.evidence/'gate-evidence.json',self.e)
+                self.rejected('assemble');self.assertFalse(self.out.exists())
+
+    def test_hosted_rejects_invalid_candidate_evidence(self):
+        self.use_hosted_profile()
+        report=self.evidence/'qualification-candidate.json'
+        original=report.read_bytes()
+        for issue in ('missing','bad_hash','wrong_image','failed_step','wrong_source'):
+            with self.subTest(issue=issue):
+                report.write_bytes(original)
+                self.e['candidate_lifecycle']['report_sha256']=m.sha(report)
+                self.e['candidate_lifecycle']['source_digest']=m.source_fingerprint((n,b) for n,_,b in m.source_files(self.root,self.commit))
+                if issue=='missing':report.unlink()
+                elif issue=='bad_hash':self.e['candidate_lifecycle']['report_sha256']='f'*64
+                elif issue in ('wrong_image','failed_step'):
+                    data=m.json_read(report)
+                    if issue=='wrong_image':data['images']['new']['candidate_ref']='ghcr.io/wrong/image@sha256:'+'0'*64
+                    else:data['steps'][3]['status']='failed'
+                    m.dump(report,data);self.e['candidate_lifecycle']['report_sha256']=m.sha(report)
+                elif issue=='wrong_source':self.e['candidate_lifecycle']['source_digest']='0'*64
+                m.dump(self.evidence/'gate-evidence.json',self.e)
+                self.rejected('assemble');self.assertFalse(self.out.exists())
+        report.write_bytes(original)
+
+    def test_hosted_rejects_missing_security_gate(self):
+        self.use_hosted_profile()
+        self.e['gates'].pop('security-scan')
+        m.dump(self.evidence/'gate-evidence.json',self.e)
+        self.rejected('assemble')
+
+    def test_hosted_signed_report_tampering(self):
+        self.use_hosted_profile();self.assemble()
+        report=self.out/'qualification-candidate.json';report.write_bytes(report.read_bytes()+b'\n')
+        self.rejected()
+
+    def test_hosted_profile_must_be_signed_and_match_evidence(self):
+        self.use_hosted_profile();self.assemble()
+        mfest=m.json_read(self.out/'release.json');mfest['release_profile']='full-production'
+        m.dump(self.out/'release.json',mfest)
+        (self.out/'release.json.sig').unlink();m.sign(self.out/'release.json',self.key)
+        self.rejected()
+
     def git(self,*args): return subprocess.check_output(['git',*args],cwd=self.root,text=True)
     def make_key(self,key,pub):
         subprocess.run(['openssl','genpkey','-algorithm','ED25519','-out',str(key)],check=True); key.chmod(0o600)

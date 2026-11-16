@@ -21,6 +21,17 @@ GATES = {'test', 'postgres-content', 'docker-release', 'distributed-release', 'd
 ROLES = ('book', 'postgres-pitr')
 FILES = {'source.zip', 'deployment.zip', 'gate-evidence.json', 'SHA256SUMS'} | {f'{r}-{s}.json' for r in ROLES for s in ('sbom.spdx', 'provenance', 'build-metadata', 'scan')} | {f'{r}-smoke.log' for r in ROLES}
 QUALIFICATION_FILES = {"qualification.json": "report_sha256", "qualification-lifecycle.json": "lifecycle_sha256", "qualification-soak.json": "soak_sha256", "qualification-candidate.json": "candidate_lifecycle_sha256"}
+HOSTED_PROFILE = 'hosted-ci'
+FULL_PROFILE = 'full-production'
+HOSTED_NO_24H = {
+    'status': 'not-run',
+    'reason': 'The independent 24-hour/100000-page production qualification was not executed.',
+    'required_soak_seconds': 86400,
+    'soak_seconds': 0,
+    'soak_requests': 0,
+    'minute_windows': 0,
+}
+HOSTED_FILES = {'qualification-candidate.json'}
 MAX_SOAK = 256 * 1024 * 1024
 MAX_JSON = 128 * 1024 * 1024
 MAX_ZIP = 256 * 1024 * 1024
@@ -33,12 +44,23 @@ def stable(version):
     return tuple(map(int, version.split('.'))) >= (1, 0, 0)
 
 
-def files_for(version):
-    return FILES | (set(QUALIFICATION_FILES) if stable(version) else set())
+def profile_for(version, evidence):
+    profile = evidence.get('release_profile', FULL_PROFILE)
+    if stable(version):
+        require(profile in (HOSTED_PROFILE, FULL_PROFILE), 'Invalid release profile')
+        require(profile != HOSTED_PROFILE or version == '1.0.0', 'Hosted release profile is explicitly limited to v1.0.0')
+    else:
+        require(profile == FULL_PROFILE, 'Legacy release cannot claim a hosted profile')
+    return profile
 
 
-def gates_for(version):
-    return GATES | ({'production-qualification'} if stable(version) else set())
+def files_for(version, profile=FULL_PROFILE):
+    if not stable(version): return FILES
+    return FILES | (HOSTED_FILES if profile == HOSTED_PROFILE else set(QUALIFICATION_FILES))
+
+
+def gates_for(version, profile=FULL_PROFILE):
+    return GATES | ({'production-qualification'} if stable(version) and profile == FULL_PROFILE else set())
 
 
 def asset_limit(name):
@@ -117,10 +139,22 @@ def image_ref(repository, role, digest):
 
 def validate_evidence(e, version, commit, repository, images):
     require(e['version'] == version and e['commit'] == commit and e['repository'] == repository, 'Evidence source mismatch')
-    require(e['gates'] == {g: 'success' for g in gates_for(version)}, 'Required gates did not all pass')
+    profile=profile_for(version,e)
+    require(e['gates'] == {g: 'success' for g in gates_for(version,profile)}, 'Required gates did not all pass')
     require(re.fullmatch(r'[1-9]\d*', e['run_id']) and re.fullmatch(r'[1-9]\d*', e['run_attempt']), 'Invalid workflow run')
     require(e['images'] == images and e['image_checks'] == {r: {'smoke': 'success', 'scan': 'success'} for r in ROLES}, 'Exact image checks missing')
-    if tuple(map(int,version.split('.'))) >= (0,9,0):
+    if stable(version) and profile == HOSTED_PROFILE:
+        # A hosted release is signed and CI-qualified, not 24h/lab-qualified.
+        # Forbid synthetic soak counters and fail closed on missing disclosure.
+        require(e.get('production_qualification') == HOSTED_NO_24H, 'Hosted release must disclose missing 24h qualification exactly')
+        c=e.get('candidate_lifecycle')
+        require(isinstance(c,dict) and set(c)=={'status','previous_commit','candidate_images','source_digest','report_sha256','rpo_seconds','rto_seconds'}, 'Missing exact candidate lifecycle evidence')
+        require(c['status']=='passed' and c['candidate_images']==images and isinstance(c['previous_commit'],str) and COMMIT.fullmatch(c['previous_commit']) and c['previous_commit']!=commit, 'Incorrect candidate identity')
+        for k in ('source_digest','report_sha256'):
+            require(isinstance(c.get(k),str) and re.fullmatch(r'[0-9a-f]{64}',c[k]), 'Invalid candidate evidence hash')
+        for k,limit in (('rpo_seconds',900),('rto_seconds',3600)):
+            require(type(c.get(k)) in (int,float) and 0 <= c[k] <= limit and (k!='rto_seconds' or c[k]>0), 'Candidate recovery SLO failed')
+    elif tuple(map(int,version.split('.'))) >= (0,9,0):
         q=e.get('production_qualification',{})
         require(q.get('status')=='lab-qualified' and q.get('version')==version and q.get('commit')==commit and q.get('candidate_images')==images, 'Production qualification source or image mismatch')
         require(q.get('soak_seconds')==86400 and q.get('soak_requests')==1728000 and q.get('minute_windows')==1440, '24h qualification missing')
@@ -149,6 +183,17 @@ def verify_qualification(directory, version, commit, images, digest, evidence):
     if not stable(version): return
     spec=importlib.util.spec_from_file_location('qualification_policy', ROOT/'bin/qualification_policy.py')
     policy=importlib.util.module_from_spec(spec); spec.loader.exec_module(policy)
+    profile = profile_for(version,evidence)
+    if profile == HOSTED_PROFILE:
+        c=evidence['candidate_lifecycle']
+        require(c['source_digest']==digest, 'Hosted candidate source fingerprint mismatch')
+        require(sha(directory/'qualification-candidate.json')==c['report_sha256'], 'Actual candidate lifecycle report hash mismatch')
+        lifecycle=json_read(directory/'qualification-candidate.json')
+        checked=policy.validate_lifecycle(lifecycle,version,commit,c['previous_commit'])
+        require(lifecycle['images']['new'].get('candidate_ref')==images['book'] and
+                lifecycle['images']['pitr'].get('candidate_ref')==images['postgres-pitr'], 'Hosted release did not test these OCI candidate digests')
+        require(c['rpo_seconds']==checked['rpo_seconds'] and c['rto_seconds']==checked['rto_seconds'], 'Hosted candidate SLO metrics differ')
+        return
     q=evidence['production_qualification']
     for name, field in QUALIFICATION_FILES.items():
         require(sha(directory/name)==q[field], 'Qualification report hash mismatch: '+name)
@@ -278,7 +323,8 @@ def assemble(args):
     validate_evidence(evidence,args.version,args.commit,args.repository,images)
     validate_metadata(args.evidence,images)
     files = list(source_files(root,args.commit))
-    names = files_for(args.version)
+    profile = profile_for(args.version,evidence)
+    names = files_for(args.version,profile)
     if stable(args.version):
         verify_qualification(args.evidence,args.version,args.commit,images,source_fingerprint((n,b) for n,_,b in files),evidence)
     with tempfile.TemporaryDirectory(prefix='.book-release-', dir=out.parent) as temp:
@@ -288,7 +334,7 @@ def assemble(args):
         for name in sorted(names-{'source.zip','deployment.zip','SHA256SUMS'}):
             (stage/name).write_bytes(regular(args.evidence/name).read_bytes())
         (stage/'SHA256SUMS').write_text(''.join(f'{sha(stage/n)}  {n}\n' for n in sorted(names-{'SHA256SUMS'})))
-        manifest = {'format':1,'product':'CajeerEngineBook','version':args.version,'commit':args.commit,'repository':args.repository,'schema_version':int(re.search(r'public const VERSION = (\d+);',run('git','show',args.commit+':src/DatabaseMigrations.php',cwd=root).decode()).group(1)),'platform':'linux/amd64','images':images,'signing_key_sha256':hashlib.sha256(key_der(pub,True)).hexdigest(), 'artifacts':{n:{'sha256':sha(stage/n),'size':(stage/n).stat().st_size} for n in sorted(names)}}
+        manifest = {'format':1,'product':'CajeerEngineBook','version':args.version,'commit':args.commit,'repository':args.repository,'schema_version':int(re.search(r'public const VERSION = (\d+);',run('git','show',args.commit+':src/DatabaseMigrations.php',cwd=root).decode()).group(1)),'platform':'linux/amd64','images':images,'release_profile':profile,'production_qualification':{'status':'not-run' if profile==HOSTED_PROFILE else 'lab-qualified' if stable(args.version) else 'not-applicable','required_soak_seconds':86400 if stable(args.version) else 0},'signing_key_sha256':hashlib.sha256(key_der(pub,True)).hexdigest(), 'artifacts':{n:{'sha256':sha(stage/n),'size':(stage/n).stat().st_size} for n in sorted(names)}}
         dump(stage/'release.json',manifest)
         for n in ('release.json','source.zip','deployment.zip'):
             sign(stage/n,key)
@@ -300,13 +346,21 @@ def assemble(args):
 def verify_directory(directory, pub, version, repository, commit=None):
     directory = Path(directory)
     require(directory.is_dir() and not directory.is_symlink(), 'Release directory is not a regular directory')
-    names = files_for(version)
-    require({p.name for p in directory.iterdir()} == names | {'release.json','release.json.sig','source.zip.sig','deployment.zip.sig'}, 'Unexpected or missing release files')
     require(VERSION.fullmatch(version) and REPO.fullmatch(repository), 'Invalid expected release identity')
     verify_sig(directory/'release.json',pub)
     m = json_read(directory/'release.json')
+    profile=m.get('release_profile',FULL_PROFILE)
+    require(profile in (FULL_PROFILE,HOSTED_PROFILE) and (stable(version) or profile==FULL_PROFILE) and (profile!=HOSTED_PROFILE or version=='1.0.0'), 'Unsupported signed release profile')
+    names = files_for(version,profile)
+    require({p.name for p in directory.iterdir()} == names | {'release.json','release.json.sig','source.zip.sig','deployment.zip.sig'}, 'Unexpected or missing release files')
     require(m['format']==1 and m['product']=='CajeerEngineBook' and m['version']==version and m['repository']==repository and COMMIT.fullmatch(m['commit']) and (commit is None or m['commit']==commit), 'Release identity mismatch')
     require(m['signing_key_sha256']==hashlib.sha256(key_der(pub,True)).hexdigest(), 'Signing key fingerprint mismatch')
+    if 'production_qualification' in m:
+        require(m['production_qualification']=={'status':'not-run' if profile==HOSTED_PROFILE else 'lab-qualified' if stable(version) else 'not-applicable','required_soak_seconds':86400 if stable(version) else 0}, 'Signed qualification disclosure mismatch')
+    else:
+        # Older signed full-production manifests had no explicit profile fields.
+        # Their complete real qualification evidence is still verified below.
+        require('release_profile' not in m and profile==FULL_PROFILE, 'Missing signed qualification disclosure')
     require(m['platform']=='linux/amd64' and type(m['schema_version']) is int and m['schema_version']>=1, 'Unsupported platform/schema')
     require(set(m['images'])==set(ROLES) and all(m['images'][r]==image_ref(repository,r,m['images'][r].rsplit('@',1)[-1]) for r in ROLES), 'Unexpected OCI repository/digest')
     require(set(m['artifacts'])==names, 'Missing/unexpected artifacts')
@@ -323,6 +377,7 @@ def verify_directory(directory, pub, version, repository, commit=None):
             require(z.read('VERSION').decode().strip()==version and z.testzip() is None, 'ZIP version or integrity mismatch')
     evidence=json_read(directory/'gate-evidence.json')
     validate_evidence(evidence,version,m['commit'],repository,m['images'])
+    require(profile_for(version,evidence)==profile, 'Signed release profile and gate evidence mismatch')
     if stable(version):
         with zipfile.ZipFile(directory/'source.zip') as z:
             source = [(i.filename,i.external_attr >> 16,z.read(i)) for i in zip_members(z)]

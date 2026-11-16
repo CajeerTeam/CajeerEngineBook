@@ -188,12 +188,14 @@ class Update(unittest.TestCase):
         self.state={'format':1,'config':self.cfg,'key':u.hashlib.sha256(u.release.key_der(self.manager.pub,True)).hexdigest(),'current':self.old,'previous':None,'highest':self.old,'pending':None}
         self.manager.save(self.state)
         self.chown=mock.patch.object(u.os,'chown'); self.chown.start(); self.addCleanup(self.chown.stop)
-    def build(self,v,d,schema=3):
+    def build(self,v,d,schema=3,profile=None):
         f=self.f; (f.root/'VERSION').write_text(v+'\n'); p=f.root/'src/DatabaseMigrations.php'; p.write_text(re.sub(r'public const VERSION = \d+;',f'public const VERSION = {schema};',p.read_text()))
         f.git('add','.'); f.git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm',v)
         f.commit=f.git('rev-parse','HEAD').strip(); f.version=v; f.digests[0]='sha256:'+d*64; f.images['book']=u.release.image_ref(f.repo,'book',f.digests[0])
         f.e.update(version=v,commit=f.commit,images=f.images,gates={g:"success" for g in u.release.gates_for(v)});
-        if u.release.stable(v): f.e["production_qualification"]=signing.fixture.write_fixture(u.release,f.evidence,f.root,v,f.commit,f.images)
+        if u.release.stable(v):
+            f.e["production_qualification"]=signing.fixture.write_fixture(u.release,f.evidence,f.root,v,f.commit,f.images)
+            if profile==u.release.HOSTED_PROFILE: f.use_hosted_profile()
         u.release.dump(f.evidence/'gate-evidence.json',f.e); u.release.dump(f.evidence/'book-build-metadata.json',{'containerimage.digest':f.digests[0]})
         out=self.base/('bundle-'+v); p=f.command(output=out); self.assertEqual(p.returncode,0,p.stderr); return out
     def test_upgrade_and_rollback_highwater(self):
@@ -206,6 +208,16 @@ class Update(unittest.TestCase):
         bundle=self.build('1.0.0','5'); target=self.manager.stage(self.cfg,'1.0.0',bundle)
         self.assertEqual(target['version'],'1.0.0'); _,manifest=self.manager.load(self.cfg,target)
         self.assertIn('qualification-soak.json',manifest['artifacts'])
+    def test_hosted_100_bundle_staging(self):
+        bundle=self.build('1.0.0','5',profile=u.release.HOSTED_PROFILE)
+        target=self.manager.stage(self.cfg,'1.0.0',bundle)
+        self.assertEqual(target['version'],'1.0.0')
+        _,manifest=self.manager.load(self.cfg,target)
+        self.assertEqual(manifest['release_profile'],'hosted-ci')
+        self.assertEqual(manifest['production_qualification']['status'],'not-run')
+        self.assertIn('qualification-candidate.json',manifest['artifacts'])
+        self.assertNotIn('qualification-soak.json',manifest['artifacts'])
+
     def test_candidate_version_failure_rolls_back(self):
         self.fake.fail='version'
         with self.assertRaises(ValueError): self.manager.begin(self.state,self.new)

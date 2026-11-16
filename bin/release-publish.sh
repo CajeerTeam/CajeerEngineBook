@@ -14,13 +14,18 @@ printf '%s' "$BOOK_RELEASE_PRIVATE_KEY_B64" | base64 -d > "$work/private.pem"
 printf '%s' "$BOOK_RELEASE_PUBLIC_KEY_B64" | base64 -d > "$work/public.pem"
 unset BOOK_RELEASE_PRIVATE_KEY_B64 BOOK_RELEASE_PUBLIC_KEY_B64
 # Match the exact candidate evidence from this workflow invocation.
-readarray -t digests < <(python3 - "$evidence/gate-evidence.json" <<'PY'
-import json,os,sys
-v=json.load(open(sys.argv[1])); env=os.environ
-if v['run_id']!=env['GITHUB_RUN_ID'] or v['run_attempt']!=env['GITHUB_RUN_ATTEMPT'] or v['commit']!=env['GITHUB_SHA']: raise SystemExit('Candidate evidence belongs to a different run')
-for r in ('book','postgres-pitr'): print(v['images'][r].rsplit('@',1)[1])
+digest_file="$work/candidate-digests"
+python3 - "$evidence/gate-evidence.json" > "$digest_file" <<'PY'
+import importlib.util,os,pathlib,sys
+spec=importlib.util.spec_from_file_location('release',pathlib.Path('bin/release-package.py')); r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+v=r.json_read(pathlib.Path(sys.argv[1])); env=os.environ
+if v['run_id']!=env['GITHUB_RUN_ID'] or v['run_attempt']!=env['GITHUB_RUN_ATTEMPT'] or v['commit']!=env['GITHUB_SHA'] or v.get('release_profile')!=r.HOSTED_PROFILE:
+    raise SystemExit('Candidate evidence is not this hosted release run')
+if v.get('production_qualification')!=r.HOSTED_NO_24H:
+    raise SystemExit('Missing honest 24-hour qualification disclosure')
+for role in ('book','postgres-pitr'): print(v['images'][role].rsplit('@',1)[1])
 PY
-)
+mapfile -t digests < "$digest_file"
 [[ ${#digests[@]} == 2 ]]
 python3 bin/release-package.py assemble --output "$output" --evidence "$evidence" --key "$work/private.pem" --public-key "$work/public.pem" --version "$version" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --book-digest "${digests[0]}" --pitr-digest "${digests[1]}"
 rm -f "$work/private.pem"
@@ -43,7 +48,9 @@ done
 python3 bin/release-package.py verify --directory "$output" --public-key "$work/public.pem" --repository "$GITHUB_REPOSITORY" --version "$version" --commit "$GITHUB_SHA" --oci >/dev/null
 check_tag
 # Draft + readback protects against publishing an incomplete or corrupted asset set.
-gh release create "$tag" "$output"/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false --title "CajeerEngine Book $version" --notes "Signed distribution. Verify release.json and ZIP signatures against the independently distributed Ed25519 public key. Deploy only verified OCI digests. See docs/admin/signed-releases.md."
+gh release create "$tag" "$output"/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false \
+  --title "CajeerEngine Book $version (CI-qualified; 24h not run)" \
+  --notes "**Release assurance: CI-qualified only.** The independent 24-hour, 100,000-page production qualification was **NOT RUN**; this release is **not lab-qualified**. All required hosted CI/security jobs passed; exact candidate OCI digests were scanned, smoke-tested and subjected to real historical upgrade/rollback, physical restore and recovery validation. Disclosures and measured lifecycle evidence are bound in the signed release.json, gate-evidence.json and qualification-candidate.json. Verify Ed25519 signatures against an independently trusted public key and Cosign signatures for the OCI digests. See docs/admin/signed-releases.md. Do not describe this as 24h-qualified or independently security-certified."
 mkdir "$work/readback"
 gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$work/readback"
 python3 bin/release-package.py verify --directory "$work/readback" --public-key "$work/public.pem" --repository "$GITHUB_REPOSITORY" --version "$version" --commit "$GITHUB_SHA" --oci >/dev/null
