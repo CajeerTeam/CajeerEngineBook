@@ -1,9 +1,12 @@
-FROM node:22-bookworm-slim AS mermaid-assets
+ARG NODE_BASE=node:22-bookworm-slim
+ARG COMPOSER_BASE=composer:2
+ARG PHP_BASE=php:8.4-apache
+FROM ${NODE_BASE} AS mermaid-assets
 WORKDIR /build
 COPY bin/install-mermaid.sh bin/install-mermaid.sh
 RUN sh bin/install-mermaid.sh
-FROM composer:2 AS composer-bin
-FROM php:8.4-apache AS runtime
+FROM ${COMPOSER_BASE} AS composer-bin
+FROM ${PHP_BASE} AS runtime
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
 WORKDIR /opt/cajeerbook
 RUN apt-get update && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev unzip ca-certificates awscli \

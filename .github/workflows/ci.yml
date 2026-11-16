@@ -149,3 +149,87 @@ jobs:
           print(json.dumps({k:v['result'] for k,v in results.items()}, indent=2))
           sys.exit(0 if set(results)==expected and all(v['result']=='success' for v in results.values()) else 1)
           PY
+  release-candidate:
+    # Tag builds must pass every gate from this exact workflow run first.
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [test, postgres-content, docker-release, distributed-release, domains-edge, security-scan, enterprise-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GATE_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, fileinfo, phar, gd, zip, openssl, sodium, pcntl, pdo_pgsql, redis
+          tools: composer:v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: docker/setup-buildx-action@v3
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: sh bin/install-mermaid.sh
+      - name: Log in to candidate registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - run: bash bin/release-build.sh "$RUNNER_TEMP/book-candidate"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: book-candidate-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/book-candidate
+          if-no-files-found: error
+      - if: always()
+        run: docker logout ghcr.io || true
+  signed-release:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [release-candidate, enterprise-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    concurrency:
+      group: book-release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: book-candidate-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/book-candidate
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v4.1.0
+        with:
+          cosign-release: 'v3.1.4'
+      - name: Log in to release registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Sign, verify and publish immutable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOOK_RELEASE_PRIVATE_KEY_B64: ${{ secrets.BOOK_RELEASE_PRIVATE_KEY_B64 }}
+          BOOK_RELEASE_PUBLIC_KEY_B64: ${{ vars.BOOK_RELEASE_PUBLIC_KEY_B64 }}
+        run: bash bin/release-publish.sh "$RUNNER_TEMP/book-candidate" "$RUNNER_TEMP/book-signed-release"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: book-signed-release
+          path: ${{ runner.temp }}/book-signed-release
+          if-no-files-found: error
+      - if: always()
+        run: docker logout ghcr.io || true

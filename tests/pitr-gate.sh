@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
 TMP=$(mktemp -d); chmod 700 "$TMP"
+# Release qualification can test the exact candidate, not a second build.
+CANDIDATE=${BOOK_RELEASE_PITR_IMAGE:-}
+if [[ -n "$CANDIDATE" && ! "$CANDIDATE" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[0-9a-f]{64}$ ]]; then exit 2; fi
 TAG=book-pitr-test-$(openssl rand -hex 6); SRC=$TAG-source; DST=$TAG-restore; REPO=$TAG-repo; DATA=$TAG-data; REST=$TAG-rest; IMAGE=$TAG-image
 cleanup(){ docker logs "$SRC" 2>/dev/null | tail -80 || :; docker logs "$DST" 2>/dev/null | tail -80 || :; docker rm -fv "$SRC" "$DST" >/dev/null 2>&1 || :; docker volume rm "$REPO" "$DATA" "$REST" >/dev/null 2>&1 || :; docker image rm "$IMAGE" >/dev/null 2>&1 || :; rm -rf "$TMP"; }
 trap cleanup EXIT
@@ -24,7 +27,12 @@ pg1-user=book_admin
 EOF
 chmod 644 "$TMP/pgbackrest.conf" # ephemeral test-only repository key, private parent
 # Build the same database image as compose.pitr.yaml.
-docker build -f deploy/pitr/Dockerfile -t "$IMAGE" .
+if [[ -n "$CANDIDATE" ]]; then
+  docker pull "$CANDIDATE"
+  docker tag "$CANDIDATE" "$IMAGE"
+else
+  docker build -f deploy/pitr/Dockerfile -t "$IMAGE" .
+fi
 docker volume create "$REPO" >/dev/null; docker volume create "$DATA" >/dev/null; docker volume create "$REST" >/dev/null
 docker run --rm -v "$REPO:/repo" -v "$REST:/restore" --entrypoint sh "$IMAGE" -c 'chown postgres:postgres /repo /restore; chmod 700 /repo /restore'
 mounts=(-v "$REPO:/repo" -v "$TMP/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro")

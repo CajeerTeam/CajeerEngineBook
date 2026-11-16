@@ -23,6 +23,7 @@
     },
     "scripts": {
         "test": [
+            "python3 tests/release-signing.py",
             "@php tests/pitr-policy.php",
             "python3 tests/pitr-policy.py",
             "@php tests/security-lifecycle.php",

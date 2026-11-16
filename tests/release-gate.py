@@ -89,7 +89,7 @@ def preflight(g):
     if g.suite in ('native', 'postgres'):
         tools += ['composer', 'node', 'npm']
     if g.suite == 'native':
-        tools += ['aws', 'tsc', 'curl', 'nginx']
+        tools += ['aws', 'tsc', 'curl', 'nginx', 'git']
     missing = [x for x in tools if not shutil.which(x)]
     if missing:
         raise RuntimeError('Missing executables: '+', '.join(missing))

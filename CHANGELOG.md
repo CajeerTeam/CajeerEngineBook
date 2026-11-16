@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0 — Signed Release Pipeline
+
+- Build and qualify immutable application and PostgreSQL/PITR OCI candidates after every mandatory enterprise/security gate passes; base images resolved by digest, actual SPDX SBOM and BuildKit provenance exported.
+- Separate protected signing/publishing job; Ed25519 detached signatures for deterministic committed-source and digest-pinned deployment ZIPs plus complete signed release manifest, Cosign GitHub OIDC signatures for both OCI digests, verified draft readback and digest-preserving promotion.
+- Offline verification CLI, exact version/repository/commit checks, signed scan/smoke evidence, negative cryptographic tests and administrator release runbook. Schema remains 3. No official release or registry signature is claimed until hosted pipeline succeeds.
+
 ## 0.7.2 — Disaster Recovery & PITR
 
 - PostgreSQL 16 pgBackRest physical full/differential/incremental backups, encrypted repository, WAL archiving, named restore-point recovery and actual archive-get verification.
