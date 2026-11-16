@@ -40,3 +40,5 @@ public/assets/mermaid
 !deploy/
 !deploy/pitr/
 !deploy/pitr/Dockerfile
+
+!deploy/book-httpd.conf

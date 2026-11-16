@@ -1,6 +1,6 @@
 ARG NODE_BASE=node:22-bookworm-slim
 ARG COMPOSER_BASE=composer:2
-ARG PHP_BASE=php:8.4-apache-bookworm
+ARG PHP_BASE=alpine:3.24
 FROM ${NODE_BASE} AS mermaid-assets
 WORKDIR /build
 COPY bin/install-mermaid.sh bin/install-mermaid.sh
@@ -9,18 +9,24 @@ FROM ${COMPOSER_BASE} AS composer-bin
 FROM ${PHP_BASE} AS runtime
 ENV BOOK_DATA_DIR=/var/lib/cajeerbook BOOK_SECURE_COOKIE=1
 WORKDIR /opt/cajeerbook
-# Refresh OS security packages and retain only runtime libraries after extension compilation.
-RUN apt-get update && apt-get upgrade -y --with-new-pkgs \
- && apt-get install -y --no-install-recommends libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev \
-    libonig5 libpng16-16 libjpeg62-turbo libwebp7 libzip4 libpq5 ca-certificates awscli \
- && docker-php-ext-configure gd --with-jpeg --with-webp \
- && docker-php-ext-install mbstring gd zip pdo_pgsql pcntl \
- && pecl install redis-6.1.0 && docker-php-ext-enable redis \
- && apt-get purge -y --auto-remove libonig-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libzip-dev libpq-dev \
-    autoconf dpkg-dev g++ gcc libc6-dev make pkg-config re2c \
- && php -r 'foreach (["mbstring","gd","zip","pdo_pgsql","pcntl","redis"] as $ext) { if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); } }' \
- && rm -rf /var/lib/apt/lists/* /tmp/pear
+# Use the maintained Alpine stable repositories for PHP and OS security updates.
+# Preserve Debian image's UID/GID for existing volumes and secret mounts.
+RUN apk upgrade --no-cache \
+ && sed -i 's/^www-data:x:82:/www-data:x:33:/' /etc/group \
+ && test "$(awk -F: '$1=="www-data" {print $3}' /etc/group)" = 33 \
+ && adduser -S -D -H -u 33 -G www-data -s /sbin/nologin www-data \
+ && apk add --no-cache apache2 ca-certificates aws-cli \
+    php84 php84-apache2 php84-ctype php84-curl php84-dom php84-fileinfo php84-gd \
+    php84-iconv php84-mbstring php84-openssl php84-pcntl php84-pdo php84-pdo_pgsql \
+    php84-phar php84-posix php84-session php84-simplexml php84-sodium php84-tokenizer \
+    php84-xml php84-xmlreader php84-xmlwriter php84-zip php84-pecl-redis \
+ && mkdir -p /usr/local/bin \
+ && ln -sf /usr/bin/php84 /usr/local/bin/php \
+ && php -r 'if(PHP_VERSION_ID<80401 || PHP_VERSION_ID>=80500) exit(1); foreach (["ctype","curl","dom","fileinfo","gd","iconv","mbstring","openssl","pcntl","PDO","pdo_pgsql","Phar","posix","session","SimpleXML","sodium","tokenizer","xml","xmlreader","xmlwriter","zip","redis"] as $ext) { if (!extension_loaded($ext)) { fwrite(STDERR, "Missing extension: $ext\n"); exit(1); } }' \
+ && test "$(id -u www-data):$(id -g www-data)" = 33:33 \
+ && aws --version
 FROM runtime AS dependencies
+RUN apk add --no-cache unzip
 COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock ./
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
@@ -37,16 +43,16 @@ COPY sql/ sql/
 COPY src/ src/
 COPY templates/ templates/
 COPY --from=mermaid-assets /build/public/assets/mermaid/ public/assets/mermaid/
-RUN printf "upload_max_filesize=20M\npost_max_size=72M\nmax_file_uploads=200\nmemory_limit=256M\nmax_execution_time=120\ndisplay_errors=Off\nlog_errors=On\nexpose_php=Off\n" > /usr/local/etc/php/conf.d/book-media.ini
-RUN mkdir -p /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr && chmod 0700 /var/lib/cajeerbackup /var/lib/cajeerpitr && chown www-data:www-data /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr \
- && a2enmod rewrite remoteip setenvif headers \
- && sed -i 's|/var/www/html|/opt/cajeerbook/public|g' /etc/apache2/sites-available/000-default.conf \
- && printf 'TraceEnable Off\nServerTokens Prod\nServerSignature Off\n<Directory /opt/cajeerbook/public>\nRequire all granted\nSetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1\nAllowOverride None\nFallbackResource /index.php\nOptions -Indexes -FollowSymLinks\nHeader always setifempty X-Content-Type-Options "nosniff"\n</Directory>\n' > /etc/apache2/conf-available/book.conf \
- && a2enconf book \
- && sed -i 's|CustomLog ${APACHE_LOG_DIR}/access.log combined|CustomLog ${APACHE_LOG_DIR}/access.log "%h %l %u %t %m %U %H %>s %b"|' /etc/apache2/sites-available/000-default.conf
+COPY deploy/book-httpd.conf /etc/apache2/httpd.conf
+RUN printf "upload_max_filesize=20M\npost_max_size=72M\nmax_file_uploads=200\nmemory_limit=256M\nmax_execution_time=120\ndisplay_errors=Off\nlog_errors=On\nexpose_php=Off\nsession.save_path=/var/lib/php84/sessions\n" > /etc/php84/conf.d/99-book-media.ini \
+ && mkdir -p /run/apache2 /etc/apache2/conf-enabled /var/lib/php84/sessions /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr \
+ && chmod 0700 /var/lib/php84/sessions /var/lib/cajeerbackup /var/lib/cajeerpitr \
+ && chown www-data:www-data /var/lib/php84/sessions /var/lib/cajeerbook /var/lib/cajeerbackup /var/lib/cajeerpitr \
+ && httpd -t
 VOLUME ["/var/lib/cajeerbook"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD php -r '$c=stream_context_create(["http"=>["timeout"=>3]]);exit(@file_get_contents("http://127.0.0.1/health/ready",false,$c)===false?1:0);'
 EXPOSE 80
+CMD ["/usr/sbin/httpd", "-DFOREGROUND"]
 
 FROM app AS test
 COPY tests/ tests/
