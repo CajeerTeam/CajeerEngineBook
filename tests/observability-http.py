@@ -46,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix='book-observe-') as tmp:
             exporter=dict(env,BOOK_OBSERVABILITY_EXPORTER='1',BOOK_METRICS_TOKEN_FILE=str(secret),BOOK_MONITOR_WORKERS='1',BOOK_MONITOR_BACKUP='1')
             children.append(start(exporter,logs[2]));a,b,metrics=[c[1] for c in children];auth={'Authorization':'Bearer '+token}
             check('metrics disabled on normal app',req(a,'/metrics')[0]==404)
+            check('exporter liveness independent of failed dependencies',req(metrics,'/health/live')[0]==200 and json.loads(req(metrics,'/health/live')[2])=={'status':'ok'})
+            check('exporter liveness accepts HEAD but not POST',req(metrics,'/health/live','HEAD')[0]==200 and req(metrics,'/health/live','POST')[0]==404)
             check('exporter denies anonymous and wrong token',req(metrics,'/metrics')[0]==404 and req(metrics,'/metrics',headers={'Authorization':'Bearer wrong'})[0]==404)
             check('exporter cannot serve app routes',req(metrics,'/login',headers=auth)[0]==404 and req(metrics,'/metrics','POST',auth)[0]==405)
             def work(i):return req(a if i%2 else b,'/api/v1/pages?secret=do-not-log',headers={'Cookie':'sensitive-cookie=do-not-log','Authorization':'Bearer do-not-log'})

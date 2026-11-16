@@ -230,7 +230,19 @@ class Compose:
         try: return self.command(self.docker+list(args),**kw)
         except RuntimeError as e: raise RuntimeError('Docker '+args[0]+' failed') from e
     def config(self,m):
-        c=json.loads(self.call('config','--format','json')); services=c['services']
+        raw=self.call('config','--format','json')
+        # Compose v2.38.2 escapes every dollar in rendered JSON so that it can
+        # be reused as a Compose file. Other versions may emit literal dollars.
+        # Probe the installed CLI, never accept two possible secret values.
+        if b'$' in raw:
+            with tempfile.TemporaryDirectory(prefix='book-compose-probe-') as tmp:
+                probe=Path(tmp)/'compose.json'; env=Path(tmp)/'empty.env'; env.touch()
+                probe.write_text(json.dumps({'services':{'probe':{'image':'busybox:1.37','environment':{'BOOK_CONFIG_PROBE':'$$book_config_probe'}}}}))
+                result=json.loads(self.command(self.docker+['compose','--project-name','book-config-probe','--project-directory',tmp,'--env-file',str(env),'-f',str(probe),'config','--format','json']))
+                value=result['services']['probe']['environment']['BOOK_CONFIG_PROBE']
+                require(value in ('$book_config_probe','$$book_config_probe'),'Unsupported Compose dollar rendering')
+                if value=='$$book_config_probe': raw=raw.replace(b'$$',b'$')
+        c=json.loads(raw); services=c['services']
         require('book' in services and set(services)<=SERVICES,'Unsupported Compose topology')
         require(all('build' not in s and 'image' in s for s in services.values()),'Source builds are forbidden')
         require(all(services[n]['image']==m['images']['book'] for n in ROLES & set(services)), 'Unpinned Book service')

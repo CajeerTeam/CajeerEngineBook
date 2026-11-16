@@ -80,6 +80,11 @@ final class Diagnostics
     public static function serve():void{
         header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');
         try{$path=RequestSecurity::path($_SERVER['REQUEST_URI']??'/');}catch(\InvalidArgumentException){http_response_code(400);return;}$method=$_SERVER['REQUEST_METHOD']??'GET';
+        // The exporter must remain live while dependencies are down, so that
+        // Prometheus can observe those failures. Do not expose health externally.
+        if($path==='/health/live'&&in_array($_SERVER['REMOTE_ADDR']??'',['127.0.0.1','::1'],true)&&in_array($method,['GET','HEAD'],true)&&Observability::enabled()){
+            header('Content-Type: application/json');if($method==='GET')echo '{"status":"ok"}';return;
+        }
         if(!in_array($path,['/metrics','/diagnostics'],true)){http_response_code(404);return;}
         if(!Observability::enabled()||!Observability::authorized()){http_response_code(404);return;}
         if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}
