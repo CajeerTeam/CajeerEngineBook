@@ -1,3 +1,10 @@
+## 1.1.2 — GitHub Update Discovery (2026-11-22)
+
+- Add the real `bin/update.py check --channel stable|beta [--refresh]` operation for enrolled local Docker installations. Fetch public GitHub Releases through a bounded read-only REST client with ETag/304 caching, pagination, optional GitHub token, no redirects/proxy inherited credentials, rate-limit handling and fail-closed HTTP/JSON errors.
+- Rank tags using SemVer (including prerelease identifiers), ignore drafts and already-installed versions, enforce the installed updater's high-water version and schema rollback restrictions. A prerelease is listed as unsupported by the current stable-only signed-bundle installer; it is **never** presented as an installable candidate.
+- Verify each stable candidate's downloaded `release.json` and Ed25519 signature using the enrollment-pinned public key before marking it available; require exact uploaded GitHub assets and signed size/hash metadata. No application ZIP/OCI download occurs during discovery; `fetch`, `preflight` and `apply` retain mandatory complete verification.
+- Persist only a bounded, repository-scoped, atomic 0600 GitHub metadata cache in the privileged updater state directory. Add real-key signature tests, negative REST/ETag/rate-limit/corrupt asset tests, CI integration and operator runbook. PostgreSQL schema remains 7, embedded CajeerEngine remains 2.1.0. No unattended installation, administrator UI, or verified production deployment is asserted.
+
 ## 1.1.1 — GitHub Release Infrastructure (2026-11-22)
 
 - Harden the existing operational GitHub release publishing pipeline: refuse overwrite of either an existing draft or published release; distinguish GitHub API/network/authentication failures from a genuine absent release. Confirm authenticated access to the exact repository before accepting 404.

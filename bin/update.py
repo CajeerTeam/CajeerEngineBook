@@ -608,6 +608,9 @@ def main():
     a=sub.choices['apply']; a.add_argument('--offline',action='store_true',required=True); a.add_argument('--allow-schema-upgrade',action='store_true')
     for n in ('rollback','recover'):
         q=sub.add_parser(n); q.add_argument('--offline',action='store_true',required=True); q.add_argument('--accept-data-compatibility',action='store_true')
+    check=sub.add_parser('check', help='Discover signed GitHub Releases without installing them')
+    check.add_argument('--channel', choices=('stable', 'beta'), default='stable')
+    check.add_argument('--refresh', action='store_true', help='Ignore cached GitHub ETags')
     sub.add_parser('status'); sub.add_parser('reconcile-env')
     args=p.parse_args()
     try:
@@ -615,12 +618,23 @@ def main():
         require(os.geteuid()==0,'Run as root on the local Docker host (private backup bind mount requires UID 33)')
         mgr=Manager(args.state_dir)
         with mgr.locked():
-            s=None if args.action=='enroll' else mgr.read(allow_env_change=args.action in ('reconcile-env','status'))
+            s=None if args.action=='enroll' else mgr.read(allow_env_change=args.action in ('reconcile-env','status','check'))
             project=args.project if s is None else s['config']['project']
             with project_lock(project):
                 if args.action=='enroll': result=mgr.enroll(args)
                 else:
-                    if args.action=='status': result=dict(s,env_changed=release.sha(private_file(Path(s['config']['env'])))!=s['config']['env_sha'])
+                    if args.action=='check':
+                        spec=importlib.util.spec_from_file_location('book_update_discovery', Path(__file__).with_name('update-discovery.py'))
+                        discovery=importlib.util.module_from_spec(spec); spec.loader.exec_module(discovery)
+                        cfg=s['config']; cache=discovery.cache_load(mgr.root,cfg['repository'])
+                        result,new_cache=discovery.discover(
+                            cfg['repository'],s['current'],s['highest'],mgr.pub,
+                            channel=args.channel,cache=cache,refresh=args.refresh,
+                            download=download,manifest_header=manifest_header,
+                            pending=s['pending'] is not None,
+                            env_changed=release.sha(private_file(Path(cfg['env'])))!=cfg['env_sha'])
+                        discovery.cache_save(mgr.root,new_cache)
+                    elif args.action=='status': result=dict(s,env_changed=release.sha(private_file(Path(s['config']['env'])))!=s['config']['env_sha'])
                     elif args.action=='reconcile-env': result=mgr.reconcile_env(s)
                     elif args.action=='recover': result=mgr.recover(s,args.accept_data_compatibility)
                     elif args.action=='rollback':
@@ -638,6 +652,8 @@ def main():
                             result={'status':'passed','current':s['current'],'candidate':r,'running':running,'schema_change':r['schema']!=s['current']['schema'],'offline_sql_preflight_required':'postgres' in oc['services']}
                         else: result=mgr.begin(s,r,allow_schema=args.allow_schema_upgrade)
             print(json.dumps(result,indent=2,sort_keys=True))
+            if args.action=='check' and result['status'] in ('rejected','blocked','incomplete'):
+                return 2
     except (OSError,ValueError,KeyError,TypeError,RuntimeError,subprocess.CalledProcessError,zipfile.BadZipFile,urllib.error.URLError) as e:
         print('Update rejected: '+str(e),file=sys.stderr); return 1
     return 0

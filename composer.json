@@ -29,6 +29,7 @@
             "python3 tests/admin-runbook.py",
             "python3 tests/release-signing.py",
             "python3 tests/release-111-github.py",
+            "python3 tests/update-discovery-112.py",
             "python3 tests/update-manager.py",
             "@php tests/pitr-policy.php",
             "python3 tests/pitr-policy.py",

@@ -1,5 +1,9 @@
 # Secure Update Manager (0.8.1)
 
+## GitHub release discovery added in 1.1.2
+
+For enrolled hosts, `check --channel stable` queries public GitHub Releases, verifies a candidate's Ed25519-signed manifest against the key already pinned at enrollment, and reports a compatible explicit version **without** updating the installation. It uses a bounded private ETag cache and refuses unsigned/incomplete assets. Beta discovery is informative only; this updater does not install prerelease bundle versions. Discovery does not relax mandatory full signed bundle, OCI, backup, migration or recovery checks. See [1.1.2 discovery runbook](update-discovery-112.md) for exit codes, safe operator commands and limitations.
+
 `bin/update.py` is a host-side, operator-run updater for a **single local Docker Compose project** deployed from the signed deployment ZIP introduced in 0.8.0. It is not a web endpoint, an automatic unattended upgrade service, a cluster orchestrator or a source-tree patcher. Keep the trusted updater and its siblings `release-package.py` and `qualification_policy.py` outside the managed release trees. Never execute a verifier obtained from an unverified download. Linux, Python 3.11+, OpenSSL Ed25519, Docker Engine with local Unix socket, Compose >= 2.24.4, and Cosign compatible with the signed-release pipeline are required. The CLI requires root on the Docker host (Docker administration and UID 33 private backup mount); use a trusted administrative environment and a root-owned PATH. Registry authentication is operator-managed.
 
 ## Upgrading host tools for 1.0.0

@@ -1,3 +1,7 @@
+### GitHub Update Discovery (1.1.2)
+
+The existing root-owned Docker updater now supports `python3 bin/update.py --state-dir /var/lib/book-updater check --channel stable` to list the newest **signed, compatible** release in the pinned `OWNER/REPO` without installing it. It uses the GitHub Releases REST API with bounded ETag caching and verifies the Ed25519-signed manifest using the key pinned during enrollment; it does not download application ZIPs or trust unsigned tags. An optional `--channel beta` reports prerelease tags, but the stable-only signed release installer cannot yet install prereleases. A returned candidate still requires operator `fetch → preflight → apply`. See [update discovery 1.1.2](docs/admin/update-discovery-112.md). This is not unattended auto-update or a web administration panel. The packaged source version is **1.1.2**; schema 7 and embedded Engine 2.1.0 are unchanged.
+
 ### GitHub Release infrastructure (1.1.1)
 
 The existing protected-tag release pipeline now checks authenticated GitHub Release absence, validates the signed assets against both the draft and published GitHub asset inventories, and re-downloads the **public** assets after publishing for fresh Ed25519, qualification and Cosign verification. Any non-404 API failure, incomplete upload or digest mismatch fails closed rather than claiming a usable release. `bin/release-github.py` is the active GitHub metadata verifier, not an auto-updater. Run `python3 tests/release-111-github.py` for negative-path tests. See [1.1.1 release infrastructure](docs/admin/release-111.md). Actual signing, publishing and full infrastructure qualification require protected GitHub CI and independently configured credentials; a source ZIP alone is not a published signed distribution. PostgreSQL schema stays **7**.
@@ -36,7 +40,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.0** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.2** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 
