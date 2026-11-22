@@ -2,6 +2,8 @@
 declare(strict_types=1);
 namespace CajeerBook;
 
+require_once __DIR__ . '/EngineCore.php';
+
 final class ReleaseHealth
 {
     public const MERMAID_VERSION = '11.17.2';
@@ -17,6 +19,7 @@ final class ReleaseHealth
     }
     public static function check(string $root): void
     {
+        EngineCore::verify($root);
         if (PHP_VERSION_ID < 80401 || !extension_loaded('mbstring') || !extension_loaded('fileinfo') || !extension_loaded('phar') || !extension_loaded('zip') || !extension_loaded('openssl') || !class_exists(\Symfony\Component\Yaml\Yaml::class) || !class_exists(\League\CommonMark\Parser\MarkdownParser::class)) {
             throw new \RuntimeException('Required PHP runtime dependencies are missing');
         }

@@ -120,7 +120,7 @@ final class CajeerTemplateEngine
         }
 
         $relative = trim(str_replace('\\', '/', substr($path, strlen($root))), '/');
-        $first = explode('/', $relative)[0] ?? '';
+        $first = explode('/', $relative)[0];
         return preg_match('/^[a-zA-Z0-9_-]+$/', $first) === 1 ? $first : '';
     }
 

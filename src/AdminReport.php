@@ -67,6 +67,6 @@ final class AdminReport
         else $this->skip('monitoring','Use --monitoring on the configured diagnostics service.');
         // Explicitly requested deep checks must not silently succeed when blocked.
         $failed=false;foreach($this->checks as $c)if($c['status']==='failed')$failed=true;
-        return ['format'=>1,'version'=>trim((string)file_get_contents($project.'/VERSION')),'schema_required'=>DatabaseMigrations::VERSION,'backend'=>$pg?'postgresql':'file','redis_configured'=>$redis,'status'=>$failed?'unavailable':'ok','checks'=>$this->checks];
+        return ['format'=>1,'version'=>trim((string)file_get_contents($project.'/VERSION')),'engine_version'=>EngineCore::VERSION,'schema_required'=>DatabaseMigrations::VERSION,'backend'=>$pg?'postgresql':'file','redis_configured'=>$redis,'status'=>$failed?'unavailable':'ok','checks'=>$this->checks];
     }
 }

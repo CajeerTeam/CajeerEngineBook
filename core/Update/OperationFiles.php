@@ -20,7 +20,24 @@ final class OperationFiles
 
     public static function dir(string $path, int $mode = 0700): void
     {
-        if (is_link($path) || (!is_dir($path) && !mkdir($path, $mode, true) && !is_dir($path))) throw new \RuntimeException('Cannot create directory');
+        // mkdir(..., recursive: true) may traverse a symlink in a missing path's
+        // ancestors. Create one component at a time and reject substitutions.
+        $normal = str_replace('\\', '/', $path);
+        if ($normal === '' || str_contains($normal, "\0")) throw new \RuntimeException('Invalid directory');
+        $absolute = str_starts_with($normal, '/');
+        $current = $absolute ? '/' : '';
+        foreach (explode('/', trim($normal, '/')) as $component) {
+            if ($component === '' || $component === '.' || $component === '..') throw new \RuntimeException('Unsafe directory component');
+            $current .= ($current === '' || $current === '/' ? '' : '/') . $component;
+            if (is_link($current)) throw new \RuntimeException('Symlink directory component');
+            if (!is_dir($current) && !@mkdir($current, $mode) && !is_dir($current)) throw new \RuntimeException('Cannot create directory');
+            // Re-stat after creation: a concurrent replacement must not be accepted as a directory.
+            clearstatcache(true, $current);
+            $entry = @lstat($current);
+            if (!is_array($entry) || ($entry['mode'] & 0170000) !== 0040000) {
+                throw new \RuntimeException('Unsafe directory component');
+            }
+        }
     }
 
     public static function write(string $path, string $data, int $mode = 0600, ?int $uid = null, ?int $gid = null): void

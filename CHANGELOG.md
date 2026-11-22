@@ -1,5 +1,12 @@
 # Changelog
 
+## Embedded core synchronization — CajeerEngine 2.1.0 (Book 1.0.0 patch)
+
+- Align all six embedded CajeerEngine runtime classes with the supplied upstream 2.1.0 source. Three files changed: the CJR template engine, expression evaluator and durable filesystem primitive.
+- Apply 2.1.0 ancestor-symlink rejection to directory creation and file writes used throughout Book. Preserve Book routing, database schema, content storage and signed-update implementation.
+- Pin the embedded core revision and SHA-256 checks during readiness; expose the distinct `engine_version` in the operator report and run offline runtime, template and filesystem regressions in CI.
+- No import of CajeerEngine's full CMS, database, extensions, Admin Update Center or update operator. No Book version increment or database migration. See `docs/admin/engine-core.md`.
+
 ## 1.0.0 — Production Stable
 
 - Require the full production qualification job explicitly in stable release evidence; sign all four qualification reports with the release manifest and checksums.

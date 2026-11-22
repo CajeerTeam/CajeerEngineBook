@@ -23,6 +23,7 @@
     },
     "scripts": {
         "test": [
+            "@php tests/engine-core.php",
             "python3 tests/admin-docs.py",
             "python3 tests/admin-runbook.py",
             "python3 tests/release-signing.py",

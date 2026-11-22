@@ -100,8 +100,7 @@ final class TemplateExpressionEvaluator
                     '>=' => $left >= $right,
                     '<=' => $left <= $right,
                     '>' => $left > $right,
-                    '<' => $left < $right,
-                    default => false,
+                    default => $left < $right,
                 };
             }
         }
