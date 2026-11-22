@@ -46,7 +46,17 @@ try{
     $sync->apply('secret',$p['token'],$p['commit'],'manual','writer',null,[hash('sha256','README.md')=>'detach']);$after=$store->read();ok($after['github']['pages']===[]&&$after['pages']===$before['pages']&&$after['github']['commit']===$f->head,'actual atomic sync detaches deleted file; publication and draft preserved');
     reject(fn()=>$sync->apply('secret',$p['token'],$p['commit'],'local','writer'),'replayed plan rejected');
     ok(in_array('git.sync',array_column($after['activity'],'type'),true),'sync recorded in Team Studio activity');$sync->disconnect($after['github']['revision']);ok(!isset($store->read()['github'])&&$store->read()['pages']===$before['pages'],'disconnect retains content');
-    if($policy){echo "POLICY ONLY: parser-backed Git import/export skipped\n";return;}
+    if($policy){
+        // This reverse map must never be treated as a fresh import. It is used by
+        // real GitHub/GitLab pull-request proposals to preserve repository links.
+        $w=[];$asset=str_repeat('a',32);
+        $original='[Child](/docs/guide/1.0/child?x=1#top) [Asset](/media/'.$asset.')';
+        $export=MarkdownImport::rewrite($original,'README.md',[
+            '/docs/guide/1.0/child'=>'child.md','/media/'.$asset=>'asset.txt'
+        ],[],$w,[],0,true);
+        ok($export==='[Child](child.md?x=1#top) [Asset](asset.txt)'&&!$w,'inverse Markdown mappings preserve repository-relative pages, media and fragments');
+        echo "POLICY ONLY: parser-backed Git import/export skipped\n";return;
+    }
     // Actual CommonMark-backed import, sync, conflict, PR, rename and backup.
     $store=new BookStore($dir.'/full');$media=new MediaStore($dir.'/full',$store);$store->setHistoryActor($actor);$store->change(fn(&$d)=>$d['pages']=[]);$sync=new GitHubSync($store,new MarkdownImport($store,$media),fn($t)=>$f->client($t),$dir.'/full-cache');$f->set(['docs/README.md'=>"# Home\n\n[Child](child.md)\n\n[Asset](asset.txt)",'docs/child.md'=>'# Child','docs/asset.txt'=>'attachment']);$sync->configure($fields);
     $pull=function($choice='safe')use($sync){$p=$sync->preview('secret');$sync->apply('secret',$p['token'],$p['commit'],$choice,'writer');return $p;};$pull();$d=$store->read();$home=$d['pages'][$key];$mid=$home['draft']['media'][0];ok($home['published']===null&&str_contains($home['draft']['body'],'/docs/guide/1.0/child')&&file_get_contents($media->blob($mid))==='attachment','full first sync imports Markdown and media as linked drafts');

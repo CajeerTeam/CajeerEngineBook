@@ -51,6 +51,8 @@ with tempfile.TemporaryDirectory(prefix='book-106-http-') as tmp:
             # Client.request() returns a mapping of headers, which is case insensitive in practice.
             check(b'phc_abc123456789' in html and b'pa-AbCd12345.js' in html and b'94db1cb1' in html,'all four vendors configured for public reader')
             check('matomo.example.com' in str(headers) and 'eu-assets.i.posthog.com' in str(headers),'live CSP allows exactly configured third-party hosts')
+            script_headers,script=guest.request('/assets/analytics.js',200)
+            check('javascript' in script_headers.get('Content-Type','') and b'Accept analytics' in script,'real browser consent script served as JavaScript')
             search={'event':'search','path':'/search','consent':True,'query':'PHP Deployment'}
             for _ in range(3):check(beacon(base,prefix+'/analytics/collect',search,base)==204,'opt-in search term persisted')
             check(beacon(base,prefix+'/analytics/collect',dict(search,query='privatephrase'),base)==204,'rare search term accepted into aggregate storage')

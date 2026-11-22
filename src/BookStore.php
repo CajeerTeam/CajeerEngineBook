@@ -15,6 +15,7 @@ require_once __DIR__.'/OpenApiStore.php';
 require_once __DIR__.'/AutomationQueue.php';
 require_once __DIR__.'/CiPublishing.php';
 require_once __DIR__.'/PostgresContentStore.php';
+require_once __DIR__.'/Embeddings.php';
 final class BookStore {
     public const MAX_DB_BYTES = 32 * 1024 * 1024;
     private ?array $historyActor=null;

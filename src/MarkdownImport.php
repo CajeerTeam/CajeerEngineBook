@@ -63,9 +63,12 @@ final class MarkdownImport
         return ['path'=>$pagePath,'title'=>$title,'section'=>$section,'order'=>$order,'body'=>$body,'explicit_order'=>isset($meta['order'])]+(isset($meta['locale'])?['locale'=>Locale::require($meta['locale'])]:[]);
     }
     /** Resolve a local link against the source tree, never the server filesystem. */
-    private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings):string{
+    private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings,bool $export=false):string{
         $raw=html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8');
         $cut=strcspn($raw,'?#');$absolute=substr($raw,0,$cut);
+        // Export uses the inverse of the import map. Preserve anchors and query strings;
+        // do not interpret unmapped canonical URLs as repository paths.
+        if($export)return isset($pages[$absolute])?$pages[$absolute].substr($raw,$cut):(isset($assets[$absolute])?$assets[$absolute].substr($raw,$cut):$url);
         if(isset($pages[$absolute])&&str_starts_with($absolute,'https://app.gitbook.com/s/'))return '/docs/'.$pages[$absolute].substr($raw,$cut);
         if($raw===''||preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#|\?)~i',$raw))return $url;
          $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return '/docs/'.$pages[$canonical].substr($raw,$n);
@@ -82,14 +85,14 @@ final class MarkdownImport
     }
     private static function normalizedUrl(string $url):string{return rawurldecode(html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8'));}
     /** Rewrite actual Markdown source, using parser block ranges to protect code and HTML. */
-    public static function rewrite(string $body,string $source,array $pages,array $assets,array &$warnings,?array $regions=null,int $depth=0):string{
+    public static function rewrite(string $body,string $source,array $pages,array $assets,array &$warnings,?array $regions=null,int $depth=0,bool $export=false):string{
         // Production callers always obtain real CommonMark block boundaries; the optional argument
         // permits pure source-rewriting tests without an installed parser.
         $known=null;if($regions===null){$syntax=Markdown::importSyntax($body);$regions=$syntax['regions'];$known=[];foreach($syntax['links'] as $link)$known[self::normalizedUrl($link['url'])]=true;}
         preg_match_all('/[^\r\n]*(?:\r\n|\r|\n|$)/',$body,$m);$lines=$m[0];if(end($lines)==='')array_pop($lines);
         $out='';$normal='';
-        $flush=static function()use(&$normal,&$out,$source,$pages,$assets,&$warnings,$known){
-            if($normal==='')return;$out.=self::rewriteChunk($normal,$source,$pages,$assets,$warnings,$known);$normal='';
+        $flush=static function()use(&$normal,&$out,$source,$pages,$assets,&$warnings,$known,$export){
+            if($normal==='')return;$out.=self::rewriteChunk($normal,$source,$pages,$assets,$warnings,$known,0,$export);$normal='';
         };
         for($i=0;$i<count($lines);$i++){
             $region=$regions[$i+1]??null;if($region===null){$normal.=$lines[$i];continue;}
@@ -98,11 +101,11 @@ final class MarkdownImport
             if($component!==null){
                 $original=$component;
                 // Use a closure capturing warnings by reference for nested bodies.
-                $rewriteBody=static function($text)use($source,$pages,$assets,&$warnings,$depth){return self::rewrite($text,$source,$pages,$assets,$warnings,null,$depth+1);};
+                $rewriteBody=static function($text)use($source,$pages,$assets,&$warnings,$depth,$export){return self::rewrite($text,$source,$pages,$assets,$warnings,null,$depth+1,$export);};
                 if(isset($component['body']))$component['body']=$rewriteBody($component['body']);
                 foreach(['cards','items'] as $field)if(isset($component[$field]))foreach($component[$field] as &$item){
                     if(isset($item['body']))$item['body']=$rewriteBody($item['body']);
-                    foreach(['href','image'] as $link)if(isset($item[$link]))$item[$link]=self::destination($item[$link],$source,$pages,$assets,$warnings);
+                    foreach(['href','image'] as $link)if(isset($item[$link]))$item[$link]=self::destination($item[$link],$source,$pages,$assets,$warnings,$export);
                 }unset($item);
                 if($component!==$original){$encoded=json_encode($component,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
                     if(RichBlocks::parse($region['info'],$encoded)===null)throw new \InvalidArgumentException('Imported rich block exceeds supported limits');
@@ -114,19 +117,19 @@ final class MarkdownImport
         }$flush();return $out;
     }
     /** Lexical destinations only; parser URL set prevents rewriting lookalike prose. */
-    private static function rewriteChunk(string $chunk,string $source,array $pages,array $assets,array &$warnings,?array $known,int $depth=0):string{
+    private static function rewriteChunk(string $chunk,string $source,array $pages,array $assets,array &$warnings,?array $known,int $depth=0,bool $export=false):string{
         if($depth>16)throw new \InvalidArgumentException('Markdown link nesting exceeds import limit');
         $pattern=<<<'REGEX'
 ~(?<code>(?<!`)(?<ticks>`+)(?!`).*?(?<!`)\k<ticks>(?!`))|(?<html><!--.*?-->|<[A-Za-z/!?][^>\r\n]*>)|(?<prefix>(?<!\\)(?<label>\[(?:[^\[\]\\]++|\\.|(?&label))*\])\([ \t\r\n]*|^ {0,3}\[[^\]\r\n]+\]:[ \t]*(?:\r?\n[ \t]+)?)(?<dest><[^<>\r\n]*>|(?:\\[() ]|[^\s()<>\\]|(?<paren>\((?:[^()\s\\]++|\\.|(?&paren))*\)))+)(?=[)\s]|$)~ms
 REGEX;
-        $rewritten=preg_replace_callback($pattern,static function($m)use($source,$pages,$assets,&$warnings,$known,$depth){
+        $rewritten=preg_replace_callback($pattern,static function($m)use($source,$pages,$assets,&$warnings,$known,$depth,$export){
             if(($m['code']??'')!==''||($m['html']??'')!=='')return $m[0];
             $prefix=$m['prefix'];$label=$m['label']??'';
             // An image can be nested inside a link label. Preserve label syntax while rewriting its URL.
-            if($label!=='')$prefix=self::rewriteChunk($label,$source,$pages,$assets,$warnings,$known,$depth+1).substr($prefix,strlen($label));
+            if($label!=='')$prefix=self::rewriteChunk($label,$source,$pages,$assets,$warnings,$known,$depth+1,$export).substr($prefix,strlen($label));
             $d=$m['dest'];$angle=str_starts_with($d,'<');$raw=$angle?substr($d,1,-1):$d;$raw=preg_replace('/\\\\([() ])/','$1',$raw);
             if($label!==''&&$known!==null&&!isset($known[self::normalizedUrl($raw)]))return $prefix.$d;
-            $resolved=self::destination($raw,$source,$pages,$assets,$warnings);
+            $resolved=self::destination($raw,$source,$pages,$assets,$warnings,$export);
             return $prefix.($resolved===$raw?$d:($angle?'<'.$resolved.'>':$resolved));
         },$chunk);
         if($rewritten===null)throw new \InvalidArgumentException('Markdown link parsing limit exceeded');return $rewritten;

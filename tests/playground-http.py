@@ -39,7 +39,12 @@ def exercise(base,data,origin):
             _,page=c.request(sdk,200);digest=re.search(rb'Publication digest: <code>([a-f0-9]{64})</code>',page).group(1).decode()
         return c.request(sdk+'&lang='+lang+'&download=1&digest='+digest,status)
     post(owner,reviews,'policy',required='1',revision='1');apply(source());viewer.request(sdk,404);guest.request(sdk,401);outsider.request(sdk,404);viewer.request(pg,404);editor.request(pg,404);guest.request(pg,401);outsider.request(pg,404);check('draft-only operations are inaccessible even to editors')
-    publish();headers,m,body=model(viewer);assert m['definition']['servers']==[origin+'/v1'] and m['browser']==[0] and m['proxy']==[0] and m['endpoint']==proxy and m['csrf'];assert 'connect-src' in headers['Content-Security-Policy'] and origin in headers['Content-Security-Policy'] and headers['Referrer-Policy']=='no-referrer';assert headers['Cache-Control']=='private, no-store';assert b'api-playground.js' in body
+    publish();headers,m,body=model(viewer)
+    assert m['definition']['servers']==[origin+'/v1'] and m['browser']==[0] and m['proxy']==[0] and m['endpoint']==proxy and m['csrf'], 'authorized published Playground model'
+    assert 'connect-src' in headers['Content-Security-Policy'] and origin in headers['Content-Security-Policy'], 'isolated Playground CSP preserves operator-approved API origin'
+    assert headers['Referrer-Policy']=='no-referrer', 'Playground referrer restriction'
+    assert headers['Cache-Control']=='private, no-store', 'Playground response must be private and uncached'
+    assert b'api-playground.js' in body, 'Playground browser script'
     guest.request(pg,401);outsider.request(pg,404);viewer.request(other+'/playground?'+urllib.parse.urlencode({'key':key}),404);check('published model, scoped URL, CSP and private workspace isolation')
     if FULL:assert b'Try API in Playground' in viewer.request(prefix+'/docs/'+key,200)[1]
     # SDK is generated from the exact visible publication, never the latest source.

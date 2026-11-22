@@ -17,7 +17,7 @@ final class App {
     private static function t(string $s):string{return self::e(Locale::t($s));}
     private static function url(string $key):string{return WorkspaceUrls::url('/docs/'.$key);}
     private static function link(string $url,string $label,string $class=''):string{return '<a class="'.self::e($class).'" href="'.self::e(WorkspaceUrls::url($url)).'">'.self::e($label).'</a>';}
-    private function page(string $title,string $body,array $pages=[],string $current='',string $toc='',string $query=''):void{
+    private function page(string $title,string $body,array $pages=[],string $current='',string $toc='',string $query='',?string $cspOverride=null):void{
         $nav=PageTreeView::reader($pages,$current);$document=$current!==''?($pages[$current]??null):null;
         $lang=$document?Locale::language($document):Locale::ui();$searchLocale=$document?Locale::language($document):(Locale::valid($_GET['locale']??null)?$_GET['locale']:'');
         if($this->workspace&&$this->domainHost===null)$body='<p class="eyebrow"><a href="/workspaces">'.self::t('Workspaces').'</a> / '.self::e($this->workspace['name']).' · '.self::e($this->workspace['role']==='none'?'Public':ucfirst($this->workspace['role'])).'</p>'.$body;
@@ -25,7 +25,7 @@ final class App {
         $prefix=WorkspaceUrls::prefix();
         if($prefix!==''&&str_starts_with($analyticsPath,$prefix.'/'))$analyticsPath=substr($analyticsPath,strlen($prefix));
         $analyticsPage=$this->readerVisibility==='public'&&!$this->scopedIdentity&&http_response_code()===200&&preg_match('~\A/(?:$|search$|docs/)~D',$analyticsPath)===1;
-        header('Content-Security-Policy: '.Analytics::contentSecurityPolicy($this->workspace??$this->analyticsWorkspace,$analyticsPage));
+        header('Content-Security-Policy: '.($cspOverride??Analytics::contentSecurityPolicy($this->workspace??$this->analyticsWorkspace,$analyticsPage)));
         echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).(getenv('BOOK_PG_DSN')?'<a href="/audit">Audit</a>':'').self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead,'analyticsSettings'=>json_encode(Analytics::browserConfig($this->workspace??$this->analyticsWorkspace,$analyticsPage),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES),'chatMarkup'=>$current!==''&&DocumentationChat::enabled()&&($this->readerVisibility==='public'||DocumentationChat::privateEnabled())?'<section class="doc-chat" data-doc-chat data-endpoint="'.self::e(WorkspaceUrls::url('/api/v1/chat')).'" data-page="'.self::e($current).'"><h2>Ask about this documentation</h2><p>Questions and relevant excerpts are sent to OpenAI. Do not enter secrets.</p><div class="doc-chat-messages" role="log" aria-live="polite"></div><form class="doc-chat-form"><label for="doc-chat-question">Question</label><textarea id="doc-chat-question" maxlength="1500" rows="3" required></textarea><div class="actions"><button class="primary" type="submit">Ask</button><button type="button" data-chat-reset>Clear</button></div></form><div class="doc-chat-sources" aria-label="Documentation sources"></div></section>':'']);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
@@ -473,8 +473,8 @@ final class App {
             if($path==='/playground'){
                 $key=is_string($_GET['key']??null)?$_GET['key']:'';$d=ApiPlayground::published($db,$pages,$key);
                 if(!$d){http_response_code(404);header('X-Robots-Tag: noindex, nofollow');$this->page('Playground unavailable','<h1>Playground unavailable</h1><p>Choose a supported published API operation.</p>',$pages);return;}
-                header('Content-Security-Policy: '.ApiPlaygroundView::csp($d));header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');
-                $this->page('API Playground',ApiPlaygroundView::markup($key,$pages[$key],$d,$this->scopedIdentity,$this->studioRole),$pages,$key);return;
+                header('Referrer-Policy: no-referrer');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');header('Vary: Cookie');
+                $this->page('API Playground',ApiPlaygroundView::markup($key,$pages[$key],$d,$this->scopedIdentity,$this->studioRole),$pages,$key,'','',ApiPlaygroundView::csp($d));return;
             }
             if($path==='/api/v1/pages'){$this->json(array_map(fn($p)=>array_diff_key($p,['body'=>true,'link_base'=>true,'playground'=>true,'source_digest'=>true,'translation_group'=>true])+['locale'=>Locale::language($p)],$pages));return;}
 
