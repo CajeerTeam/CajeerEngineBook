@@ -50,6 +50,7 @@
             "@php tests/domains.php",
             "python3 tests/domains-http.py --full",
             "@php tests/oidc-policy.php",
+            "@php tests/skif4er-id.php",
             "python3 tests/oidc-http.py",
             "@php tests/redis-policy.php",
             "@php tests/postgres-policy.php",

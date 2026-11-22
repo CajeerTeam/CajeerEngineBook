@@ -61,6 +61,7 @@ Generate independent keys with `openssl rand -hex 32`; files must be absolute, r
 | `BOOK_OIDC_CONFIG` | JSON configuration, one provider and managed organization. |
 | `BOOK_OIDC_CLIENT_SECRET` / `BOOK_OIDC_CLIENT_SECRET_FILE` | Confidential client secret (file is a single value, not keyring). |
 | `BOOK_OIDC_REQUIRED` | `1` requires SSO for non-owner local accounts; test emergency owner first. |
+| `BOOK_SKIF4ER_CLIENT_ID` | Dedicated SkiF4er ID confidential client; see [the complete configuration and access policy](skif4er-id.md). Do not combine with `BOOK_OIDC_CONFIG`. |
 
 Example JSON (replace the organization ID and all issuer/client/host values; create the organization via the UI first):
 

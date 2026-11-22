@@ -133,6 +133,10 @@ final class IdentityStore
         }
         if($db['users']!==[]&&$owners!==1)throw new \RuntimeException('Identity owner invariant failed');
         foreach($db['sessions'] as $key=>$s)if(!is_string($key)||!self::hex($key,64)||!is_array($s)||!isset($db['users'][$s['user']??''])||!is_string($s['id']??null)||!self::hex($s['id'],32)||!is_string($s['csrf']??null)||!self::hex($s['csrf'],64)||!is_int($s['created']??null)||!is_int($s['seen']??null)||!is_int($s['expires']??null)||(isset($s['oidc_iat'])&&(!is_int($s['oidc_iat'])||$s['oidc_iat']<1)))throw new \RuntimeException('Invalid identity session');
+        foreach($db['sessions'] as $s){
+            if(isset($s['oidc_sid'])&&(!is_string($s['oidc_sid'])||$s['oidc_sid']===''||strlen($s['oidc_sid'])>256))throw new \RuntimeException('Invalid OIDC session identifier');
+            foreach(['oidc_id_token','oidc_access_token','oidc_refresh_token'] as $key)if(isset($s[$key])&&(!is_string($s[$key])||strlen($s[$key])>90000||!preg_match('/\A[A-Za-z0-9_-]+\z/D',$s[$key])))throw new \RuntimeException('Invalid encrypted OIDC token');
+        }
         foreach($db['resets'] as $key=>$r)if(!is_string($key)||!self::hex($key,64)||!is_array($r)||!isset($db['users'][$r['user']??''])||!is_int($r['expires']??null))throw new \RuntimeException('Invalid reset record');
         foreach($db['attempts'] as $k=>$a)if(!is_string($k)||!self::hex($k,64)||!is_array($a)||!is_int($a['count']??null)||!is_int($a['until']??null)||$a['count']<1)throw new \RuntimeException('Invalid rate limit');
         $flows=$db['oidc_flows']??[];if(!is_array($flows)||count($flows)>500)throw new \RuntimeException('Invalid OIDC flow state');
@@ -183,12 +187,23 @@ final class IdentityStore
             $db['attempts'][$key]??=['count'=>0,'until'=>$now+60];$db['attempts'][$key]['count']++;return true;
         });
     }
-    /** Monotonic subject watermark makes logout retries idempotent and rejects stale in-flight logins. */
+    /** A SID event revokes only that provider session; a subject-only event revokes all. */
     public function federatedLogout(array $c,array $claims):void
     {
         $this->transaction(function(&$db)use($c,$claims){
-            foreach($db['users'] as $id=>$u){$link=$u['oidc']??null;
-                if(!$link||$link['issuer']!==$c['issuer']||$link['organization']!==$c['organization']||$link['subject']!==$claims['sub'])continue;
+            $sid=$claims['sid']??null;$sub=$claims['sub']??null;
+            if($sid!==null){
+                foreach($db['sessions'] as $key=>$session){
+                    if(($session['oidc_sid']??null)!==$sid)continue;
+                    $u=$db['users'][$session['user']]??null;$link=$u['oidc']??null;
+                    if(!$link||$link['issuer']!==$c['issuer']||$link['organization']!==$c['organization']||($sub!==null&&$link['subject']!==$sub))continue;
+                    unset($db['sessions'][$key]);ActivityJournal::record($db,null,'account.sessions','Federated session logout',$u['id']);
+                }
+                return;
+            }
+            foreach($db['users'] as $id=>$u){
+                $link=$u['oidc']??null;
+                if(!$link||$link['issuer']!==$c['issuer']||$link['organization']!==$c['organization']||$link['subject']!==$sub)continue;
                 $at=$claims['iat'];if($at<=($link['logout_at']??0))return;
                 $db['users'][$id]['oidc']['logout_at']=$at;
                 foreach($db['sessions'] as $k=>$session)if($session['user']===$id&&($session['oidc_iat']??$session['created'])<=$at)unset($db['sessions'][$k]);
@@ -233,9 +248,9 @@ final class IdentityStore
         });
     }
     /** Claims are supplied only by Oidc::verify after signature, issuer, nonce and audience checks. */
-    public function federatedLogin(array $c,array $claims):array
+    public function federatedLogin(array $c,array $claims,array $tokens=[]):array
     {
-        return $this->transaction(function(&$db)use($c,$claims){
+        return $this->transaction(function(&$db)use($c,$claims,$tokens){
             $now=time();self::prune($db,$now);$oid=$c['organization'];$o=$db['organizations'][$oid]??null;
             if($db['users']===[]||!$o||$o['archived']||$claims['exp']<=$now)return ['status'=>'invalid'];
             $u=null;foreach($db['users'] as $candidate)if(($candidate['oidc']['issuer']??null)===$c['issuer']&&($candidate['oidc']['subject']??null)===$claims['sub']){$u=$candidate;break;}
@@ -265,7 +280,12 @@ final class IdentityStore
             }
             unset($db['users'][$id]['oidc']['restrictions']);
             // Preserve explicit workspace restrictions. Organization role is a ceiling.
-            self::revoke($db,$id);$r=self::session($db,$u,$now);$r['session']['expires']=min($claims['exp'],$now+3600);$r['session']['oidc_policy']=Oidc::fingerprint($c);$r['session']['oidc_iat']=$claims['iat']??$now;$db['sessions'][hash('sha256',$r['token'])]=$r['session'];
+            self::revoke($db,$id);$r=self::session($db,$u,$now);$r['session']['expires']=min($claims['exp'],$now+3600);$r['session']['oidc_policy']=Oidc::fingerprint($c);$r['session']['oidc_iat']=$claims['iat']??$now;
+            if(isset($claims['sid'])&&is_string($claims['sid'])&&$claims['sid']!==''&&strlen($claims['sid'])<=256)$r['session']['oidc_sid']=$claims['sid'];
+            // Only an operator-configured logout origin may retain encrypted credentials.
+            if(isset($c['post_logout_redirect_uri']))foreach(['id_token','access_token','refresh_token'] as $type)
+                if(isset($tokens[$type]))$r['session']['oidc_'.$type]=Oidc::seal($c,$tokens[$type]);
+            $db['sessions'][hash('sha256',$r['token'])]=$r['session'];
             ActivityJournal::record($db,$u,'login','SSO sign in',$id);return ['status'=>'ok']+$r;
         });
     }
@@ -288,7 +308,7 @@ final class IdentityStore
         return $this->transaction(function(&$db)use($token){$now=time();self::prune($db,$now);$key=hash('sha256',$token);$s=$db['sessions'][$key]??null;if(!$s)return null;if($s['seen']<=$now-300){$s['seen']=$now;$db['sessions'][$key]=$s;}return ['session'=>$s,'user'=>self::safe($db['users'][$s['user']])];});
     }
     public function logout(string $token):void{$this->transaction(function(&$db)use($token){$s=$db['sessions'][hash('sha256',$token)]??null;if($s){ActivityJournal::record($db,$db['users'][$s['user']],'logout','Sign out',$s['user']);unset($db['sessions'][hash('sha256',$token)]);}});}
-    public function sessions(string $token):array{return $this->transaction(function(&$db)use($token){self::prune($db,time());$s=self::requireSession($db,$token);return array_values(array_map(fn($r)=>array_diff_key($r,['csrf'=>true]),array_filter($db['sessions'],fn($r)=>$r['user']===$s['user'])));});}
+    public function sessions(string $token):array{return $this->transaction(function(&$db)use($token){self::prune($db,time());$s=self::requireSession($db,$token);return array_values(array_map(fn($r)=>array_diff_key($r,['csrf'=>true,'oidc_id_token'=>true,'oidc_access_token'=>true,'oidc_refresh_token'=>true]),array_filter($db['sessions'],fn($r)=>$r['user']===$s['user'])));});}
     public function revokeSession(string $token,string $id):void{$this->transaction(function(&$db)use($token,$id){$s=self::requireSession($db,$token);$n=0;foreach($db['sessions'] as $k=>$r)if($r['user']===$s['user']&&($id==='all'||$r['id']===$id)){unset($db['sessions'][$k]);$n++;}if($n)ActivityJournal::record($db,$db['users'][$s['user']],'account.sessions','Sessions revoked',$s['user'],'','',[],$n.' session(s)');});}
     public function profile(string $token,string $name,string $email):void{$this->transaction(function(&$db)use($token,$name,$email){$s=self::requireSession($db,$token);$name=self::name($name);$email=self::email($email);foreach($db['users'] as $id=>$u)if($id!==$s['user']&&$u['email']===$email)throw new \DomainException('Email already exists.');$db['users'][$s['user']]['name']=$name;$db['users'][$s['user']]['email']=$email;ActivityJournal::record($db,$db['users'][$s['user']],'account.profile','Profile updated',$s['user']);});}
     public function changePassword(string $token,string $old,string $new,string $ip):array{return $this->transaction(function(&$db)use($token,$old,$new,$ip){$now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];if(isset($u['oidc']))return ['status'=>'invalid'];if(!self::rate($db,'password',$ip,$u['id'],$now))return ['status'=>'limited'];if(strlen($old)>72||str_contains($old,"\0")||!password_verify($old,$u['hash']))return ['status'=>'invalid'];$u['hash']=self::password($new);$db['users'][$u['id']]=$u;self::revoke($db,$u['id']);ActivityJournal::record($db,$u,'account.password','Password changed',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);});}

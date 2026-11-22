@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.0** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.3** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+
+## 1.0.3 — SkiF4er ID sign-in
+
+The configured SkiF4er ID OIDC backend supports authorization-code + PKCE login, verified callback, authenticated local sessions, RP logout, OAuth token revocation and signed back-channel session invalidation. Credentials are server-side; installation owner access is preserved. Configure an OIDC confidential client, an existing Book organization, approved redirect/logout URIs and group/default viewer policy. See [SkiF4er ID setup and revocation](docs/admin/skif4er-id.md). No SQL schema migration is needed. A live provider sign-in still requires the actual registered client credentials and a staging verification.
 
 ## 1.0.0 — Production Stable
 
@@ -307,6 +311,9 @@ With Compose, use the same PostgreSQL/Redis/distributed overlays as the installa
 The test suite includes `tests/multilingual.php`, `tests/multilingual-http.py` and PostgreSQL variants in CI. The storage-only mode does not require the Markdown parser and is not a replacement for full rendering, SQL and static ZIP tests.
 
 ## 0.4.5 — Enterprise SSO / OIDC
+
+> Historical 0.4.5 behavior below. Book 1.0.3 additionally implements SkiF4er ID provider configuration, encrypted short-lived session tokens, RP-initiated logout and signed back-channel logout by `sid`/`sub`. See [current SkiF4er ID setup](docs/admin/skif4er-id.md).
+
 
 Corporate sign-in uses OpenID Connect Authorization Code + PKCE S256, exact issuer and audience, one-time state/nonce, HTTPS discovery and RS256 JWKS signature verification. The existing IdentityStore transaction persists the short-lived authorization flow and JIT identity; no Redis-only state or sticky sessions are required. Existing local users and content remain unchanged unless mandatory SSO is enabled. No SQL schema migration is required for a healthy 0.4.4 installation.
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3 — SkiF4er ID sign-in and session revocation
+
+- Add directly configurable confidential SkiF4er ID client with the pinned Keycloak issuer, exact HTTPS callback, Authorization Code + PKCE S256, nonce/state validation and RS256 identity verification; no PHP SDK is published by the provider, so Book uses its existing native PHP OIDC client.
+- Provision authenticated Book user sessions from `iss` + `sub`, with explicit viewer onboarding or claim-based group access. No implicit elevated roles and no email-based account linking.
+- Complete POST-only CSRF-protected browser logout with local session invalidation, best-effort OAuth access/refresh-token revocation and RP-initiated logout through the discovered provider endpoint. Encrypt short-lived provider tokens at rest in session state; exclude them from the user session list and backups.
+- Handle signed back-channel logout by provider session (`sid`) or by subject (`sub`), while retaining the existing operator account disable/revoke controls.
+- Add configuration guide, unit/regression tests and two-node HTTPS fixture coverage for callback, logout, token revocation and provider session invalidation. Existing identity storage schema is unchanged; live provider authentication needs operator-registered client credentials.
+
 ## 1.0.2 — Regression repairs (from supplied 1.0.0 source)
 
 - Local login rate limiting now charges only failed credentials; valid logins on shared IP addresses no longer exhaust the 15-minute IP budget. Invalid attempts still enforce per-account and per-IP limits.

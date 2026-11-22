@@ -55,8 +55,8 @@ final class AuthController
             $state=is_string($_GET['state']??null)?$_GET['state']:'';$browser=is_string($_COOKIE['__Host-book_oidc']??null)?$_COOKIE['__Host-book_oidc']:'';
             self::oidcCookie('',time()-3600);$flow=$this->store->consumeOidc($c,$state,$browser);
             if(!$flow||isset($_GET['error'])||(isset($_GET['iss'])&&$_GET['iss']!==$c['issuer']))throw new \DomainException('Invalid SSO response.');
-            $code=is_string($_GET['code']??null)?$_GET['code']:'';$claims=Oidc::exchange($c,$flow,$code);
-            $r=$this->store->federatedLogin($c,$claims);if($r['status']!=='ok')throw new \DomainException('SSO access denied.');
+            $code=is_string($_GET['code']??null)?$_GET['code']:'';$response=Oidc::finish($c,$flow,$code);
+            $r=$this->store->federatedLogin($c,$response['claims'],$response['tokens']);if($r['status']!=='ok')throw new \DomainException('SSO access denied.');
             self::issue($r);self::redirect('/auth/oidc/complete');
         }catch(\Throwable){$this->store->auditFailure('oidc.failed');http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');}
     }
@@ -102,7 +102,20 @@ final class AuthController
         if($method==='POST'){
             if(!self::csrf($csrf)){http_response_code(403);$page('Invalid request','<h1>Invalid CSRF token</h1>');return;}
             try{
-                if($path==='/logout'){$this->store->logout($token);self::clear();self::redirect('/login');return;}
+                if($path==='/logout'){
+                    // Local logout must succeed even when the remote provider is unavailable.
+                    $this->store->logout($token);self::clear();$target='/login';
+                    if(!empty($user['federated'])){
+                        try{
+                            $c=Oidc::config();
+                            if($c){
+                                try{Oidc::revokeTokens($c,$ctx['session']);}catch(\Throwable){/* local session is already gone */}
+                                $target=Oidc::endSessionUrl($c,$ctx['session'])??'/login';
+                            }
+                        }catch(\Throwable){$target='/login';}
+                    }
+                    self::redirect($target);return;
+                }
                 $action=self::post('action');
                 if($path==='/account/users'){
                     if($action==='create')$this->store->createUser($token,self::post('username'),self::post('name'),self::post('email'),self::post('password'));
