@@ -1,3 +1,11 @@
+## 1.1.1 — GitHub Release Infrastructure (2026-11-22)
+
+- Harden the existing operational GitHub release publishing pipeline: refuse overwrite of either an existing draft or published release; distinguish GitHub API/network/authentication failures from a genuine absent release. Confirm authenticated access to the exact repository before accepting 404.
+- After upload and before publication verify the draft release asset inventory, uploaded state, exact signed artifact sizes and GitHub SHA-256 digests when supplied. Keep Ed25519/OCI verification of the freshly downloaded signed draft.
+- After making the release public, re-check Git tag identity, public release metadata, re-download **published** assets, verify signed archives, source-to-deployment transform, qualification evidence and Cosign OCI identity again, then recheck remote asset inventory. Failure makes the GitHub Actions release job red; no automatic deletion, tag rewrite or untrusted repair.
+- Include a fail-closed GitHub publication regression suite in Composer and Actions, with negative cases for API authorization, ambiguous 404, truncated/duplicated/unready assets, tampered hash, wrong tag and lifecycle state. No SQL migration; schema stays 7, embedded Engine stays 2.1.0.
+- These are runnable source changes, not an assertion that this version's GitHub Release and 24-hour qualification are already published or passed. The protected-tag CI, operator-managed signing keys, dedicated qualification host and GitHub/GHCR credentials remain required.
+
 ## 1.1.0 — Unified regression, security, recovery and load gates (2026-11-22)
 
 - Repair file-mode backup loss of consent-only analytics aggregates. Under the analytics writer lock, capture and validate bounded daily files into each portable store TAR; restore atomically and reject malformed data, symlinks, undeclared members and unsafe filenames. Preserve compatibility with historical archives without these optional aggregates. PostgreSQL aggregates still require actual SQL/PITR recovery.

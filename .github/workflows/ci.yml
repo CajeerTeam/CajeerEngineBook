@@ -23,6 +23,8 @@ jobs:
       - run: npm install --global typescript@5.8.3
       - run: python -m pip install playwright==1.57.0 'setuptools>=68' wheel
       - run: python -m playwright install --with-deps chromium
+      - name: Verify real GitHub release publication admission policy
+        run: python3 tests/release-111-github.py
       - run: python3 tests/release-gate.py --suite native --report-dir "$RUNNER_TEMP/book-gate-native"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -279,6 +281,8 @@ jobs:
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Recheck GitHub publication policy before privileged release
+        run: python3 tests/release-111-github.py
       - name: Sign, verify and publish immutable release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

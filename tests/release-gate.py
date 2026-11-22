@@ -28,7 +28,7 @@ CRITICAL_REGRESSIONS = frozenset({
     'tests/reviews.php', 'tests/recovery.php', 'tests/recovery-110.php',
     'tests/security-hardening.php', 'tests/security-lifecycle.php',
     'tests/pitr-policy.php', 'tests/redis-policy.php', 'tests/postgres-policy.php',
-    'tests/enterprise-load.py', 'tests/release-signing.py',
+    'tests/enterprise-load.py', 'tests/release-signing.py', 'tests/release-111-github.py',
     'tests/update-manager.py', 'tests/release.php',
 })
 

@@ -35,7 +35,7 @@ check_tag(){
 }
 check_tag
 # Never replace an existing release. A draft left by a failed attempt requires operator review.
-if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo 'Release already exists; refusing to overwrite' >&2; exit 1; fi
+python3 bin/release-github.py absent --repository "$GITHUB_REPOSITORY" --version "$version"
 for ref in "${refs[@]}"; do
   cosign sign --yes "$ref"
   cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$ref" >/dev/null
@@ -44,6 +44,7 @@ python3 bin/release-package.py verify --directory "$output" --public-key "$work/
 check_tag
 # Draft + readback protects against publishing an incomplete or corrupted asset set.
 gh release create "$tag" "$output"/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false --title "CajeerEngine Book $version" --notes "Signed distribution. Verify release.json and ZIP signatures against the independently distributed Ed25519 public key. Deploy only verified OCI digests. See docs/admin/signed-releases.md."
+python3 bin/release-github.py verify --repository "$GITHUB_REPOSITORY" --version "$version" --directory "$output" --state draft
 mkdir "$work/readback"
 gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$work/readback"
 python3 bin/release-package.py verify --directory "$work/readback" --public-key "$work/public.pem" --repository "$GITHUB_REPOSITORY" --version "$version" --commit "$GITHUB_SHA" --oci >/dev/null
@@ -61,14 +62,14 @@ for ref in "${refs[@]}"; do
 done
 check_tag
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest=false
-# Confirm the public release still identifies the exact verified assets and tag.
+# Audit the *published* release, not only the draft. Re-download the public
+# assets into a clean directory and authenticate their bytes and OCI references.
+# The remote asset inventory is checked before and after download so that
+# missing, pending, duplicated and mutated assets fail the publication job.
 check_tag
-gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets > "$work/published.json"
-python3 - "$work/published.json" "$output" "$tag" <<'PY'
-import json, pathlib, sys
-r=json.loads(pathlib.Path(sys.argv[1]).read_text()); out=pathlib.Path(sys.argv[2])
-expected={p.name:p.stat().st_size for p in out.iterdir()}
-assets=r['assets']; actual={a['name']:a['size'] for a in assets}
-if r['tagName']!=sys.argv[3] or r['isDraft'] or r['isPrerelease'] or len(assets)!=len(expected) or actual!=expected:
-    raise SystemExit('Published release metadata mismatch; operator investigation required')
-PY
+python3 bin/release-github.py verify --repository "$GITHUB_REPOSITORY" --version "$version" --directory "$output" --state published
+mkdir "$work/published-readback"
+gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$work/published-readback"
+python3 bin/release-package.py verify --directory "$work/published-readback" --public-key "$work/public.pem" --repository "$GITHUB_REPOSITORY" --version "$version" --commit "$GITHUB_SHA" --oci >/dev/null
+python3 bin/release-github.py verify --repository "$GITHUB_REPOSITORY" --version "$version" --directory "$work/published-readback" --state published
+check_tag

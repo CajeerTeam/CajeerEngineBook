@@ -65,7 +65,7 @@ class Release110(unittest.TestCase):
         self.assertIn('if: always()', job)
 
     def test_version_schema_and_critical_sources_exist(self):
-        self.assertEqual((ROOT/'VERSION').read_text().strip(),'1.1.0')
+        self.assertGreaterEqual(tuple(map(int,(ROOT/'VERSION').read_text().strip().split('.'))),(1,1,0))
         self.assertIn('public const VERSION = 7;', (ROOT/'src/DatabaseMigrations.php').read_text())
         for source in ('src/RecoveryManager.php','src/InstallationBackup.php',
                        'src/AnalyticsBackup.php','tests/performance-benchmark.py',
