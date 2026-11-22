@@ -751,6 +751,11 @@ def project_lock(project, directory=Path('/run/lock')):
         except BlockingIOError: raise RuntimeError('Another updater is operating on this Compose project')
         yield
 
+def require_local_host_root():
+    """Only the host operator may execute update manager actions."""
+    require(os.geteuid()==0, 'Run as root on the local Docker host (private backup bind mount requires UID 33)')
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__); p.add_argument('--state-dir',type=Path,required=True)
     sub=p.add_subparsers(dest='action',required=True)
@@ -769,7 +774,7 @@ def main():
     args=p.parse_args()
     try:
         os.umask(0o077)
-        require(os.geteuid()==0,'Run as root on the local Docker host (private backup bind mount requires UID 33)')
+        require_local_host_root()
         mgr=Manager(args.state_dir)
         with mgr.locked():
             s=None if args.action=='enroll' else mgr.read(allow_env_change=args.action in ('reconcile-env','status','check','verify-backup'))

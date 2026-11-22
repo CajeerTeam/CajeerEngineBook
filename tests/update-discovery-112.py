@@ -274,6 +274,13 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(result['status'],'incomplete')
         self.assertTrue(result['pagination_truncated'])
 
+    def test_root_guard_remains_enforced_without_test_override(self):
+        # The check test overrides only this gate, never os.geteuid():
+        # ownership/path checks must still observe the real runner UID.
+        with patch.object(u.os, 'geteuid', return_value=12345):
+            with self.assertRaisesRegex(ValueError, 'Run as root'):
+                u.require_local_host_root()
+
     def test_real_update_cli_check_path_and_private_etag_cache(self):
         rel, download = self.fix.release()
         with tempfile.TemporaryDirectory() as td:
@@ -294,7 +301,7 @@ class TestDiscovery(unittest.TestCase):
             with patch.object(u, 'download', download), \
                  patch('urllib.request.build_opener', return_value=Opener(Response([rel]))), \
                  patch.object(u, 'project_lock', return_value=contextlib.nullcontext()), \
-                 patch.object(u.os, 'geteuid', return_value=0), \
+                 patch.object(u, 'require_local_host_root'), \
                  patch.object(sys, 'argv', ['update.py','--state-dir',str(root),'check']), \
                  contextlib.redirect_stdout(writer):
                 self.assertEqual(u.main(), 0)

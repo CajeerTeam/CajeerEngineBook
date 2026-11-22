@@ -72,6 +72,18 @@ class ProductionUpdate(unittest.TestCase):
         # Reaping may be delayed by PID 1; zombie is dead and cannot run code.
         self.assertTrue(not proc_stat.exists() or proc_stat.read_text().rsplit(')', 1)[1].split()[0] == 'Z')
 
+    def test_timeout_escalates_to_kill_for_sigterm_resistant_descendant(self):
+        child_pid = self.root / 'stubborn.pid'
+        descendant = 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(30)'
+        code = ('import subprocess,sys; '
+                f'p=subprocess.Popen([sys.executable,"-c",{descendant!r}]); '
+                f'open({str(child_pid)!r},"w").write(str(p.pid))')
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.run_child(code, timeout=2.0)
+        pid = int(child_pid.read_text())
+        proc_stat = Path(f'/proc/{pid}/stat')
+        self.assertTrue(not proc_stat.exists() or proc_stat.read_text().rsplit(')', 1)[1].split()[0] == 'Z')
+
     def test_concurrent_pipe_activity_does_not_deadlock(self):
         code = 'import os; [ (os.write(1,b"x"*2048),os.write(2,b"y"*2048)) for _ in range(50) ]'
         self.assertEqual(self.run_child(code), 0)

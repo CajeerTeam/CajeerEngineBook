@@ -90,6 +90,48 @@ def write_json(path, obj):
         if os.path.exists(tmp): os.unlink(tmp)
 
 
+def _group_has_live_processes(pgid):
+    """Return whether a Linux process group still has executable processes.
+
+    Grandchildren may outlive the direct subprocess and keep stdout/stderr open.
+    Waiting for Popen alone does not guarantee their termination. Ignore
+    zombies; they are already stopped, and only their parent can reap them.
+    """
+    with os.scandir('/proc') as processes:
+        for entry in processes:
+            if not entry.name.isdecimal():
+                continue
+            try:
+                # /proc/PID/stat has a parenthesized comm that may contain spaces.
+                fields = (Path(entry.path) / 'stat').read_text().rsplit(')', 1)[1].split()
+                if int(fields[2]) == pgid and fields[0] not in ('Z', 'X'):
+                    return True
+            except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, IndexError):
+                continue  # Process exited while we were inspecting /proc.
+    return False
+
+
+def _wait_for_process_group(pgid, duration):
+    """Wait for descendants too, not just the already-reaped leader."""
+    deadline = time.monotonic() + duration
+    while _group_has_live_processes(pgid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+def _terminate_updater_group(process):
+    pgid = process.pid  # start_new_session=True creates a distinct process group.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pgid, signal.SIGTERM)
+    if not _wait_for_process_group(pgid, 0.5):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGKILL)
+        require(_wait_for_process_group(pgid, 2), 'Updater process group did not terminate')
+    process.wait(timeout=2)
+
+
 def run_bounded_updater(args, output, error, timeout):
     """Run the trusted updater without permitting unbounded child output or orphans.
 
@@ -136,17 +178,9 @@ def run_bounded_updater(args, output, error, timeout):
         return rc
     except BaseException:
         if process is not None:
-            # The direct child may exit while a descendant keeps stdout/stderr
-            # open. Terminate the *group* even if process.poll() is non-None.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
+            # Children in our isolated session may survive the direct leader.
+            # Do not return to the agent until their process group is quiescent.
+            _terminate_updater_group(process)
         raise
     finally:
         selector.close()
