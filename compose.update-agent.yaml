@@ -1,0 +1,13 @@
+# Opt-in, operator-managed host update broker. Never mount Docker Engine into Book.
+# Requires root-hosted /run/cajeerbook/agent.sock (group UID/GID 33 access).
+services:
+  book:
+    environment:
+      BOOK_UPDATE_AGENT_SOCKET: /run/book-update/agent.sock
+    volumes:
+      - type: bind
+        source: /run/cajeerbook
+        target: /run/book-update
+        read_only: true
+        bind:
+          create_host_path: false

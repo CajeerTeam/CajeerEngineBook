@@ -44,7 +44,12 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.2** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.4** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+
+
+### Secure Update Execution (1.1.4)
+
+Book can now perform owner-confirmed signed GitHub Release `fetch`, `preflight` and `apply` through a separate root-owned Linux Unix-socket broker. The PHP application receives no Docker permissions; host-side `update.py` remains responsible for signed ZIP/OCI checks and backup/recovery. A one-use root-issued maintenance permit and external-writer fence are mandatory before activation. Enable the optional signed Compose socket overlay only after operator-controlled topology adoption. See [Secure Update Execution](docs/admin/update-execution-114.md) for deployment, preflight, approval, recovery and tests. No unattended upgrades or automatic schema/infra migration are enabled in this version.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

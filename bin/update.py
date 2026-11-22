@@ -2,6 +2,7 @@
 """Book secure update manager. Run from a trusted, operator-owned checkout on the Docker host."""
 import argparse
 import contextlib
+import copy
 import fcntl
 import hashlib
 import importlib.util
@@ -29,7 +30,7 @@ ROLES = {'book', 'worker', 'backup', 'domain-check', 'diagnostics', 'pitr-sideca
 INFRA = {'postgres', 'redis'}
 SERVICES = ROLES | INFRA | {'proxy', 'prometheus', 'alertmanager', 'grafana'}
 OVERLAYS = ('postgres', 'redis', 'redis-sentinel', 'distributed', 'domains', 'backup', 'enterprise',
-            'observability', 'security', 'shared-storage', 'pitr')
+            'observability', 'security', 'shared-storage', 'pitr', 'update-agent')
 ALL_FILES = release.FILES | {'release.json', 'release.json.sig', 'source.zip.sig', 'deployment.zip.sig'}
 def all_files(v):
     return release.files_for(v) | {'release.json', 'release.json.sig', 'source.zip.sig', 'deployment.zip.sig'}
@@ -497,6 +498,43 @@ class Manager:
         s={'format':1,'config':cfg,'key':hashlib.sha256(der).hexdigest(),'current':r,'previous':None,'highest':r,'pending':None}
         self.save(s); return s
 
+    def enable_agent_overlay(self, s):
+        """Operator-only adoption of the signed, tightly scoped socket mount after deployment.
+
+        Requires the operator to recreate the Book container with the new signed
+        overlay first. The new live topology must match *only* the expected mount
+        and environment addition, then is re-pinned in the durable updater state.
+        """
+        require(s['pending'] is None, 'Recover pending update before topology adoption')
+        oldcfg=s['config']
+        require('update-agent' not in oldcfg['overlays'], 'Update agent overlay is already enrolled')
+        cfg=copy.deepcopy(oldcfg)
+        cfg['overlays'].append('update-agent')
+        old, om=self.load(oldcfg,s['current'])
+        new, nm=self.load(cfg,s['current'])
+        before=normalized(old.config(om),old.tree)
+        after=new.config(nm)
+        candidate=normalized(after,new.tree)
+        require(set(candidate['services'])==set(before['services']) and 'book' in candidate['services'], 'Overlay changed service topology')
+        base=copy.deepcopy(candidate)
+        book=base['services']['book']
+        env=book.get('environment',{})
+        require(env.pop('BOOK_UPDATE_AGENT_SOCKET',None)=='/run/book-update/agent.sock', 'Unexpected agent socket setting')
+        mounts=book.get('volumes',[])
+        added=[v for v in mounts if v.get('target')=='/run/book-update']
+        require(len(added)==1 and added[0].get('type')=='bind' and added[0].get('source')=='/run/cajeerbook'
+                and added[0].get('read_only') is True, 'Unexpected agent socket mount')
+        book['volumes']=[v for v in mounts if v.get('target')!='/run/book-update']
+        require(base==before, 'Agent overlay changed unrelated runtime settings')
+        require(Path('/run/cajeerbook/agent.sock').is_socket(), 'Trusted host agent socket is not running')
+        # Recreated containers must already run the original signed image and
+        # exactly the newly permitted bind/environment. No mixed topology accepted.
+        new.inventory(after)
+        new.check(nm,'postgres' in after['services'])
+        s['config']=cfg
+        self.save(s)
+        return {'status':'adopted','overlay':'update-agent','current':s['current']['version']}
+
     def reconcile_env(self,s):
         require(s['pending'] is None,'Restore the original environment before recovering a pending update')
         cfg=s['config']; c,m=self.load(cfg,s['current']); conf=c.config(m); c.inventory(conf); c.check(m,'postgres' in conf['services'])
@@ -611,7 +649,7 @@ def main():
     check=sub.add_parser('check', help='Discover signed GitHub Releases without installing them')
     check.add_argument('--channel', choices=('stable', 'beta'), default='stable')
     check.add_argument('--refresh', action='store_true', help='Ignore cached GitHub ETags')
-    sub.add_parser('status'); sub.add_parser('reconcile-env')
+    sub.add_parser('status'); sub.add_parser('reconcile-env'); sub.add_parser('enable-agent-overlay')
     args=p.parse_args()
     try:
         os.umask(0o077)
@@ -636,6 +674,7 @@ def main():
                         discovery.cache_save(mgr.root,new_cache)
                     elif args.action=='status': result=dict(s,env_changed=release.sha(private_file(Path(s['config']['env'])))!=s['config']['env_sha'])
                     elif args.action=='reconcile-env': result=mgr.reconcile_env(s)
+                    elif args.action=='enable-agent-overlay': result=mgr.enable_agent_overlay(s)
                     elif args.action=='recover': result=mgr.recover(s,args.accept_data_compatibility)
                     elif args.action=='rollback':
                         require(args.accept_data_compatibility and s['previous'] is not None,'Rollback requires explicit data compatibility acknowledgement and a previous release')

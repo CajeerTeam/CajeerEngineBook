@@ -1,3 +1,11 @@
+## 1.1.4 — Secure Update Execution (2026-11-22)
+
+- Implement a real root-owned Linux Unix-socket broker (`bin/update-agent.py`) with `SO_PEERCRED` authorization, a fixed allowlist of `status/fetch/preflight/apply`, detached update execution and root-private fsynced operation receipts. No application PHP code launches Docker, passes host command strings or reads privileged files.
+- Bind updates to the exact candidate's version, commit and signed `release.json` SHA-256. Host-side `bin/update.py` re-verifies full signed source/deployment ZIP, OCI images and topology. Replayed, concurrent, mismatched, stale or out-of-order operations fail closed.
+- Require operator-fenced maintenance and a one-use root-issued candidate-bound permit before offline activation; block unattended schema/topology changes and preserve the existing backup, migration, health and recovery flow. Provide root-only reconciliation after interrupted jobs and refuse pending migrations.
+- Wire the existing installation-owner-only `/admin/updates` page to bounded Unix-socket RPC, staged execution, status and audit with CSRF/session protection. Add a signed opt-in Compose overlay, dedicated systemd host service, operator adoption command and explicit runbook.
+- Add privileged socket/UID/fault-injection and PHP controller tests to independent security/native/publishing CI. **No claim of actual production Docker/SQL/GitHub release acceptance is made by these unit tests alone.** PostgreSQL schema remains 7; embedded CajeerEngine remains 2.1.0.
+
 ## 1.1.3 — Admin Update Center (2026-11-22)
 
 - Add the live installation-owner-only `/admin/updates` route with CSRF/Origin protection, a durable per-owner request limiter, signed stable-release discovery and manual candidate preparation. The UI shows release version, commit, changelog, database schema and cryptographically authenticated manifest digest. Workspace administrators are not installation owners.
