@@ -4,6 +4,8 @@ namespace CajeerBook;
 require_once __DIR__.'/Observability.php';
 require_once __DIR__.'/MintlifyImport.php';
 require_once __DIR__.'/MintlifyMdx.php';
+require_once __DIR__.'/DocusaurusImport.php';
+require_once __DIR__.'/DocusaurusMdx.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -126,21 +128,31 @@ REGEX;
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
         // Sign the original inputs, including Mintlify navigation/redirect configuration.
         foreach($files as $source=>$file){ImportFiles::path((string)$source);if(!is_file($file))throw new \InvalidArgumentException('Import source missing');$hashes[(string)$source]=Files::hash($file);}
-        $mint=MintlifyImport::prepare($files);$files=$mint['files'];$warnings=$mint['warnings'];
-        $navFiles=[];foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
+        $mint=MintlifyImport::prepare($files);
+        $docus=$mint['mintlify']?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
+        $files=$mint['mintlify']?$mint['files']:$docus['files'];
+        $warnings=$mint['mintlify']?$mint['warnings']:$docus['warnings'];
+        $navFiles=$docus['docusaurus']?$docus['nav']:[];foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
         
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
         foreach($db['media']??[] as $item)$total+=$item['size'];
         foreach($files as $path=>$file){
             $path=(string)$path;ImportFiles::path($path);$size=filesize($file);if($size===false||$size>MediaStore::MAX_FILE||($sourceBytes+=$size)>ImportFiles::MAX_TOTAL)throw new \InvalidArgumentException('Import exceeds source size limit');$hashes[$path]=Files::hash($file);
-            if(preg_match('/\.(md|markdown)$/i',$path)){
+            if(preg_match('/\.(md|mdx|markdown)$/i',$path)){
                 if($size>Markdown::MAX_BYTES)throw new \InvalidArgumentException('Markdown exceeds 256 KiB: '.$path);if(($markdownBytes+=$size)>8*1024*1024)throw new \InvalidArgumentException('Markdown import exceeds 8 MiB; split the import');
                 $source=(string)file_get_contents($file);$converted=[];
-                if($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
+                if($docus['docusaurus'])$source=DocusaurusMdx::convert($source,$converted);
+                elseif($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
                 foreach($converted as $warning){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many Mintlify conversion warnings');$warning['source']=$path;$warnings[]=$warning;}
                 $doc=self::document($source,$path,++$order*10);
+                $targetVersion=$version;
+                if($docus['docusaurus']){
+                    $sourcePage=$docus['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected Docusaurus document');
+                    $targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];$doc['locale']=$sourcePage['locale'];
+                    if($sourcePage['title']!==null&&!str_contains($source,'title:'))$doc['title']=$sourcePage['title'];
+                }
                 if(isset($navFiles[$path])){$doc['order']=$navFiles[$path]['order'];if($navFiles[$path]['section']!=='')$doc['section']=$navFiles[$path]['section'];$doc['explicit_order']=true;}
-                $key=BookStore::key($book,$version,$doc['path']);
+                $key=BookStore::key($book,$targetVersion,$doc['path']);
                 if(isset($used[$key]))throw new \InvalidArgumentException('Multiple files map to the same page: '.$key);$used[$key]=true;$docs[$path]=['key'=>$key,'doc'=>$doc];
             }else{
                 $meta=MediaStore::inspect($file,basename($path));$folder=MediaStore::folder(dirname($path)==='.'?'':dirname($path));$id=null;
@@ -180,8 +192,22 @@ REGEX;
             }
             // An explicit front matter slug can affect Book's final URL, not its source path.
         }
+        // Map Docusaurus's static/ assets to public URLs without exposing source file paths.
+        if($docus['docusaurus'])foreach($docus['pages'] as $src=>$spec){
+            $target=$mapping[$src]??null;if($target===null)continue;
+            $route=$spec['source_route'];$lang=$spec['locale'];$ver=$spec['version'];
+            $base=($lang==='en'?'':'/'.$lang).'/docs/'.($ver===$version?'':$ver.'/');
+            foreach([$base.$route, ltrim($base.$route,'/'), '/'.$route] as $alias){
+                if($alias==='/'.$route&&($lang!=='en'||$ver!==$version))continue;
+                if(!isset($links[$alias]))$links[$alias]=$target;
+            }
+            if($route==='index'){$root=rtrim($base,'/');if(!isset($links[$root]))$links[$root]=$target;}
+        }
         $assetsLinks=$mediaMap;
-        foreach($mediaMap as $asset=>$id)if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
+        foreach($mediaMap as $asset=>$id){
+            if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
+            if($docus['docusaurus']&&str_starts_with($asset,'static/'))$assetsLinks[substr($asset,7)]=$id;
+        }
         $redirects=[];
         foreach($mint['redirects'] as $old=>$target){
             $source=MintlifyImport::find($target,$files);

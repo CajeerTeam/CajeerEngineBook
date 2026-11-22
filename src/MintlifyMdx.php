@@ -12,7 +12,7 @@ final class MintlifyMdx
         if(strlen($source)>Markdown::MAX_BYTES)throw new \InvalidArgumentException('MDX exceeds document size limit');
         [$head,$body]=self::frontmatter($source);
         // Executable MDX is intentionally not run or imported as code.
-        if(preg_match('/^\s*(?:import|export)\s+(?:[\w{*]|default)/m',$body))throw new \InvalidArgumentException('MDX imports/exports require a static Markdown version');
+        if(preg_match('/^\s*(?:import|export)\s+(?:[\w{*]|default)/m',self::withoutFences($body)))throw new \InvalidArgumentException('MDX imports/exports require a static Markdown version');
         if(preg_match('/\{\s*(?:\.\.\.|[a-zA-Z_$][\w$]*\s*(?:\(|\?|\.|\[))/',self::withoutFences($body)))throw new \InvalidArgumentException('Dynamic MDX expressions are not supported; export static content');
         $body=self::markup($body,$warnings);
         $result=$head.$body;

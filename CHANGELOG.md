@@ -1,3 +1,10 @@
+## 1.0.10 — Docusaurus documentation migration (2026-11-22)
+
+- Import static Docusaurus sidebar configurations (JSON, JS and TS static literals), category order, auto-generated sidebar entries and versioned sidebar snapshots as Book section/order metadata. Untrusted JavaScript is never evaluated.
+- Migrate `docs/`, `versioned_docs/version-X/`, and `i18n/<locale>/docusaurus-plugin-content-docs/` pages to independent Book versions and localized drafts, with validation of conflicts and rollback through the existing signed preview/apply mechanism.
+- Convert Docusaurus `:::` admonitions, static `Tabs`/`TabItem` and `Admonition` MDX into native renderable rich blocks; keep fenced code as code and refuse dynamic JSX/JavaScript. Correct `.mdx` import routing and a fenced-MDX false positive in 1.0.9.
+- Import validated media, rewrite Docusaurus local links and versioned URLs, extend supported document locale options, add policy and end-to-end CI tests and administrative runbook. No Book schema migration. Production requires a full Composer/ZIP/infrastructure release gate.
+
 # Changelog
 
 ## 1.0.9 — Mintlify documentation migration (2026-11-22)

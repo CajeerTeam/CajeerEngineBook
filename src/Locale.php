@@ -5,7 +5,7 @@ namespace CajeerBook;
 /** Document language and translation identity are persisted in ordinary page snapshots. */
 final class Locale
 {
-    public const LANGUAGES=['en'=>'English','ru'=>'Русский'];
+    public const LANGUAGES=['en'=>'English','ru'=>'Русский','de'=>'Deutsch','es'=>'Español','fr'=>'Français','it'=>'Italiano','pt'=>'Português','pt-BR'=>'Português (Brasil)','uk'=>'Українська','pl'=>'Polski','tr'=>'Türkçe','ja'=>'日本語','ko'=>'한국어','zh-Hans'=>'简体中文','zh-Hant'=>'繁體中文'];
     private static string $ui='en';
     public static function valid(mixed $locale):bool{return is_string($locale)&&isset(self::LANGUAGES[$locale]);}
     public static function require(mixed $locale):string{if(!self::valid($locale))throw new \InvalidArgumentException('Unsupported document language.');return $locale;}

@@ -94,6 +94,8 @@
             "@php tests/import.php",
             "@php tests/mintlify-109.php",
             "@php tests/mintlify-109-integration.php",
+            "@php tests/docusaurus-110.php",
+            "@php tests/docusaurus-110-integration.php",
             "python3 tests/import-http.py",
             "@php tests/stable.php",
             "@php tests/installation.php",
