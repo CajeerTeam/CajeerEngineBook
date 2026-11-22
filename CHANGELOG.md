@@ -1,3 +1,9 @@
+## 1.0.13 — Fumadocs content collections / meta.json import (2026-11-22)
+
+- Extend the existing signed and transactional Studio import with static Fumadocs content collection detection, bounded `meta.json` navigation, nested folder groups, version-root folders, and language variants (`*.ru.mdx`, `meta.ru.json`, directory parser). Import document drafts into native Book versions, preserve local page links and media, and link translations to the English source when present.
+- Convert supported static Fumadocs Callout, Tabs/Tab, Cards/Card, Steps/Step, Accordions/Accordion and Image into Book Markdown/rich blocks. Preserve fenced examples. Reject dynamic JSX attributes, code imports, parametrized routes and executable frontmatter; warn about skipped source code and pages hidden by navigation.
+- Add autonomous converter/security tests and full ZIP → signed preview → apply → idempotency / locale / media integration regression to Composer CI. No PostgreSQL migration (schema remains 7); actual CI/infrastructure qualification is a separate deployment prerequisite.
+
 ## 1.0.12 — ReadMe Guides / API Reference / Recipes import (2026-11-22)
 
 - Extend Studio's real transactional import to recognize ReadMe branch ZIP and Git Sync layouts, including `docs/` Guides, `reference/` API reference pages, `recipes/`, and nested `_order.yaml` sidebar order. Preserve page metadata, group titles, local Markdown/MDX, section order, and supported uploaded attachments.

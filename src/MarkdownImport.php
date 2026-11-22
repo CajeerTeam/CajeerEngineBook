@@ -8,6 +8,8 @@ require_once __DIR__.'/DocusaurusImport.php';
 require_once __DIR__.'/DocusaurusMdx.php';
 require_once __DIR__.'/GitBookImport.php';
 require_once __DIR__.'/ReadMeImport.php';
+require_once __DIR__.'/FumadocsImport.php';
+require_once __DIR__.'/FumadocsMdx.php';
 require_once __DIR__.'/OpenApiDocument.php';
 require_once __DIR__.'/OpenApiReference.php';
 
@@ -134,14 +136,15 @@ REGEX;
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
         // Sign the original inputs, including Mintlify navigation/redirect configuration.
         foreach($files as $source=>$file){ImportFiles::path((string)$source);if(!is_file($file))throw new \InvalidArgumentException('Import source missing');$hashes[(string)$source]=Files::hash($file);}
-        $readme=ReadMeImport::prepare($files,$book,$version);
-        $gitbook=$readme['readme']?['gitbook'=>false,'files'=>$files,'pages'=>[],'nav'=>[],'warnings'=>[],'redirects'=>[],'books'=>[]]:GitBookImport::prepare($files,$book,$version);
-        $mint=($readme['readme']||$gitbook['gitbook'])?['mintlify'=>false,'files'=>$files,'nav'=>[],'redirects'=>[],'warnings'=>[]]:MintlifyImport::prepare($files);
-        $docus=($readme['readme']||$mint['mintlify']||$gitbook['gitbook'])?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
-        $files=$readme['readme']?$readme['files']:($gitbook['gitbook']?$gitbook['files']:($mint['mintlify']?$mint['files']:$docus['files']));
+        $fuma=FumadocsImport::prepare($files,$version);
+        $readme=$fuma['fumadocs']?['readme'=>false,'files'=>$files,'pages'=>[],'nav'=>[],'virtual'=>[],'warnings'=>[],'redirects'=>[]]:ReadMeImport::prepare($files,$book,$version);
+        $gitbook=($fuma['fumadocs']||$readme['readme'])?['gitbook'=>false,'files'=>$files,'pages'=>[],'nav'=>[],'warnings'=>[],'redirects'=>[],'books'=>[]]:GitBookImport::prepare($files,$book,$version);
+        $mint=($fuma['fumadocs']||$readme['readme']||$gitbook['gitbook'])?['mintlify'=>false,'files'=>$files,'nav'=>[],'redirects'=>[],'warnings'=>[]]:MintlifyImport::prepare($files);
+        $docus=($fuma['fumadocs']||$readme['readme']||$mint['mintlify']||$gitbook['gitbook'])?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
+        $files=$fuma['fumadocs']?$fuma['files']:($readme['readme']?$readme['files']:($gitbook['gitbook']?$gitbook['files']:($mint['mintlify']?$mint['files']:$docus['files'])));
         if($readme['readme'])foreach($readme['virtual'] as $virtualPath=>$sourceText)$files[$virtualPath]=null;
-        $warnings=$readme['readme']?$readme['warnings']:($gitbook['gitbook']?$gitbook['warnings']:($mint['mintlify']?$mint['warnings']:$docus['warnings']));
-        $navFiles=$readme['readme']?$readme['nav']:($gitbook['gitbook']?$gitbook['nav']:($docus['docusaurus']?$docus['nav']:[]));foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
+        $warnings=$fuma['fumadocs']?$fuma['warnings']:($readme['readme']?$readme['warnings']:($gitbook['gitbook']?$gitbook['warnings']:($mint['mintlify']?$mint['warnings']:$docus['warnings'])));
+        $navFiles=$fuma['fumadocs']?$fuma['nav']:($readme['readme']?$readme['nav']:($gitbook['gitbook']?$gitbook['nav']:($docus['docusaurus']?$docus['nav']:[])));foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
         
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
         foreach($db['media']??[] as $item)$total+=$item['size'];
@@ -150,13 +153,18 @@ REGEX;
             if(preg_match('/\.(md|mdx|markdown)$/i',$path)){
                 if($size>Markdown::MAX_BYTES)throw new \InvalidArgumentException('Markdown exceeds 256 KiB: '.$path);if(($markdownBytes+=$size)>8*1024*1024)throw new \InvalidArgumentException('Markdown import exceeds 8 MiB; split the import');
                 $source=$virtual??(string)file_get_contents($file);$converted=[];
-                if($readme['readme']&&$virtual===null)$source=ReadMeImport::convert($source,$path,$converted,$readme['pages'][$path]['api_target']??null);
+                if($fuma['fumadocs'])$source=FumadocsMdx::convert($source,$converted);
+                elseif($readme['readme']&&$virtual===null)$source=ReadMeImport::convert($source,$path,$converted,$readme['pages'][$path]['api_target']??null);
                 elseif($gitbook['gitbook'])$source=GitBookImport::convert($source,$path,$gitbook['original'],$converted);
                 elseif($docus['docusaurus'])$source=DocusaurusMdx::convert($source,$converted);
                 elseif($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
                 foreach($converted as $warning){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many Mintlify conversion warnings');$warning['source']=$path;$warnings[]=$warning;}
                 $doc=self::document($source,$path,++$order*10);
                 $targetVersion=$version;$targetBook=$book;
+                if($fuma['fumadocs']){
+                    $spec=$fuma['pages'][$path]??null;if($spec===null)throw new \InvalidArgumentException('Unexpected Fumadocs page');
+                    $targetVersion=$spec['version'];$doc['path']=$spec['route'];$doc['locale']=$spec['locale'];
+                }
                 if($readme['readme']){
                     $sourcePage=$readme['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected ReadMe page');
                     $targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];
@@ -209,6 +217,19 @@ REGEX;
             $route=$page['route'];$links['/'.$route]=$mapping[$source];$links[$route]=$mapping[$source];
             if(str_starts_with($route,'guides/'))$links['/docs/'.substr($route,7)]=$mapping[$source];
         }
+        if($fuma['fumadocs']){
+            $canonicalAliases=[];
+            foreach($fuma['pages'] as $source=>$spec)if(isset($mapping[$source])){
+                $target=$mapping[$source];$prefix=$spec['locale']==='en'?'':'/'.$spec['locale'];
+                $route=$spec['source_route'];
+                $links[$prefix.'/docs/'.($route==='index'?'':$route)]=$target;
+                $links[$prefix.'/docs/'.$route]=$target;
+                $alias=$prefix.'/docs/'.($spec['canonical']==='index'?'':$spec['canonical']);
+                $canonicalAliases[$alias][$target]=true;
+            }
+            // Unqualified version-root aliases are only safe when unambiguous.
+            foreach($canonicalAliases as $alias=>$targets)if(count($targets)===1)$links[$alias]=array_key_first($targets);
+        }
         foreach($mapping as $source=>$target){
             $route=preg_replace('/\.(?:md|mdx|markdown)$/i','',$source);
             foreach([$route, '/'.$route] as $alias)if(!isset($links[$alias]))$links[$alias]=$target;
@@ -239,6 +260,9 @@ REGEX;
         }
         $assetsLinks=$mediaMap;
         foreach($mediaMap as $asset=>$id){
+            if($fuma['fumadocs']&&str_starts_with($asset,$fuma['repo'].'public/')){
+                $short=substr($asset,strlen($fuma['repo'].'public/'));$assetsLinks['/'.$short]=$id;$assetsLinks[$short]=$id;
+            }
             if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
             if($readme['readme']){foreach(['images/','assets/','uploads/'] as $prefix)if(str_contains($asset,'/'.$prefix))$assetsLinks['/'.substr($asset,strpos($asset,'/'.$prefix)+1)]=$id;}
             if($docus['docusaurus']&&str_starts_with($asset,'static/'))$assetsLinks[substr($asset,7)]=$id;
@@ -261,6 +285,13 @@ REGEX;
         }
         foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){
                 $localLinks=$links;$localAssets=$assetsLinks;
+                if($fuma['fumadocs']){
+                    $spec=$fuma['pages'][$path];$locale=$spec['locale'];
+                    if($locale!=='en')foreach($fuma['pages'] as $other=>$page)if($page['locale']===$locale&&isset($mapping[$other])){
+                        $localLinks['/docs/'.$page['source_route']]=$mapping[$other];
+                        if($page['source_route']==='index')$localLinks['/docs/']=$mapping[$other];
+                    }
+                }
                 if($gitbook['gitbook']){
                     $root=$gitbook['pages'][$path]['root'];
                     foreach($mapping as $name=>$dest)if(str_starts_with($name,$root))$localLinks['/'.substr($name,strlen($root))]=$dest;
@@ -271,7 +302,16 @@ REGEX;
                 }
                 $d['doc']['body']=self::rewrite($d['doc']['body'],$path,$localLinks,$localAssets,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 if($d['action']==='update'){$current=$db['pages'][$d['key']]['draft'];if(isset($d['doc']['locale'])&&$d['doc']['locale']!==Locale::language($current))throw new \DomainException('Import language differs from existing document: '.$d['key']);unset($current['updated'],$current['locale'],$current['translation_group'],$current['source_digest']);$candidate=$d['doc'];unset($candidate['path'],$candidate['explicit_order'],$candidate['locale']);$current['media']??=[];ksort($current);ksort($candidate);if($current===$candidate)$d['action']='unchanged';}}foreach(array_keys($w) as $url){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many unresolved links; split import');$warnings[]=['source'=>$path,'url'=>$url];}$rows[]=['source'=>$path,'target'=>$d['key'],'action'=>$d['action'],'title'=>$d['doc']['title']];}unset($d);
-        return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes,'redirects'=>$redirects,'books'=>$gitbook['books']];
+        $translations=[];
+        if($fuma['fumadocs']){
+            $english=[];foreach($fuma['pages'] as $source=>$spec)if($spec['locale']==='en'&&isset($mapping[$source]))$english[$spec['version'].'|'.$spec['canonical']]=$mapping[$source];
+            foreach($fuma['pages'] as $source=>$spec)if($spec['locale']!=='en'&&isset($mapping[$source])){
+                $main=$english[$spec['version'].'|'.$spec['canonical']]??null;
+                if($main!==null)$translations[$mapping[$source]]=$main;
+                elseif(count($warnings)<1000)$warnings[]=['source'=>$source,'url'=>'Translation has no English source; imported as an independent draft'];
+            }
+        }
+        return ['translations'=>$translations,'docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes,'redirects'=>$redirects,'books'=>$gitbook['books']];
     }
     private static function token(array $db,array $plan,string $book,string $version,string $strategy,string $secret,int $time):string{
         return $time.'.'.hash_hmac('sha256',json_encode([$time,WorkspaceUrls::prefix(),$book,$version,$strategy,$plan['hashes'],hash('sha256',json_encode($db,JSON_THROW_ON_ERROR))],JSON_THROW_ON_ERROR),$secret);
@@ -317,6 +357,18 @@ REGEX;
             foreach($p['moves']??[] as $dest=>$from){$entry=$db['pages'][$from]??null;if(!$entry||isset($db['pages'][$dest])||PageTree::scope($dest)!==PageTree::scope($from)||PageTree::reserved($db,$dest,PageTree::id($from,$entry)))throw new \DomainException('Import move no longer available');$entry['id']=PageTree::id($from,$entry);if($entry['published']!==null)$entry['published_key']=PageTree::publicKey($from,$entry);PageTree::retire($db,$from,$entry['id']);unset($db['pages'][$from]);$db['pages'][$dest]=$entry;}
             foreach($p['docs'] as $d){if(in_array($d['action'],['skip','unchanged'],true))continue;$key=$d['key'];$draft=$d['doc'];unset($draft['path'],$draft['explicit_order']);$draft['updated']=gmdate('c');foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 $entry=$db['pages'][$key]??['revision'=>0,'published'=>null,'id'=>bin2hex(random_bytes(16))];$entry['id']??=PageTree::id($key,$entry);$metadata=Locale::metadata($entry['draft']??[]);if(isset($entry['draft'])){if(isset($draft['locale'])&&$draft['locale']!==Locale::language($entry['draft']))throw new \DomainException('Import language differs from existing document: '.$key);unset($draft['locale']);}$entry['draft']=$draft+$metadata;$entry['revision']++;$db['pages'][$key]=$entry;
+            }
+            $importActions=[];foreach($p['docs'] as $d)$importActions[$d['key']]=$d['action'];
+            foreach($p['translations']??[] as $target=>$source){
+                if(in_array($importActions[$target]??'', ['skip','unchanged'],true))continue;
+                if(!isset($db['pages'][$target],$db['pages'][$source]))throw new \DomainException('Fumadocs translation source is not available');
+                $main=$db['pages'][$source];$localized=&$db['pages'][$target];
+                $sourceId=PageTree::id($source,$main);
+                if(isset($main['draft']['translation_group'])||PageTree::scope($target)!==PageTree::scope($source))throw new \DomainException('Fumadocs translation source is invalid');
+                if(isset($localized['draft']['translation_group'])&&$localized['draft']['translation_group']!==$sourceId)throw new \DomainException('Fumadocs translation is linked to another source');
+                $localized['draft']['translation_group']=$sourceId;
+                $localized['draft']['source_digest']=Locale::digest($main['draft']);
+                unset($localized);
             }
             foreach($p['redirects']??[] as $alias=>$target){
                 if(!isset($db['pages'][$target])||isset($db['pages'][$alias]))throw new \DomainException('Mintlify redirect conflicts with existing page');
