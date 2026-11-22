@@ -66,6 +66,8 @@
             "@php tests/search-policy.php",
             "@php tests/search-107.php",
             "@php tests/chat-108.php",
+            "@php tests/editor-ai-114.php",
+            "python3 tests/editor-ai-114-http.py",
             "@php tests/chat-108-access.php",
             "python3 tests/chat-108-http.py",
             "@php tests/multilingual.php",

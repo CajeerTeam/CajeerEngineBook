@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.0.13
+# Administrator handbook — CajeerEngine Book 1.0.14
 
 **Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -19,6 +19,7 @@
 | Workspace analytics and schema 5 migration | [Analytics, dashboards and vendor integrations](analytics.md) |
 | Documentation embeddings, hybrid search and schema 6 | [Semantic search and indexing](search-embeddings.md) |
 | OpenAI documentation chat, SSE, sources and schema 7 quotas | [Documentation chat](documentation-chat.md) |
+| Editor AI, coverage analysis, migration errors and review-bound fixes | [Editor AI assistant](editor-ai.md) |
 | Import Mintlify docs.json/mint.json, MDX and media into drafts | [Mintlify migration guide](mintlify-import.md) |
 | Import Docusaurus sidebars, versions, languages, admonitions, MDX and media | [Docusaurus migration guide](docusaurus-import.md) |
 | Migrate GitBook Spaces, pages, Git Sync exports, API content, navigation and attachments | [GitBook migration guide](gitbook-import.md) |

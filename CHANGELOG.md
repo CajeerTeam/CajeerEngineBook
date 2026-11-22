@@ -1,3 +1,9 @@
+## 1.0.14 — Editor AI assistant, coverage and review-bound corrections (2026-11-22)
+
+- Add the opt-in Studio AI assistant using real OpenAI Responses SSE transport: bounded coverage analysis of documentation excerpts, diagnosis of pasted migration/import errors, and complete Markdown suggestions for saved pages. No automatic SQL execution, draft write or publication occurs during generation.
+- Sign review proposals using a session- and actor-bound HMAC with ten-minute expiry, then atomically save the corrected draft and create an independent review request. Reject stale revisions, foreign reviews, invalid media and reviewer self-approval. Require reviewed publication for AI-assisted drafts even when direct publication is otherwise allowed.
+- Reuse existing Workspace authorization, CSRF, daily request/token quotas, revision history, file and PostgreSQL transactions; release the identity lock before slow external model calls. Render all model output as escaped text. Add regression tests and operator documentation. PostgreSQL schema remains 7; real provider and full deployment qualification are required.
+
 ## 1.0.13 — Fumadocs content collections / meta.json import (2026-11-22)
 
 - Extend the existing signed and transactional Studio import with static Fumadocs content collection detection, bounded `meta.json` navigation, nested folder groups, version-root folders, and language variants (`*.ru.mdx`, `meta.ru.json`, directory parser). Import document drafts into native Book versions, preserve local page links and media, and link translations to the English source when present.

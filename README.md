@@ -1,3 +1,7 @@
+### Editor AI Assistant (1.0.14)
+
+Studio now includes an opt-in editor assistant for documentation gap analysis, migration/import error explanations and suggested Markdown corrections. Suggestions are previewed, signed, saved atomically with an independent review request, and never auto-published. Configure `BOOK_EDITOR_AI_ENABLED=1` and the server-side `BOOK_CHAT_API_KEY`. See the [editor AI guide](docs/admin/editor-ai.md) for external data disclosure, quotas, permissions and qualification.
+
 ### Fumadocs content collections and MDX migration (1.0.13)
 
 Import a Fumadocs project ZIP or repository directory through **Studio → Import documentation**. The importer reads `content/docs/` (Fumadocs MDX or Content Collections), `meta.json`, `meta.<locale>.json`, Markdown/MDX and supported local `public/` media, retaining page-tree order, version roots and localized drafts. It converts static Callout, Tabs, Steps, Cards and Accordions to Book rich blocks; JavaScript, React components, dynamic routes and executable MDX are never run. Every change uses the existing signed `preview → apply` transaction with no automatic publication; Book access policies must be configured separately. See [Fumadocs migration](docs/admin/fumadocs-import.md). SQL schema remains 7.
@@ -24,7 +28,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.13** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.14** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

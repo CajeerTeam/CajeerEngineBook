@@ -61,6 +61,8 @@ final class App {
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/webhooks/(github|gitlab)\z~D',$path,$hook)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->receiveWebhook($hook);return;}
             if($method==='POST'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/playground\z~D',$path,$playground)){$this->playgroundProxy($playground);return;}
+            // Run slow external AI calls after releasing the identity/workspace registry lock.
+            if($method==='POST'&&in_array($_POST['action']??null,['gaps','migration','suggest'],true)&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/assistant\z~D',$path,$assistant)){$this->editorAiExternal($assistant);return;}
             if($method==='POST'&&($_POST['action']??null)==='git-preview'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/openapi\z~D',$path,$git)){$this->githubPull($git,true);return;}
             if($method==='POST'&&in_array($_POST['action']??null,['preview','apply'],true)&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/studio/github\z~D',$path,$git)){$this->githubPull($git);return;}
             if(str_starts_with($path,'/w/')){
@@ -532,6 +534,64 @@ final class App {
         if(is_string($q)&&$q!==''&&!preg_match('/[\x00-\x20\x7f]/',$q))$path.='?'.$q;
         header('Cache-Control: private, no-store');header('Location: '.WorkspaceUrls::url($path),true,308);
     }
+    private function editorAiPost(string $csrf,array $identity):void {
+            $str=static fn(string $k):string=>is_string($_POST[$k]??null)?$_POST[$k]:'';
+            $actor=$identity['user'];$users=$identity['review_users']??[];
+            $view=null;$notice='';$query=['page'=>$str('page')];
+            try{
+                $action=$str('action');
+                if(in_array($action,['gaps','migration','suggest'],true)&&EditorAssistant::enabled()){
+                    $prefix=WorkspaceUrls::prefix();$scope='legacy';
+                    if(preg_match('~\A/w/([a-f0-9]{32})/([a-f0-9]{32})\z~D',$prefix,$match))$scope=$match[1].'/'.$match[2];
+                    $estimated=10000+strlen($str('error'))+strlen($str('instruction'));
+                    if($action==='suggest'){
+                        $page=$str('page');$current=$this->store->read()['pages'][$page]['draft']['body']??'';
+                        if(is_string($current))$estimated+=strlen($current);
+                    }
+                    if(!ChatQuota::reserve($this->installationDir,$scope,ChatQuota::identity('editor:'.$actor['id']),min(50000,$estimated)))throw new \DomainException('Daily editor AI quota exhausted; try again tomorrow.');
+                }
+                if($action==='gaps'){$data=EditorAssistant::analyzeGaps($this->store->read(),$str('scope'));$view=['type'=>'gaps']+$data;}
+                elseif($action==='migration'){$view=['type'=>'migration','answer'=>EditorAssistant::explainMigration($str('error'))];}
+                elseif($action==='suggest'){
+                    $p=EditorAssistant::suggest($this->store->read(),$str('page'),$str('instruction'));
+                    $secret=MarkdownImport::previewSecret($this->installationDir,$csrf);
+                    $view=['type'=>'suggest','proposal'=>$p,'sealed'=>EditorAssistant::seal($p,$secret,$actor['id'])];
+                }elseif($action==='submit'){
+                    if(!EditorAssistant::enabled())throw new \DomainException('Editor AI is disabled.');
+                    $secret=MarkdownImport::previewSecret($this->installationDir,$csrf);
+                    $p=EditorAssistant::unseal($str('payload'),$str('signature'),$secret,$actor['id']);
+                    $id=$this->store->submitAiProposal($p,$actor,$users,$str('reviewer'));
+                    header('Location: '.WorkspaceUrls::url('/studio/reviews?id='.$id),true,303);return;
+                }else throw new \InvalidArgumentException('Unknown editor AI action.');
+            }catch(OrganizationAccessException|\InvalidArgumentException|\DomainException|\JsonException $e){
+                http_response_code($e instanceof OrganizationAccessException?403:($e instanceof \DomainException?409:422));$notice=$e->getMessage();
+            }catch(\RuntimeException $e){
+                Observability::log('editor_ai.failure',['error_type'=>get_class($e)]);http_response_code(502);$notice='Editor AI request failed. Check OpenAI configuration and retry.';
+            }
+            $this->page('Editor AI Assistant',EditorAssistantView::render($this->store->read(),$csrf,$actor,$users,$query,$view,$notice));return;
+    }
+    private function editorAiExternal(array $route):void {
+        header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
+        if(isset($route[1],$route[2])&&$route[1]!==''){
+            [$ctx,$w]=$this->identityStore->withWorkspace($this->auth->token(),$route[1],$route[2],static fn($ctx,$w)=>[$ctx,$w]);
+            if(!$w){http_response_code(404);return;}
+            $this->workspace=$w;$this->analyticsWorkspace=$w;$this->scopedIdentity=$ctx;$this->studioRole=$w['role'];$this->readerVisibility=Visibility::workspace($w);
+            WorkspaceUrls::set(Workspaces::prefix($w));$this->dataDir=Workspaces::directory($this->installationDir,$w);
+            $this->store=new BookStore($this->dataDir,false);$this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
+        }else{
+            [$ctx,$role,$w]=$this->identityStore->withLegacy($this->auth->token(),static fn($ctx,$role,$w,$visible)=>[$ctx,$role,$w]);
+            $this->scopedIdentity=$ctx;$this->studioRole=$role;$this->analyticsWorkspace=$w;$this->readerVisibility=$w?Visibility::workspace($w):'public';
+            if($w)$this->useLegacyStore();
+        }
+        try{
+            if(!$this->scopedIdentity){http_response_code(401);$this->page('Sign in required','<h1>Sign in required</h1>');return;}
+            if(!Permissions::studio($this->studioRole,'/studio/assistant','POST',is_string($_POST['action']??null)?$_POST['action']:'')){http_response_code(403);$this->page('Forbidden','<h1>Editor permission required</h1>');return;}
+            $csrf=$this->scopedIdentity['session']['csrf'];
+            if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);$this->page('Forbidden','<h1>Invalid CSRF token</h1>');return;}
+            if(empty($_POST)&&(int)($_SERVER['CONTENT_LENGTH']??0)>0){http_response_code(413);return;}
+            $this->editorAiPost($csrf,$this->scopedIdentity);
+        }finally{WorkspaceUrls::set('');}
+    }
     private function studio(string $path,string $method):void{
         header('Cache-Control: no-store');header('X-Robots-Tag: noindex');
         $identity=$this->scopedIdentity;
@@ -542,6 +602,7 @@ final class App {
         if($method==='POST'){
             if(empty($_POST) && ini_parse_quantity((string)ini_get('post_max_size'))>0 && (int)($_SERVER['CONTENT_LENGTH']??0)>ini_parse_quantity((string)ini_get('post_max_size'))){http_response_code(413);echo 'Request exceeds server upload limit';return;}
             if(!is_string($_POST['csrf']??null)||!hash_equals($csrf,$_POST['csrf'])){http_response_code(403);echo 'Invalid CSRF token';return;}
+            if($path==='/studio/assistant'){$this->editorAiPost($csrf,$identity);return;}
             if($path==='/studio/translations'){
                 $str=static fn($k)=>is_string($_POST[$k]??null)?$_POST[$k]:'';
                 try{
@@ -694,6 +755,7 @@ final class App {
             }
             if($action==='delete'||$action==='unpublish'){if(!preg_match('/\A[1-9][0-9]{0,17}\z/D',$str('revision')))throw new \InvalidArgumentException('Invalid revision');$this->store->remove($str('key'),(int)$str('revision'),$action==='unpublish');}elseif($action==='copy'){$this->store->copyVersion($str('book'),$str('from'),$str('to'));}else throw new \InvalidArgumentException('Unknown action');header('Location: '.WorkspaceUrls::url('/studio'),true,303);return;
         }
+        if($path==='/studio/assistant'){$this->page('Editor AI Assistant',EditorAssistantView::render($this->store->read(),$csrf,$identity['user'],$identity['review_users']??[],$_GET));return;}
         if($path==='/studio/translations'){$this->page(Locale::t('Translation Studio'),TranslationView::render($this->store->read(),$csrf,is_string($_GET['source']??null)?$_GET['source']:''));return;}
         if($path==='/studio/openapi'){
             $db=$this->store->read();if(isset($_GET['download'])){$scope=is_string($_GET['spec']??null)?$_GET['spec']:'';$revision=is_string($_GET['download'])?$_GET['download']:'';foreach($db['openapi'][$scope]['revisions']??[] as $r)if((string)$r['revision']===$revision){header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="openapi-source-'.$revision.'.json"');if($method!=='HEAD')echo $r['bundle'];return;}http_response_code(404);return;}
@@ -719,7 +781,7 @@ final class App {
         if(!$entry&&is_string($_GET['book']??null)&&isset(BookStore::books($db)[$_GET['book']]))$parts[0]=$_GET['book'];
         if(!$entry&&is_string($_GET['new_under']??null))$parts=PageTreeView::newUnder($db,$_GET['new_under'])??$parts;
         $field=fn($name,$label,$value,$readonly=false)=>'<label>'.self::t($label).'<input name="'.$name.'" value="'.self::e((string)$value).'" '.($readonly?'readonly':'').' ></label>';
-        $html='<div class="eyebrow">'.self::t('Studio').'</div><h1>'.self::t('Documentation Studio').'</h1><p>'.self::t('Drafts and published snapshots are separate.').'</p><div class="actions">'.self::link('/studio',Locale::t('New page')).self::link('/studio/translations',Locale::t('Translations')).self::link('/studio/import',Locale::t('Import Markdown / MDX')).self::link('/studio/openapi','OpenAPI Reference').self::link('/studio/git','Git Sync').($admin?self::link('/studio/automation','Webhooks & Automation').self::link('/studio/ci','CI/CD Publishing').self::link('/studio/search',Locale::t('Search Inspector')):'').self::link('/studio/team',Locale::t('Team dashboard')).self::link('/studio/books',Locale::t('Books')).($admin?self::link('/studio/static-export',Locale::t('Static Export')).self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media',Locale::t('Media library')).($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree',Locale::t('Page tree')).self::link('/studio/history',Locale::t('Revision history')).self::link('/studio/reviews',Locale::t('Reviews')).'</div>'.PageTreeView::list($db,$edit).'<p>'.self::t('Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.').'</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.self::t($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).'<label>'.self::t('Language').'<select name="locale"'.($entry?' disabled':'').'>'.Locale::options(Locale::language($p)).'</select></label>'.$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>'.self::t('Revision note (optional, manual save/publish)').'<input name="note" maxlength="500" placeholder="'.self::t('What changed?').'"></label><div class="actions"><button name="action" value="save">'.self::t('Save draft').'</button>'.($directPublish?'<button class="primary" name="action" value="publish">'.self::t('Publish').'</button>':'').'</div></form>';
+        $html='<div class="eyebrow">'.self::t('Studio').'</div><h1>'.self::t('Documentation Studio').'</h1><p>'.self::t('Drafts and published snapshots are separate.').'</p><div class="actions">'.self::link('/studio',Locale::t('New page')).self::link('/studio/translations',Locale::t('Translations')).self::link('/studio/assistant','AI Assistant').self::link('/studio/import',Locale::t('Import Markdown / MDX')).self::link('/studio/openapi','OpenAPI Reference').self::link('/studio/git','Git Sync').($admin?self::link('/studio/automation','Webhooks & Automation').self::link('/studio/ci','CI/CD Publishing').self::link('/studio/search',Locale::t('Search Inspector')):'').self::link('/studio/team',Locale::t('Team dashboard')).self::link('/studio/books',Locale::t('Books')).($admin?self::link('/studio/static-export',Locale::t('Static Export')).self::link('/studio/export','Download JSON backup'):'').self::link('/studio/media',Locale::t('Media library')).($admin?self::link('/studio/media/backup','Content backup (.tar)'):'').self::link('/studio/tree',Locale::t('Page tree')).self::link('/studio/history',Locale::t('Revision history')).self::link('/studio/reviews',Locale::t('Reviews')).'</div>'.PageTreeView::list($db,$edit).'<p>'.self::t('Move or rename pages in the page tree. Publish tree to apply navigation order and URLs.').'</p>'.(isset($p['link_base'])?'<p>Relative links in this moved or duplicated page resolve from <code>'.self::e($p['link_base']).'</code>. Use absolute documentation URLs for new links when needed.</p>':'').'<h2>'.self::t($entry?'Edit page':'Create page').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor" data-editor-form data-can-publish="'.($admin?'1':'0').'">'.$hidden.'<input type="hidden" name="revision" value="'.($entry['revision']??0).'">'.$field('book','Book slug',$parts[0],(bool)$entry).$field('version','Version',$parts[1],(bool)$entry).$field('path','Page path',$parts[2],(bool)$entry).'<label>'.self::t('Language').'<select name="locale"'.($entry?' disabled':'').'>'.Locale::options(Locale::language($p)).'</select></label>'.$field('title','Title',$p['title']).$field('section','Section',$p['section']).$field('order','Draft navigation order',$p['order']).StudioEditor::markup($p['body']).'<label>'.self::t('Revision note (optional, manual save/publish)').'<input name="note" maxlength="500" placeholder="'.self::t('What changed?').'"></label><div class="actions"><button name="action" value="save">'.self::t('Save draft').'</button>'.($directPublish?'<button class="primary" name="action" value="publish">'.self::t('Publish').'</button>':'').'</div></form>';
         if(ReviewWorkflow::required($db))$html.='<p class="tree-notice">Review required. Save the draft, then submit its saved revision for approval. '.self::link('/studio/reviews','Open reviews').'</p>';
         if($entry){$html.='<p>'.self::link('/studio/reviews?kind=page&target='.rawurlencode($edit),Locale::t('Review saved draft')).'</p><p data-page-history>'.self::link('/studio/history?page='.PageTree::id($edit,$entry),Locale::t('Page history')).'</p><div data-saved-preview><h2>'.self::t('Saved draft preview').'</h2><article>'.Markdown::render($p['body'],$edit,false,true,$p['link_base']??null,PageTree::linkMap($db))['html'].'</article></div>'.($admin?'<form method="post" action="'.WorkspaceUrls::url('/studio').'" class="actions" data-page-actions>'.$hidden.'<input type="hidden" name="key" value="'.self::e($edit).'"><input type="hidden" name="revision" value="'.$entry['revision'].'"><button name="action" value="unpublish">'.self::t('Unpublish').'</button><button name="action" value="delete" data-confirm="Delete this page? Retained history remains recoverable.">'.self::t('Delete').'</button></form>':'');}
         $html.='<h2>'.self::t('Copy version to drafts').'</h2><form method="post" action="'.WorkspaceUrls::url('/studio').'" class="editor">'.$hidden.$field('book','Book','handbook').$field('from','Source version','1.0').$field('to','New version','2.0').'<button name="action" value="copy">'.self::t('Copy published pages').'</button></form>';$this->page(Locale::t('Studio'),$html,BookStore::published($db));

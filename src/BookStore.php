@@ -231,6 +231,29 @@ final class BookStore {
             $result=['key'=>$key,'revision'=>$old['revision'],'published'=>$old['published']!==null,'id'=>$old['id'],'navigation_changed'=>$navigationChanged];
         },$publish?'publish':'save',RevisionHistory::note((string)($input['note']??''))); return $result;
     }
+    /** Commit an AI suggestion and its independent review in one content transaction. */
+    public function submitAiProposal(array $proposal,array $actor,array $users,string $reviewer):string {
+        $key=$proposal['key'];$markdown=$proposal['markdown'];$revision=$proposal['revision'];
+        if(!PageTree::validKey($key)||!is_string($markdown)||strlen($markdown)>262144)throw new \InvalidArgumentException('Invalid AI proposal.');
+        Markdown::validate($markdown);
+        $id='';$this->setHistoryActor($actor);
+        $this->change(function(array &$db)use($key,$markdown,$revision,$proposal,$actor,$users,$reviewer,&$id){
+            if(!Permissions::allows($users[$actor['id']]['role']??'none','edit'))throw new OrganizationAccessException('Editor permission required.');
+            $e=$db['pages'][$key]??null;
+            if(!$e||$e['revision']!==$revision||!hash_equals($proposal['body_digest'],hash('sha256',$e['draft']['body'])))throw new \DomainException('Page changed since the AI preview. Generate a new proposal.');
+            if($e['draft']['body']===$markdown)throw new \DomainException('No changes to review.');
+            $e['draft']['body']=$markdown;$e['draft']['updated']=gmdate('c');
+            $e['draft']['media']=Markdown::mediaReferences($markdown,$e['draft']['link_base']??$key);
+            foreach($e['draft']['media'] as $media)if(!isset($db['media'][$media]))throw new \InvalidArgumentException('Proposal refers to an unknown attachment.');
+            $e['revision']++;
+            $e['ai_review_required']=true;
+            $e['review_authors']=array_values(array_unique(array_merge($e['review_authors']??[] ,[$actor['id']])));
+            $db['pages'][$key]=$e;
+            // Failure to find a valid independent reviewer rolls back the draft as well.
+            $id=ReviewWorkflow::submit($db,$actor,$users,'page',$key,(string)$e['revision'],$reviewer,'AI-assisted change: '.substr($proposal['instruction'],0,200));
+        },'save','AI suggestion submitted for independent review');
+        return $id;
+    }
     /** Retag an unlinked document without changing its published language or review state. */
     public function setPageLocale(string $key,int $revision,string $locale):void {
         Locale::require($locale);$this->change(function(array &$db)use($key,$revision,$locale){
@@ -260,13 +283,13 @@ final class BookStore {
         $publicKey=$entry['published']!==null?PageTree::publicKey($key,$entry):$key;$snapshot['media']??=[];
         if($entry['published']===null&&isset($entry['published_key'])&&$entry['published_key']!==$key)PageTree::remember($db,$entry['published_key'],$entry['id']);
         if($entry['published']!==null){$snapshot['order']=$entry['published']['order'];if($publicKey!==$key)$snapshot['link_base']??=$key;}
-        $entry['published']=$snapshot;$entry['published_key']=$publicKey;
+        $entry['published']=$snapshot;$entry['published_key']=$publicKey;unset($entry['ai_review_required']);
     }
     /** Atomically publish the entire independently authorized CI bundle. */
     public static function publishBundle(array &$db,array $actor,array $users,string $id,string $digest,MediaStore $media):array {
         $b=CiPublishing::authorizePublish($db,$actor,$users,$id,$digest);if($b['status']==='published')return $b;
         CiPublishing::verify($db,$b['pages'],$b['links'],$media);
-        foreach($b['pages'] as $key=>$p){$e=$db['pages'][$key];$e['id']??=PageTree::id($key,$e);self::applyPublication($db,$key,$e,$p['draft']);$e['revision']++;$db['pages'][$key]=$e;}
+        foreach($b['pages'] as $key=>$p){$e=$db['pages'][$key];if(($e['ai_review_required']??false)===true)throw new \DomainException('AI-assisted revision requires independent review before publication.');$e['id']??=PageTree::id($key,$e);self::applyPublication($db,$key,$e,$p['draft']);$e['revision']++;$db['pages'][$key]=$e;}
         $b['status']='published';$b['published_by']=['id'=>$actor['id'],'username'=>$actor['username']];$b['published_at']=time();$db['ci']['builds'][$id]=$b;ActivityJournal::record($db,$actor,'ci.publish',$b['scope'],$id);return $b;
     }
     /** All review state transitions share the page/history transaction. */

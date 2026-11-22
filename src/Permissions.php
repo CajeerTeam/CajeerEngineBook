@@ -43,11 +43,12 @@ final class Permissions
         if(in_array($method,['GET','HEAD'],true)){
             if(in_array($path,['/studio/automation','/studio/ci','/studio/search'],true))return self::allows($role,'manage');
             if(in_array($path,['/studio/export','/studio/media/backup','/studio/static-export'],true))return self::allows($role,'export');
-            return in_array($path,['/studio','/studio/translations','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
+            return in_array($path,['/studio','/studio/assistant','/studio/translations','/studio/books','/studio/tree','/studio/media','/studio/media/picker','/studio/editor/render','/studio/history','/studio/reviews','/studio/team','/studio/import','/studio/openapi','/studio/github','/studio/git'],true)||str_starts_with($path,'/studio/media/file/');
         }
         if($method!=='POST')return false;
         $permission=match($path){
             '/studio'=>match($action){'save','copy'=>'edit','publish','unpublish'=>'publish','delete'=>'delete',default=>''},
+            '/studio/assistant'=>in_array($action,['gaps','migration','suggest','submit'],true)?'edit':'',
             '/studio/translations'=>in_array($action,['create','review-source','set-language'],true)?'edit':'',
             '/studio/tree'=>match($action){'move','duplicate'=>'edit','publish'=>'publish',default=>''},
             '/studio/media'=>match($action){'upload','update'=>'edit','delete'=>'delete',default=>''},

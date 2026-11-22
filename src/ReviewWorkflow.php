@@ -72,7 +72,7 @@ final class ReviewWorkflow
         foreach($db['reviews']??[] as $id=>$r)if(in_array($r['status'],self::ACTIVE,true)&&!self::fresh($db,$r)){$db['reviews'][$id]['status']='stale';$db['reviews'][$id]['revision']++;$db['reviews'][$id]['updated']=gmdate('c');}
     }
     public static function guard(array $db,string $kind,string $target,?string $id=null):void{
-        if($id===null){if(self::required($db))throw new \DomainException('Review required. Submit a saved revision for approval before publishing.');return;}
+        if($id===null){if(self::required($db)||($kind==='page'&&($db['pages'][$target]['ai_review_required']??false)===true))throw new \DomainException('Independent review required for this revision.');return;}
         $r=$db['reviews'][$id]??null;if(!$r||$r['kind']!==$kind||$r['target']!==$target||$r['status']!=='approved'||!self::fresh($db,$r))throw new \DomainException('Approved review is missing or stale.');
     }
     public static function setPolicy(array &$db,array $actor,array $users,int $rev,bool $required):void{
@@ -140,6 +140,7 @@ final class ReviewWorkflow
         if(isset($p['actor']))self::assertActor($p['actor']);
         $all=$db['reviews']??[];if(!is_array($all)||count($all)>self::MAX_REQUESTS||strlen(json_encode($all,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES))>self::MAX_BYTES)throw new \DomainException('Review quota reached. Remove closed reviews or export a backup.');
         if((isset($db['review_policy'])||$all)&&!in_array($db['schema']??null,[2,3,4,5,6],true))throw new \InvalidArgumentException('Review metadata requires store schema 2 through 6');
+        foreach($db['pages'] as $e){if(isset($e['ai_review_required'])&&$e['ai_review_required']!==true)throw new \InvalidArgumentException('Invalid AI review requirement');}
         foreach($db['pages'] as $e)foreach(['review_authors','review_tree_authors'] as $f)if(array_key_exists($f,$e)){if(!is_array($e[$f])||!array_is_list($e[$f])||count($e[$f])>500)throw new \InvalidArgumentException('Invalid draft contributors');foreach($e[$f] as $a)if(!self::hex($a))throw new \InvalidArgumentException('Invalid draft contributor');}
         foreach($all as $id=>$r){
             if(!self::hex($id)||!is_array($r)||($r['id']??null)!==$id||!in_array($r['kind']??null,['page','tree'],true)||!is_string($r['target']??null)||!is_array($r['snapshot']??null)||!self::hex($r['snapshot_hash']??null,64)||!hash_equals($r['snapshot_hash'],self::digest($r['snapshot']))||!self::hex($r['fingerprint']??null,64)||!in_array($r['status']??null,self::STATES,true)||!is_int($r['revision']??null)||$r['revision']<1||!is_int($r['policy_revision']??null)||$r['policy_revision']<1||$r['policy_revision']>$p['revision']||!is_array($r['authors']??null)||!array_is_list($r['authors'])||count($r['authors'])<1||count($r['authors'])>501||!is_array($r['messages']??null)||!array_is_list($r['messages'])||count($r['messages'])<1||count($r['messages'])>self::MAX_MESSAGES)throw new \InvalidArgumentException('Invalid review request');
