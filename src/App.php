@@ -26,7 +26,7 @@ final class App {
         if($prefix!==''&&str_starts_with($analyticsPath,$prefix.'/'))$analyticsPath=substr($analyticsPath,strlen($prefix));
         $analyticsPage=$this->readerVisibility==='public'&&!$this->scopedIdentity&&http_response_code()===200&&preg_match('~\A/(?:$|search$|docs/)~D',$analyticsPath)===1;
         header('Content-Security-Policy: '.Analytics::contentSecurityPolicy($this->workspace??$this->analyticsWorkspace,$analyticsPage));
-        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).(getenv('BOOK_PG_DSN')?'<a href="/audit">Audit</a>':'').self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead,'analyticsSettings'=>json_encode(Analytics::browserConfig($this->workspace??$this->analyticsWorkspace,$analyticsPage),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES)]);
+        echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).(getenv('BOOK_PG_DSN')?'<a href="/audit">Audit</a>':'').self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead,'analyticsSettings'=>json_encode(Analytics::browserConfig($this->workspace??$this->analyticsWorkspace,$analyticsPage),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES),'chatMarkup'=>$current!==''&&DocumentationChat::enabled()&&($this->readerVisibility==='public'||DocumentationChat::privateEnabled())?'<section class="doc-chat" data-doc-chat data-endpoint="'.self::e(WorkspaceUrls::url('/api/v1/chat')).'" data-page="'.self::e($current).'"><h2>Ask about this documentation</h2><p>Questions and relevant excerpts are sent to OpenAI. Do not enter secrets.</p><div class="doc-chat-messages" role="log" aria-live="polite"></div><form class="doc-chat-form"><label for="doc-chat-question">Question</label><textarea id="doc-chat-question" maxlength="1500" rows="3" required></textarea><div class="actions"><button class="primary" type="submit">Ask</button><button type="button" data-chat-reset>Clear</button></div></form><div class="doc-chat-sources" aria-label="Documentation sources"></div></section>':'']);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
     public function run():void{
@@ -57,6 +57,7 @@ final class App {
             if($this->domainGate($path,$method))return;
             if(!RequestSecurity::browserPost($path,$method,$_SERVER,CustomDomains::primary())){http_response_code(403);header('X-Robots-Tag: noindex, nofollow');$this->json(['error'=>'Cross-origin form request denied']);return;}
             if(!$this->runtimeLimit($path,$method))return;
+            if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/chat\z~D',$path,$chat)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->chatRoute($chat);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/ci\z~D',$path,$ci)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->ciApi($ci);return;}
             if(preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/webhooks/(github|gitlab)\z~D',$path,$hook)){if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}$this->receiveWebhook($hook);return;}
             if($method==='POST'&&preg_match('~\A(?:/w/([a-f0-9]{32})/([a-f0-9]{32}))?/api/v1/playground\z~D',$path,$playground)){$this->playgroundProxy($playground);return;}
@@ -112,17 +113,26 @@ final class App {
         if($host===null){http_response_code(421);return true;}
         if($host===$primary){return $this->requireDomainHttps($host,$method);}
         // The custom domain never consumes main-host credentials, including an injected cookie.
-        $this->identityStore->withDomain($host,function($w)use($host,$path,$method){
+        // Capture the chat target while holding the domain-registry lock, then stream
+        // outside it: network latency must never block identity or Workspace updates.
+        $chatCapture=null;
+        $this->identityStore->withDomain($host,function($w)use($host,$path,$method,&$chatCapture){
             if(!$w){http_response_code(421);header('X-Robots-Tag: noindex, nofollow');return;}
-            if(!in_array($method,['GET','HEAD'],true)&&!($method==='POST'&&$path==='/analytics/collect')){http_response_code(405);header('Allow: GET, HEAD');return;}
+            if(!in_array($method,['GET','HEAD'],true)&&!($method==='POST'&&in_array($path,['/analytics/collect','/api/v1/chat'],true))){http_response_code(405);header('Allow: GET, HEAD');return;}
             if(!CustomDomains::readerPath($path)){http_response_code(404);header('X-Robots-Tag: noindex, nofollow');return;}
             if($this->requireDomainHttps($host,$method))return;
             $this->domainHost=$host;$this->domainCanonical=CustomDomains::canonical($w,$host);
             $this->workspace=$w+['role'=>'none','owner'=>false];$this->analyticsWorkspace=$w;$this->studioRole='none';$this->scopedIdentity=null;$this->readerVisibility='public';
             WorkspaceUrls::set('');$this->dataDir=Workspaces::directory($this->installationDir,$w);$this->store=new BookStore($this->dataDir,false);$this->media=new MediaStore($this->dataDir,$this->store);$this->mediaController=new MediaController($this->media,$this->store);
             if(!$this->runtimeLimit($path,$method))return;
+            if($path==='/api/v1/chat'){
+                $chatCapture=['dir'=>$this->dataDir,'scope'=>$w['organization'].'/'.$w['id']];
+                return;
+            }
             $this->dispatch($path,$method);
-        });return true;
+        });
+        if($chatCapture!==null)$this->chatSend($chatCapture['dir'],$chatCapture['scope'],null,'none','public');
+        return true;
     }
     private function requireDomainHttps(string $host,string $method):bool{
         $secret=getenv('BOOK_DOMAIN_EDGE_SECRET');$provided=$_SERVER['HTTP_X_BOOK_EDGE_SECRET']??'';
@@ -144,6 +154,7 @@ final class App {
             $path==='/auth/oidc/callback'=>['oidc-callback',60,60,false],
             $method==='POST'&&$path==='/login'=>['login',30,900,true],
             $method==='POST'&&$inner==='/analytics/collect'=>['analytics',180,60,false],
+            $method==='POST'&&$inner==='/api/v1/chat'=>['chat',30,60,false],
             $method==='POST'&&$path==='/account/reset'=>['reset',30,900,true],
             $method==='POST'&&$path==='/account'&&($_POST['action']??null)==='password'=>['password',30,900,true],
             $inner==='/api/v1/ci'=>['ci',120,60,false],
@@ -167,6 +178,69 @@ final class App {
         $redis=RedisRuntime::forRoot($this->installationDir);
         // Exact published inputs, including visible redirects and URL scope, invalidate naturally.
         return $redis?$redis->remember('markdown',[WorkspaceUrls::prefix(),$key,$p['body'],$base,$links],$render):$render();
+    }
+    /** Complete authorization under the identity lock, release it BEFORE calling the model. */
+    private function chatRoute(array $route):void {
+        $token=$this->auth->token();
+        if(!empty($route[1])){
+            $capture=$this->identityStore->withWorkspace($token,$route[1],$route[2],function($ctx,$w){
+                if(!$w)return null;
+                return ['dir'=>Workspaces::directory($this->installationDir,$w),'scope'=>$w['organization'].'/'.$w['id'],'ctx'=>$ctx,'role'=>$w['role'],'visibility'=>Visibility::workspace($w)];
+            },true);
+        }else{
+            $capture=$this->identityStore->withLegacy($token,function($ctx,$role,$w,$visible){
+                if(!$visible)return null;
+                return ['dir'=>$w?Workspaces::directory($this->installationDir,$w):$this->installationDir,'scope'=>'legacy','ctx'=>$ctx,'role'=>$role,'visibility'=>$w?Visibility::workspace($w):'public'];
+            },true);
+        }
+        if(!$capture){http_response_code(404);$this->json(['error'=>'Chat is unavailable for this documentation.']);return;}
+        $this->chatSend($capture['dir'],$capture['scope'],$capture['ctx'],$capture['role'],$capture['visibility']);
+    }
+    private static function sse(string $event,array $data):void {
+        echo 'event: '.$event."\n".'data: '.json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n\n";
+        if(ob_get_level())@ob_flush();flush();
+    }
+    /** Stream validated OpenAI text deltas; no upstream API key, headers or unchecked links reach clients. */
+    private function chatSend(string $dir,string $scope,?array $ctx,string $role,string $visibility):void {
+        header('Cache-Control: no-store');header('X-Robots-Tag: noindex, nofollow');header('Vary: Cookie');header('Referrer-Policy: no-referrer');
+        $fail=function(int $status,string $message):void{http_response_code($status);$this->json(['error'=>$message]);};
+        if(!DocumentationChat::enabled()){$fail(503,'Documentation chat is not configured.');return;}
+        if(!isset($_SERVER['HTTP_ORIGIN'])||!RequestSecurity::browserPost('/api/v1/chat','POST',$_SERVER,$this->domainHost??CustomDomains::primary())){$fail(403,'Same-origin browser request required.');return;}
+        if(strtolower(trim(explode(';',$_SERVER['CONTENT_TYPE']??'')[0]))!=='application/json'){$fail(415,'JSON request required.');return;}
+        $raw=file_get_contents('php://input',false,null,0,16385);
+        if(!is_string($raw)||strlen($raw)>16384){$fail(413,'Chat request too large.');return;}
+        try{
+            $input=DocumentationChat::input($raw);
+            if($visibility==='private'&&!DocumentationChat::privateEnabled()){$fail(403,'Private documentation chat is disabled.');return;}
+            $ip=is_string($_SERVER['REMOTE_ADDR']??null)?$_SERVER['REMOTE_ADDR']:'unknown';
+            $actor=ChatQuota::identity($ctx?'user:'.$ctx['user']['id']:'guest:'.$ip);
+            // Reserve the worst-case retrieval budget BEFORE hybrid search can invoke embeddings.
+            $reserve=ChatQuota::reservation($input['question'],$input['history'],[['text'=>str_repeat('x',18000)]]);
+            if(!ChatQuota::reserve($this->installationDir,$scope?:'legacy',$actor,$reserve)){header('Retry-After: 3600');$fail(429,'Daily chat quota exceeded.');return;}
+            $store=new BookStore($dir,false);
+            $prefix=$scope==='legacy'?'':'/w/'.$scope;
+            if($this->domainHost!==null)$prefix='';
+            $sources=DocumentationChat::sources($store,$visibility,$role,$input['question'],$input['page'],$prefix);
+            if(!$sources){$fail(404,'No accessible documentation sources were found.');return;}
+            $messages=DocumentationChat::modelInput($input,$sources);
+            // Do not start the browser SSE response until the API accepted the request.
+            $upstream=OpenAiResponses::open($messages);
+        }catch(\JsonException|\InvalidArgumentException $e){$fail(422,'Invalid chat request.');return;}
+        catch(\DomainException $e){$fail(404,'Page is not available for chat.');return;}
+        catch(\Throwable $e){Observability::log('chat.failed',['error_type'=>get_class($e)]);$fail(502,'Chat provider or documentation search is unavailable.');return;}
+        header('Content-Type: text/event-stream; charset=utf-8');header('X-Accel-Buffering: no');header('Content-Encoding: identity');
+        if(function_exists('set_time_limit'))@set_time_limit(120);
+        self::sse('sources',['items'=>array_map(static fn($s)=>array_diff_key($s,['text'=>true]),$sources)]);
+        try{
+            $bytes=0;
+            $usage=OpenAiResponses::consume($upstream,static function(string $delta)use(&$bytes):void{
+                $bytes+=strlen($delta);
+                if($bytes>32768)throw new \RuntimeException('Chat output safety limit reached.');
+                self::sse('delta',['text'=>$delta]);
+                if(connection_aborted())throw new \RuntimeException('Client disconnected.');
+            });
+            self::sse('done',['usage'=>['input_tokens'=>(int)($usage['input_tokens']??0),'output_tokens'=>(int)($usage['output_tokens']??0)]]);
+        }catch(\Throwable $e){Observability::log('chat.stream_failed',['error_type'=>get_class($e)]);self::sse('error',['message'=>'Answer stream interrupted. Please try again.']);}
     }
     private function ciApi(array $route):void{
         header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: private, no-store');header('Vary: Authorization');

@@ -200,3 +200,11 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 .analytics-chart-row{display:grid;grid-template-columns:6.5rem 1fr 3rem;align-items:center;gap:.7rem;font-size:.8rem;font-variant-numeric:tabular-nums}
 .analytics-chart-row .analytics-bar-track{background:rgba(120,130,140,.16);height:.8rem;border-radius:.3rem;overflow:hidden}
 .analytics-bar-track span{display:block;height:100%;background:#4083ba;border-radius:.3rem}
+
+/* Documentation chat — local presentation, externally generated text is never HTML. */
+.doc-chat{margin:2rem 0;padding:1.25rem;border:1px solid var(--line,#9ba0a6);border-radius:12px}
+.doc-chat h2{margin:0 0 .5rem}.doc-chat-messages{max-height:34rem;overflow-y:auto;display:grid;gap:.75rem;margin:1rem 0}
+.doc-chat-message{white-space:pre-wrap;overflow-wrap:anywhere;padding:.85rem;border-radius:8px;margin:0;background:var(--card,#f3f4f6);color:inherit}
+.doc-chat-user{border-left:3px solid var(--accent,#457b9d)}.doc-chat-assistant{border-left:3px solid var(--line,#9ba0a6)}
+.doc-chat-form label{display:block;font-weight:600}.doc-chat-form textarea{width:100%;box-sizing:border-box;min-height:5rem}
+.doc-chat-sources{margin-top:.75rem}.doc-chat-sources ol{padding-left:1.5rem}.doc-chat-sources a{overflow-wrap:anywhere}

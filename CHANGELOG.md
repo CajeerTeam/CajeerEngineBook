@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.8 — Documentation assistant (2026-11-22)
+
+- Added a functioning Reader chat on published documentation pages with an OpenAI Responses API proxy and incremental SSE delivery to a browser-side multi-turn conversation.
+- Answers are grounded in the current page and authorized search results, with server-supplied, clickable document references. Page and search visibility are checked on every request.
+- Public documentation is sent to OpenAI only after a visitor explicitly submits a question. Private documentation is never sent unless `BOOK_CHAT_INCLUDE_PRIVATE=1` is set by the operator.
+- Added durable daily per-workspace and per-visitor quota accounting (atomic file locking or PostgreSQL schema 7). Requests reserve a worst-case token budget before hybrid retrieval and upstream calls.
+- Added request validation, same-origin protections, fixed OpenAI HTTPS endpoint, bounded contexts, timeouts, output limits, streaming error handling and operator documentation.
+- Added mock Responses API SSE transport/regression coverage; live OpenAI keys and PostgreSQL infrastructure require independent deployment validation.
+
 ## 1.0.7 — Search indexing, embeddings and hybrid search
 
 - Add real OpenAI-compatible embedding API client with HTTPS or local loopback endpoint, API key and model settings, strict finite-vector checks, bounded payloads, short network timeout and no redirects. The provider is explicitly opt-in; no private document is transmitted unless the operator configures an external provider.

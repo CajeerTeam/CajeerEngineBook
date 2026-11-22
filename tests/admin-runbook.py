@@ -57,7 +57,7 @@ def main():
         expect(r['checks']['identity']['status'] == 'failed', 'uninitialized owner is not reported ready')
         run('bin/identity.php', 'init', 'admin', 'admin@example.org', 'Admin', data=secret+'\n')
         r = report()
-        expect(r['version'] == (ROOT/'VERSION').read_text().strip() and r['schema_required'] == 6, 'report uses shipped release and schema')
+        expect(r['version'] == (ROOT/'VERSION').read_text().strip() and r['schema_required'] == 7, 'report uses shipped release and schema')
         expect(r['engine_version'] == (ROOT/'core'/'ENGINE_VERSION').read_text().strip(), 'report identifies embedded CajeerEngine release')
         expect(r['checks']['identity']['status'] == 'ok' and r['checks']['workspace_stores']['status'] == 'ok', 'initialized identity and actual stores pass')
         expect(r['checks']['postgres_schema']['status'] == r['checks']['redis']['status'] == 'skipped', 'optional services are explicitly skipped')

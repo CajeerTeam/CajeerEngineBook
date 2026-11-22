@@ -10,7 +10,7 @@ use PDO;
  */
 final class DatabaseMigrations
 {
-    public const VERSION = 6;
+    public const VERSION = 7;
     private const LOCK = '1128416305, 1'; // same database-wide lock as pre-0.5.2 schema installers
     private const SCHEMA = 'cajeer_book';
     private const BASELINE = ['postgres-content.sql','postgres-identity.sql','postgres-audit.sql'];
@@ -34,6 +34,7 @@ final class DatabaseMigrations
             4=>['name'=>'analytics-daily','release'=>'1.0.5','up'=>['migrations/0004-analytics.up.sql'],'down'=>'migrations/0004-analytics.down.sql'],
             5=>['name'=>'analytics-dimensions-daily','release'=>'1.0.6','up'=>['migrations/0005-analytics-dimensions.up.sql'],'down'=>'migrations/0005-analytics-dimensions.down.sql'],
             6=>['name'=>'search-document-embeddings','release'=>'1.0.7','up'=>['migrations/0006-search-embeddings.up.sql'],'down'=>'migrations/0006-search-embeddings.down.sql'],
+            7=>['name'=>'chat-daily-usage','release'=>'1.0.8','up'=>['migrations/0007-chat-usage.up.sql'],'down'=>'migrations/0007-chat-usage.down.sql'],
         ];
         $out=[];$next=1;
         foreach($definitions as $version=>$definition){
@@ -112,14 +113,14 @@ final class DatabaseMigrations
         try{
             $v=self::validateLedger(self::rows($pdo),self::catalog());
             if($v!==self::VERSION)throw new \RuntimeException('Database schema '.$v.' is incompatible with this release (requires '.self::VERSION.'). Run bin/migrations.php apply --offline.');
-            self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);self::verifyEmbeddings($pdo,true);
+            self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);self::verifyEmbeddings($pdo,true);self::verifyChatQuota($pdo,true);
         }catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
     }
     /** Fresh portable imports and restore drills use the same registry. No DDL on a current database. */
     public static function prepareInstallation(PDO $pdo,bool $boundLegacy=false): void
     {
         self::lock($pdo,true);
-        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);self::verifyEmbeddings($pdo,true);return;}
+        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);self::verifyEmbeddings($pdo,true);self::verifyChatQuota($pdo,true);return;}
             if(!$boundLegacy&&self::exists($pdo,'cajeer_book.content_installation')&&$pdo->query('SELECT 1 FROM cajeer_book.content_installation LIMIT 1')->fetchColumn()!==false)throw new \RuntimeException('A populated database needs an explicit offline schema upgrade with its matching installation before importing a new namespace.');}
         catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
         self::unlock($pdo,true);
@@ -197,6 +198,17 @@ final class DatabaseMigrations
         $fk=$pdo->query("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='cajeer_book.search_embedding'::regclass AND contype='f'")->fetchColumn();
         if(!is_string($fk)||!str_contains($fk,'ON DELETE CASCADE'))throw new \RuntimeException('Search embedding foreign key missing.');
     }
+    private static function verifyChatQuota(PDO $pdo,bool $present):void {
+        $exists=self::exists($pdo,'cajeer_book.chat_usage');
+        if(!$present){if($exists)throw new \RuntimeException('Unexpected chat quota table.');return;}
+        if(!$exists)throw new \RuntimeException('Chat quota table missing; apply migration 7.');
+        $rows=self::q($pdo,"SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema='cajeer_book' AND table_name='chat_usage' ORDER BY ordinal_position")->fetchAll(PDO::FETCH_ASSOC);
+        $expected=['installation'=>'text','scope'=>'text','day'=>'date','principal'=>'text','requests'=>'integer','tokens'=>'bigint'];
+        if(count($rows)!==count($expected))throw new \RuntimeException('Chat quota columns mismatch.');
+        foreach($rows as $r){$name=array_key_first($expected);if($r['column_name']!==$name||$r['data_type']!==$expected[$name]||$r['is_nullable']!=='NO')throw new \RuntimeException('Chat quota column mismatch.');unset($expected[$name]);}
+        $pk=$pdo->query("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='cajeer_book.chat_usage'::regclass AND contype='p'")->fetchColumn();
+        if(!is_string($pk)||!str_contains($pk,'installation, scope, day, principal'))throw new \RuntimeException('Chat quota primary key missing.');
+    }
     private static function inventory(PDO $pdo,string $schema): array
     {
         $queries=[
@@ -268,7 +280,7 @@ final class DatabaseMigrations
         try{
             $db=self::server($pdo);$catalog=self::catalog();$rows=self::rows($pdo);$v=self::validateLedger($rows,$catalog);
             self::verifyHistory($pdo,$catalog,$v);$legacy=self::legacy($pdo);if($v===0&&self::exists($pdo,self::LEDGER))throw new \RuntimeException('Empty migration registry.');$pending=array_values(array_filter($catalog,fn($m)=>$m['version']>$v));
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);self::verifyChatQuota($pdo,$v>=7);}
             $bytes=self::exists($pdo,'cajeer_book.audit_event')?(int)$pdo->query("SELECT pg_total_relation_size('cajeer_book.audit_event'::regclass)")->fetchColumn():0;
             $exclusive=(int)$pdo->query('SELECT CASE WHEN pg_try_advisory_lock('.self::LOCK.') THEN 1 ELSE 0 END')->fetchColumn()===1;if($exclusive)self::unlock($pdo,false);
             $canCreate=$pdo->query("SELECT has_database_privilege(current_user,current_database(),'CREATE')")->fetchColumn()===true;
@@ -322,14 +334,14 @@ final class DatabaseMigrations
             $pdo->exec("SET LOCAL lock_timeout='30s'; SET LOCAL statement_timeout='30min'");
             $v=self::validateLedger(self::rows($pdo),$catalog);$before=$v;$changed=[];
             self::verifyHistory($pdo,$catalog,$v);
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);self::verifyChatQuota($pdo,$v>=7);}
             if($down){
                 if($v<=$target)throw new \RuntimeException('Rollback target must be below the applied schema version.');
                 // Validate the whole down path before executing any DDL.
                 for($n=$v;$n>$target;$n--)if(!$catalog[$n]['reversible'])throw new \RuntimeException('Migration '.$n.' requires restoring the matched backup.');
                 while($v>$target){$m=$catalog[$v];$start=hrtime(true);$pdo->exec(self::sql($m['down']));
                     self::record($pdo,$m,'rollback',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'rollback'];$v--;
-                    self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);
+                    self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);self::verifyChatQuota($pdo,$v>=7);
                 }
             }else{
                 if($v===0){
@@ -339,7 +351,7 @@ final class DatabaseMigrations
                     self::registry($pdo);self::record($pdo,$catalog[1],$mode,(int)((hrtime(true)-$start)/1000000),$inventory);$v=1;$changed[]=['version'=>1,'operation'=>$mode];
                 }
                 while($v<$target){$m=$catalog[$v+1];$start=hrtime(true);foreach($m['up'] as $file)$pdo->exec(self::sql($file));
-                    $v++;self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
+                    $v++;self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::verifyEmbeddings($pdo,$v>=6);self::verifyChatQuota($pdo,$v>=7);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
                 }
             }
             if($v!==$target||self::validateLedger(self::rows($pdo),$catalog)!==$target)throw new \RuntimeException('Migration target verification failed.');
