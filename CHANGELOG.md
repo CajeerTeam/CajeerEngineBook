@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.9 — Mintlify documentation migration (2026-11-22)
+
+- Extend the real Studio Markdown importer with `docs.json` and legacy `mint.json` navigation/redirect parsing, support for a repository-root ZIP/directory, and `.mdx` page normalization. Existing preview/apply tokens, draft-only writes and media transactions remain authoritative.
+- Convert supported Mintlify callouts, tabs, steps, accordions, cards, code groups, frames and static HTML image/link tags into validated, inert Book Markdown/rich blocks. Untrusted JavaScript, executable JSX and dynamic MDX imports are never executed.
+- Preserve section labels and navigation order, map Markdown and extensionless links, rewrite uploaded images including `public/` assets, and record safe, page-ID-backed redirects that activate only after publication. Ambiguous routes and conflicts are rejected or reported.
+- Add parser, security and URL conversion regression coverage and operator documentation. No database migration; PostgreSQL schema remains 7. Exact Mintlify theme/layout fidelity, external `$ref` navigation, SVG and arbitrary React components are intentionally unsupported.
+
+
 ## 1.0.8 — Documentation assistant (2026-11-22)
 
 - Added a functioning Reader chat on published documentation pages with an OpenAI Responses API proxy and incremental SSE delivery to a browser-side multi-turn conversation.

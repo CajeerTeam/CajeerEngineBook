@@ -1,10 +1,14 @@
+### Mintlify documentation import (1.0.9)
+
+Studio can now import a Mintlify repository ZIP/directory containing `docs.json` or `mint.json`, Markdown/MDX pages and local media. Navigation groups/order, supported static components, internal links and safe redirects are converted into Book drafts, with a mandatory preview, integrity-bound apply token and no automatic publication. SVG/JSX execution and remote assets are intentionally excluded. No database schema change. See [Mintlify migration guide](docs/admin/mintlify-import.md).
+
 ### Documentation chat (1.0.8)
 
 An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from currently accessible published pages, and server-enforced daily quotas. Install the appropriate PHP/Composer dependencies and configure `BOOK_CHAT_ENABLED=1`, `BOOK_CHAT_API_KEY` and optionally `BOOK_CHAT_MODEL`. For PostgreSQL migrate the schema from 6 to 7 before starting Book 1.0.8. Refer to [documentation chat operations](docs/admin/documentation-chat.md) for security, quotas, deployment, and validation.
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.6** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.9** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

@@ -1,6 +1,6 @@
 # Installation and day-to-day operations
 
-Release 1.0.8; PostgreSQL schema 7. Start with [configuration](configuration.md). Commands are run from the verified project/deployment root on Linux unless explicitly marked inside a container. Replace example paths, domain names and account names with installation-specific values. Do not run fresh-install commands on an existing installation. Keep a record of release commit/digests, Compose project, overlay order, namespace, volume names, service counts, backup location and the last successful drill (not secret values).
+Release 1.0.9; PostgreSQL schema 7. Start with [configuration](configuration.md). Commands are run from the verified project/deployment root on Linux unless explicitly marked inside a container. Replace example paths, domain names and account names with installation-specific values. Do not run fresh-install commands on an existing installation. Keep a record of release commit/digests, Compose project, overlay order, namespace, volume names, service counts, backup location and the last successful drill (not secret values).
 
 ## 1. Select a deployment
 

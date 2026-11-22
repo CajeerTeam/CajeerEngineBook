@@ -92,6 +92,8 @@
             "@php tests/github.php",
             "python3 tests/github-http.py",
             "@php tests/import.php",
+            "@php tests/mintlify-109.php",
+            "@php tests/mintlify-109-integration.php",
             "python3 tests/import-http.py",
             "@php tests/stable.php",
             "@php tests/installation.php",

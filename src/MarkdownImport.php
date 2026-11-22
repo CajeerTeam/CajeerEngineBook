@@ -2,6 +2,8 @@
 declare(strict_types=1);
 namespace CajeerBook;
 require_once __DIR__.'/Observability.php';
+require_once __DIR__.'/MintlifyImport.php';
+require_once __DIR__.'/MintlifyMdx.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -43,7 +45,7 @@ final class MarkdownImport
             $body=substr($body,strlen($m[0]));
             if(isset($meta['description'])&&$meta['description']!==''){$description=preg_replace_callback('/[\\\\`*_{}\[\]<>#+.!|~()\-]/u',fn($m)=>'\\'.$m[0],$meta['description']);$body=$description."\n\n".$body;}
         }
-        $parts=explode('/',$path);$file=array_pop($parts);$stem=preg_replace('/\.(?:md|markdown)$/i','',$file);$dir=array_map(self::slug(...),$parts);
+        $parts=explode('/',$path);$file=array_pop($parts);$stem=preg_replace('/\.(?:md|mdx|markdown)$/i','',$file);$dir=array_map(self::slug(...),$parts);
         $leaf=isset($meta['slug'])?self::slug($meta['slug']):self::slug($stem);
         if(!isset($meta['slug'])&&in_array(strtolower($stem),['readme','index'],true)){$pagePath=$dir?implode('/',$dir):'index';}else $pagePath=implode('/',array_merge($dir,[$leaf]));
         $title=$meta['title']??(preg_match('/^ {0,3}#\s+(.+?)\s*#*\s*$/m',$body,$h)?trim($h[1]):($dir&&in_array(strtolower($stem),['readme','index'],true)?end($parts):$stem));
@@ -56,7 +58,7 @@ final class MarkdownImport
     private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings):string{
         $raw=html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8');
         if($raw===''||preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#|\?)~i',$raw))return $url;
-         $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return $pages[$canonical].substr($raw,$n);
+         $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return '/docs/'.$pages[$canonical].substr($raw,$n);
         $root=str_starts_with($raw,'/');if($root&&preg_match('~^/(?:docs|media|studio|api|w|l)(?:/|$)~',$raw))return $url;
         $n=strcspn($raw,'?#');$path=rawurldecode(substr($raw,0,$n));$suffix=substr($raw,$n);$parts=$root||dirname($source)==='.'?[]:explode('/',dirname($source));
         if(str_contains($path,'\\')||preg_match('/[\x00-\x1f\x7f]/',$path)){$warnings[$url]=true;return $url;}
@@ -122,13 +124,23 @@ REGEX;
     public function plan(array $db,array $files,string $book,string $version,string $strategy):array{
         BookStore::key($book,$version,'index');if(!in_array($strategy,['skip','update','rename'],true))throw new \InvalidArgumentException('Invalid conflict strategy');
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
+        // Sign the original inputs, including Mintlify navigation/redirect configuration.
+        foreach($files as $source=>$file){ImportFiles::path((string)$source);if(!is_file($file))throw new \InvalidArgumentException('Import source missing');$hashes[(string)$source]=Files::hash($file);}
+        $mint=MintlifyImport::prepare($files);$files=$mint['files'];$warnings=$mint['warnings'];
+        $navFiles=[];foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
+        
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
         foreach($db['media']??[] as $item)$total+=$item['size'];
         foreach($files as $path=>$file){
             $path=(string)$path;ImportFiles::path($path);$size=filesize($file);if($size===false||$size>MediaStore::MAX_FILE||($sourceBytes+=$size)>ImportFiles::MAX_TOTAL)throw new \InvalidArgumentException('Import exceeds source size limit');$hashes[$path]=Files::hash($file);
             if(preg_match('/\.(md|markdown)$/i',$path)){
                 if($size>Markdown::MAX_BYTES)throw new \InvalidArgumentException('Markdown exceeds 256 KiB: '.$path);if(($markdownBytes+=$size)>8*1024*1024)throw new \InvalidArgumentException('Markdown import exceeds 8 MiB; split the import');
-                $doc=self::document((string)file_get_contents($file),$path,++$order*10);$key=BookStore::key($book,$version,$doc['path']);
+                $source=(string)file_get_contents($file);$converted=[];
+                if($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
+                foreach($converted as $warning){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many Mintlify conversion warnings');$warning['source']=$path;$warnings[]=$warning;}
+                $doc=self::document($source,$path,++$order*10);
+                if(isset($navFiles[$path])){$doc['order']=$navFiles[$path]['order'];if($navFiles[$path]['section']!=='')$doc['section']=$navFiles[$path]['section'];$doc['explicit_order']=true;}
+                $key=BookStore::key($book,$version,$doc['path']);
                 if(isset($used[$key]))throw new \InvalidArgumentException('Multiple files map to the same page: '.$key);$used[$key]=true;$docs[$path]=['key'=>$key,'doc'=>$doc];
             }else{
                 $meta=MediaStore::inspect($file,basename($path));$folder=MediaStore::folder(dirname($path)==='.'?'':dirname($path));$id=null;
@@ -157,9 +169,31 @@ REGEX;
             $next=(count($sequence)+1)*10;foreach($docs as &$d)if(!$d['doc']['explicit_order']){$d['doc']['order']=$sequence[$d['key']]??$next;if(!isset($sequence[$d['key']]))$next+=10;}unset($d);
         }
 
-        foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){$d['doc']['body']=self::rewrite($d['doc']['body'],$path,$mapping,$mediaMap,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
+        // Extensionless Mintlify paths, root-relative links and MDX filenames all resolve to Book URLs.
+        $links=$mapping;
+        foreach($mapping as $source=>$target){
+            $route=preg_replace('/\.(?:md|mdx|markdown)$/i','',$source);
+            foreach([$route, '/'.$route] as $alias)if(!isset($links[$alias]))$links[$alias]=$target;
+            if(preg_match('~(?:^|/)(?:index|README)$~i',$route)){
+                $folder=dirname($route);$alias=$folder==='.'?'index':$folder;
+                foreach([$alias, '/'.$alias] as $name)if(!isset($links[$name]))$links[$name]=$target;
+            }
+            // An explicit front matter slug can affect Book's final URL, not its source path.
+        }
+        $assetsLinks=$mediaMap;
+        foreach($mediaMap as $asset=>$id)if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
+        $redirects=[];
+        foreach($mint['redirects'] as $old=>$target){
+            $source=MintlifyImport::find($target,$files);
+            if($source===null||!isset($mapping[$source])){if(count($warnings)<1000)$warnings[]=['source'=>'redirects','url'=>'Missing destination: '.$target];continue;}
+            $dest=$mapping[$source];$alias=BookStore::key($book,$version,$old);
+            if($alias===$dest)continue;
+            if(isset($db['pages'][$alias])||isset($used[$alias])||PageTree::reserved($db,$alias,($db['pages'][$dest]['id']??''))){if(count($warnings)<1000)$warnings[]=['source'=>'redirects','url'=>'Reserved destination: '.$old];continue;}
+            $redirects[$alias]=$dest;
+        }
+        foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){$d['doc']['body']=self::rewrite($d['doc']['body'],$path,$links,$assetsLinks,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 if($d['action']==='update'){$current=$db['pages'][$d['key']]['draft'];if(isset($d['doc']['locale'])&&$d['doc']['locale']!==Locale::language($current))throw new \DomainException('Import language differs from existing document: '.$d['key']);unset($current['updated'],$current['locale'],$current['translation_group'],$current['source_digest']);$candidate=$d['doc'];unset($candidate['path'],$candidate['explicit_order'],$candidate['locale']);$current['media']??=[];ksort($current);ksort($candidate);if($current===$candidate)$d['action']='unchanged';}}foreach(array_keys($w) as $url){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many unresolved links; split import');$warnings[]=['source'=>$path,'url'=>$url];}$rows[]=['source'=>$path,'target'=>$d['key'],'action'=>$d['action'],'title'=>$d['doc']['title']];}unset($d);
-        return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes];
+        return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes,'redirects'=>$redirects];
     }
     private static function token(array $db,array $plan,string $book,string $version,string $strategy,string $secret,int $time):string{
         return $time.'.'.hash_hmac('sha256',json_encode([$time,WorkspaceUrls::prefix(),$book,$version,$strategy,$plan['hashes'],hash('sha256',json_encode($db,JSON_THROW_ON_ERROR))],JSON_THROW_ON_ERROR),$secret);
@@ -204,6 +238,10 @@ REGEX;
             foreach($p['moves']??[] as $dest=>$from){$entry=$db['pages'][$from]??null;if(!$entry||isset($db['pages'][$dest])||PageTree::scope($dest)!==PageTree::scope($from)||PageTree::reserved($db,$dest,PageTree::id($from,$entry)))throw new \DomainException('Import move no longer available');$entry['id']=PageTree::id($from,$entry);if($entry['published']!==null)$entry['published_key']=PageTree::publicKey($from,$entry);PageTree::retire($db,$from,$entry['id']);unset($db['pages'][$from]);$db['pages'][$dest]=$entry;}
             foreach($p['docs'] as $d){if(in_array($d['action'],['skip','unchanged'],true))continue;$key=$d['key'];$draft=$d['doc'];unset($draft['path'],$draft['explicit_order']);$draft['updated']=gmdate('c');foreach($draft['media'] as $id)if(!isset($db['media'][$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 $entry=$db['pages'][$key]??['revision'=>0,'published'=>null,'id'=>bin2hex(random_bytes(16))];$entry['id']??=PageTree::id($key,$entry);$metadata=Locale::metadata($entry['draft']??[]);if(isset($entry['draft'])){if(isset($draft['locale'])&&$draft['locale']!==Locale::language($entry['draft']))throw new \DomainException('Import language differs from existing document: '.$key);unset($draft['locale']);}$entry['draft']=$draft+$metadata;$entry['revision']++;$db['pages'][$key]=$entry;
+            }
+            foreach($p['redirects']??[] as $alias=>$target){
+                if(!isset($db['pages'][$target])||isset($db['pages'][$alias]))throw new \DomainException('Mintlify redirect conflicts with existing page');
+                PageTree::remember($db,$alias,PageTree::id($target,$db['pages'][$target]));
             }
             if($after!==null)$after($db,$p);
             $result=['rows'=>$p['rows'],'warnings'=>$p['warnings'],'media_new'=>$p['media_new'],'media_total'=>$p['media_total']];
