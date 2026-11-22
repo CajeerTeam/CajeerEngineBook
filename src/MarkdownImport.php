@@ -175,13 +175,30 @@ REGEX;
             return $p;
         });
     }
+    /** Install immutable media with an atomic no-overwrite hardlink, not a replacing rename.
+     * The source can change between preview and apply: authenticate the staged bytes
+     * before publication. A competing writer or an existing blob must never be replaced. */
+    private function installBlob(string $source,string $path,string $digest):void{
+        $tmp=dirname($path).'/.import-'.bin2hex(random_bytes(12));$installed=false;
+        try{
+            Files::copy($source,$tmp);
+            if(!hash_equals($digest,Files::hash($tmp)))throw new \RuntimeException('Import source changed');
+            if(!@link($tmp,$path))throw new \RuntimeException('Import media destination already exists or is unavailable');
+            $installed=true;
+            Files::syncDir(dirname($path));
+            Files::remove($tmp);
+        }catch(\Throwable $e){
+            if($installed&&is_file($path)&&!is_link($path))Files::remove($path);
+            throw $e;
+        }finally{if(is_file($tmp)&&!is_link($tmp))Files::remove($tmp);}
+    }
     /** Apply a server-generated, validated plan inside the same exclusive BookStore transaction. */
     public function commit(string $book,callable $planner,?callable $after=null,string $note='Markdown import'):array{
         $created=[];$result=[];
         try{$this->store->change(function(&$db)use($book,$planner,$after,&$created,&$result){
             $p=$planner($db);
             $db['media']??=[];$books=BookStore::books($db);if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}$db['books']=$books;
-            foreach($p['assets'] as $id=>$item){$source=$item['source'];unset($item['source']);$path=$this->media->blob($id);$created[$id]=$path;Files::copy($source,$path);if(Files::hash($path)!==$item['sha256'])throw new \RuntimeException('Import source changed');$db['media'][$id]=$item;}
+            foreach($p['assets'] as $id=>$item){$source=$item['source'];unset($item['source']);$path=$this->media->blob($id);$this->installBlob($source,$path,$item['sha256']);$created[$id]=$path;$db['media'][$id]=$item;}
             // Git Sync may identify an exact, unambiguous source rename. Retain the
             // stable page ID and old public path; ordinary tree publication remains separate.
             foreach($p['moves']??[] as $dest=>$from){$entry=$db['pages'][$from]??null;if(!$entry||isset($db['pages'][$dest])||PageTree::scope($dest)!==PageTree::scope($from)||PageTree::reserved($db,$dest,PageTree::id($from,$entry)))throw new \DomainException('Import move no longer available');$entry['id']=PageTree::id($from,$entry);if($entry['published']!==null)$entry['published_key']=PageTree::publicKey($from,$entry);PageTree::retire($db,$from,$entry['id']);unset($db['pages'][$from]);$db['pages'][$dest]=$entry;}

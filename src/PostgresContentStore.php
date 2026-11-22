@@ -143,13 +143,20 @@ final class PostgresContentStore
     public function transaction(bool $write,callable $fn):mixed
     {
         if(self::$backupConnection!==null){if($write||$this->namespace!==self::$backupNamespace)throw new \LogicException('Write or foreign scope during backup snapshot.');return $fn($this->load(self::$backupConnection));}
-        $start=hrtime(true);$ok=false;$pdo=$this->db();$pdo->beginTransaction();$this->wake=false;
+        $start=hrtime(true);$ok=false;$pdo=$this->db();$this->wake=false;
         try{
+            $pdo->beginTransaction();
             $pdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
             $this->lock($pdo,$write);$result=$fn($this->load($pdo));$pdo->commit();
             if($this->wake)RedisRuntime::forBinding($this->namespace,$this->binding)?->notify($this->scope);
             $ok=true;return $result;
-        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}finally{Observability::operation('sql_content_transaction',$start,$ok);}
+        }catch(\Throwable $e){
+            // A failed connection must not poison all subsequent requests. No automatic
+            // SQL replay: the outcome of a failed COMMIT can be ambiguous.
+            try{if($pdo->inTransaction())$pdo->rollBack();}catch(\Throwable){}
+            if($e instanceof \PDOException)$this->connection=null;
+            throw $e;
+        }finally{Observability::operation('sql_content_transaction',$start,$ok);}
     }
     private function load(PDO $pdo):array
     {

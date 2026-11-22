@@ -134,11 +134,18 @@ final class RecoveryManager
     /** Restore from a local or remote ID. No requirement for the source installation to be online. */
     public function restore(string $id,string $target,bool $remote=false):array{return $this->locked(function()use($id,$target,$remote){
         self::id($id);$target=DataDirectory::resolve($target,$this->public);RecoveryRemote::separate($target,$this->root);RecoveryRemote::separate($target,$this->spool);if(file_exists($target)||is_link($target)||!is_dir(dirname($target)))throw new \InvalidArgumentException('Restore requires a new directory with existing parent.');
-        $stage=$this->stage();$key=null;try{
+        $stage=$this->stage();$key=null;
+        // Audit the candidate on the destination filesystem. The target is visible
+        // only after a complete restore, media verification and identity audit.
+        $verified=dirname($target).'/.book-recovery-'.bin2hex(random_bytes(16));
+        try{
             $file=$this->artifact($id);if($remote){$file=$stage.'/download.cbk';$this->remote->download($id,$file);}
             mkdir($stage.'/bundle',0700);$key=RecoveryEnvelope::keyFor($file,$id);RecoveryEnvelope::open($file,$stage.'/bundle',$key,$id);
-            InstallationBackup::restore($stage.'/bundle',$target,$this->public);return InstallationBackup::audit($target,$this->public,true);
-        }finally{if(is_string($key))sodium_memzero($key);self::clean($stage);}
+            InstallationBackup::restore($stage.'/bundle',$verified,$this->public);
+            $report=InstallationBackup::audit($verified,$this->public,true);
+            if(file_exists($target)||is_link($target)||!rename($verified,$target))throw new \RuntimeException('Cannot publish verified recovery.');
+            Files::syncDir(dirname($target));return $report;
+        }finally{if(is_string($key))sodium_memzero($key);self::clean($verified);self::clean($stage);}
     });}
     public function drill(string $id,bool $remote=false):array{return $this->locked(function()use($id,$remote){
         self::id($id);$stage=$this->stage();try{$file=$this->artifact($id);if($remote){$file=$stage.'/download.cbk';$this->remote->download($id,$file);}return $this->drillFile($file,$stage,$id);}

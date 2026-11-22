@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2 — Regression repairs (from supplied 1.0.0 source)
+
+- Local login rate limiting now charges only failed credentials; valid logins on shared IP addresses no longer exhaust the 15-minute IP budget. Invalid attempts still enforce per-account and per-IP limits.
+- Markdown import installs immutable media with verified staging and atomic no-overwrite publication, preventing concurrent blob replacement.
+- PostgreSQL content transactions discard a failed PDO connection for the next request without replaying an ambiguous write.
+- Recovery restores and audits into a private directory on the destination filesystem, then atomically publishes the verified result.
+- TAR restore rejects any unexpected or missing members before extracting media.
+- Regression tests cover these changes using available offline paths; PostgreSQL, Redis and Docker integration require their respective services.
+
+
 ## Embedded core synchronization — CajeerEngine 2.1.0 (Book 1.0.0 patch)
 
 - Align all six embedded CajeerEngine runtime classes with the supplied upstream 2.1.0 source. Three files changed: the CJR template engine, expression evaluator and durable filesystem primitive.

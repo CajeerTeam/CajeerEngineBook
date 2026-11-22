@@ -147,10 +147,11 @@ final class IdentityStore
         foreach($db['attempts'] as $k=>$a)if($a['until']<=$now)unset($db['attempts'][$k]);
         foreach($db['oidc_flows']??[] as $k=>$f)if($f['expires']<=$now)unset($db['oidc_flows'][$k]);
     }
-    private static function rate(array &$db,string $bucket,string $ip,string $name,int $now):bool{
+    private static function rate(array &$db,string $bucket,string $ip,string $name,int $now,bool $record=true):bool{
         $keys=[hash('sha256',$bucket.':ip:'.$ip)=>30,hash('sha256',$bucket.':account:'.$name)=>5];
         foreach($keys as $k=>$max)if(($db['attempts'][$k]['count']??0)>=$max)return false;
         if(count($db['attempts'])>4094)return false;
+        if(!$record)return true;
         foreach($keys as $k=>$max){$db['attempts'][$k]??=['count'=>0,'until'=>$now+900];$db['attempts'][$k]['count']++;}return true;
     }
     private static function add(array &$db,string $username,string $name,string $email,string $hash,bool $owner):array{
@@ -273,10 +274,10 @@ final class IdentityStore
     public function initialize(string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($username,$name,$email,$password){if($db['users']!==[])throw new \DomainException('Identity already initialized.');$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),true);ActivityJournal::record($db,$u,'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function login(string $username,string $password,string $ip,string $legacyHash=''):array{
         $username=strtolower(trim(substr($username,0,100)));$tooLong=strlen($password)>72;$password=$tooLong?'':$password;
-        return $this->transaction(function(&$db)use($username,$password,$ip,$legacyHash,$tooLong){$now=time();self::prune($db,$now);if(!self::rate($db,'login',$ip,$username,$now)){ActivityJournal::record($db,null,'login.limited');return ['status'=>'limited'];}
+        return $this->transaction(function(&$db)use($username,$password,$ip,$legacyHash,$tooLong){$now=time();self::prune($db,$now);if(!self::rate($db,'login',$ip,$username,$now,false)){ActivityJournal::record($db,null,'login.limited');return ['status'=>'limited'];}
             $u=self::find($db,$username);$legacy=$db['users']===[]&&$username==='admin'&&self::validHash($legacyHash);$hash=$u['hash']??($legacy?$legacyHash:self::DUMMY);
             $ok=!$tooLong&&!str_contains($password,"\0")&&password_verify($password,$hash);
-            if(!$ok||(!$u&&!$legacy)||($u&&(!$u['enabled']||isset($u['oidc'])||(!$u['owner']&&Oidc::required())))){ActivityJournal::record($db,null,'login.failed');return ['status'=>'invalid'];}
+            if(!$ok||(!$u&&!$legacy)||($u&&(!$u['enabled']||isset($u['oidc'])||(!$u['owner']&&Oidc::required())))){self::rate($db,'login',$ip,$username,$now);ActivityJournal::record($db,null,'login.failed');return ['status'=>'invalid'];}
             if($legacy)$u=self::add($db,'admin','Administrator','',$legacyHash,true);
             if(strlen($password)<=72&&password_needs_rehash($u['hash'],PASSWORD_DEFAULT)){$u['hash']=password_hash($password,PASSWORD_DEFAULT);$db['users'][$u['id']]=$u;}
             unset($db['attempts'][hash('sha256','login:account:'.$username)]);ActivityJournal::record($db,$u,'login','Sign in',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);

@@ -72,6 +72,18 @@ final class MediaBackup
             $db=json_decode($tar['books.json']->getContent(),true,512,JSON_THROW_ON_ERROR);
             if(!is_array($db)||!in_array($db['schema']??null,[1,2,3,4,5,6],true)||!is_array($db['pages']??null)||count($db['pages'])>1000||!is_array($db['media']??[])||count($db['media']??[])>MediaStore::MAX_FILES)throw new \InvalidArgumentException('Invalid backup database');
             BookStore::books($db);$items=$db['media']??[];$total=0;
+            // Count and authorize every TAR member. Previously an archive with extra
+            // hidden content was silently accepted even though its manifest was not exact.
+            $expected=['books.json'=>true];if($items!==[])$expected['media']=true;
+            foreach($items as $id=>$item)$expected['media/'.$id.'.blob']=true;
+            $members=[];$prefix='phar://'.realpath($archive).'/';
+            foreach(new \RecursiveIteratorIterator($tar,\RecursiveIteratorIterator::SELF_FIRST) as $member){
+                $name=$member->getPathname();if(!str_starts_with($name,$prefix))throw new \InvalidArgumentException('Invalid backup member');
+                $relative=substr($name,strlen($prefix));
+                if(!isset($expected[$relative])||isset($members[$relative])||$member->isLink()||($member->isDir()!==($relative==='media')))throw new \InvalidArgumentException('Unexpected backup member: '.$relative);
+                $members[$relative]=true;
+            }
+            if(array_diff_key($expected,$members))throw new \InvalidArgumentException('Missing backup member');
             foreach($items as $id=>$item){
                 if(!is_string($id)||!MediaStore::validId($id)||!is_array($item)||($item['id']??null)!==$id||!is_string($item['name']??null)||!is_string($item['folder']??null)||!is_int($item['size']??null)||$item['size']<1||$item['size']>MediaStore::MAX_FILE||!is_int($item['revision']??null)||$item['revision']<1||!is_string($item['created']??null)||!is_string($item['updated']??null))throw new \InvalidArgumentException('Invalid media metadata');
                 MediaStore::folder($item['folder']);$total+=$item['size'];if($total>MediaStore::MAX_TOTAL)throw new \InvalidArgumentException('Backup exceeds media quota');

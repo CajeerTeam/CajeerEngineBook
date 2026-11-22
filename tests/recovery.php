@@ -37,11 +37,12 @@ try{
  // Remove local copy: restore must read remote bytes, not the local repository or live source.
  unlink($file);$result=$m->restore($id,$base.'/restored',true);$restored=new BookStore(Workspaces::directory($base.'/restored',$w),false,true);$ri=new IdentityStore($base.'/restored',true);
  ok($result['users']===1&&$ri->backup()['organizations'][$org['id']]['id']===$org['id']&&$ri->current($token)===null,'remote-only restore retains identity and revokes old sessions');
+ ok(glob($base.'/.book-recovery-*')===[],'verified recovery publishes atomically and removes destination-side staging');
  ok($restored->read()['books']['guide']['title']==='Private documentation'&&file_get_contents((new MediaStore(Workspaces::directory($base.'/restored',$w),$restored))->blob($mid))===$mediaText,'remote-only restore preserves private content and media');
  ok(CajeerBook\RecoveryEnvelope::key()===hex2bin($nextKey),'old encrypted remote restored after key rotation');
  if(!$storage)ok(count($restored->read()['pages'])===1&&count($restored->read()['history'])>0,'published page and revisions restored');
  deny(fn()=>$m->restore($id,$root,true),'cannot overwrite source');deny(fn()=>$m->restore('../escape',$base.'/bad',true),'invalid recovery ID rejected');
- Files::write($base.'/key',str_repeat('0',64)."\n");deny(fn()=>$m->restore($id,$base.'/wrong-key',true),'wrong key rejected');ok(!file_exists($base.'/wrong-key'),'wrong key leaves no restore target');Files::write($base.'/key',$key."\n");
+ Files::write($base.'/key',str_repeat('0',64)."\n");deny(fn()=>$m->restore($id,$base.'/wrong-key',true),'wrong key rejected');ok(!file_exists($base.'/wrong-key'),'wrong key leaves no restore target');ok(glob($base.'/.book-recovery-*')===[],'rejected recovery leaves no destination staging');Files::write($base.'/key',$key."\n");
  if(!$s3){
   $remoteFile=$remote.'/'.$id.'.cbk';$original=file_get_contents($remoteFile);file_put_contents($remoteFile,substr($original,0,-1));deny(fn()=>$m->restore($id,$base.'/truncated',true),'truncated encrypted remote rejected');
   file_put_contents($remoteFile,$original."x");deny(fn()=>$m->restore($id,$base.'/trailing',true),'appended bytes rejected');file_put_contents($remoteFile,$original);
