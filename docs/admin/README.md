@@ -1,6 +1,6 @@
-# Administrator handbook — CajeerEngine Book 1.0.6
+# Administrator handbook — CajeerEngine Book 1.0.7
 
-**Current PostgreSQL schema: 5.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
+**Current PostgreSQL schema: 6.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
 ## Start here
 
@@ -17,6 +17,7 @@
 | Install a signed release, recover interrupted upgrade or rollback | [Secure updates](secure-updates.md) |
 | Historical SQL migration to schema 3 and performance | [PostgreSQL performance](postgres-performance.md) |
 | Workspace analytics and schema 5 migration | [Analytics, dashboards and vendor integrations](analytics.md) |
+| Documentation embeddings, hybrid search and schema 6 | [Semantic search and indexing](search-embeddings.md) |
 | Measure capacity and qualify production SLOs | [Performance](performance.md), [load qualification](load-qualification.md) |
 | Qualify historical upgrade, total-loss recovery and long load | [Production qualification](production-qualification.md) |
 | Reproduce documentation checks | [Verification](verification.md) |
@@ -24,7 +25,7 @@
 ## Support boundaries
 
 - File mode is for one host, with persistent private filesystem; SQL mode is PostgreSQL 16 plus the same private media volume. Distributed app replicas require PostgreSQL and shared POSIX storage. Redis is optional for single node and required for the documented distributed runtime. Sentinel is an externally operated cluster, not supplied by Book.
-- The SQL runtime requires schema 5 and a writable primary. PostgreSQL HA promotion, shared storage replication and external secret-manager lifecycle belong to the infrastructure operator. Do not use transaction-mode connection pooling with session advisory locks.
+- The SQL runtime requires schema 6 and a writable primary. PostgreSQL HA promotion, shared storage replication and external secret-manager lifecycle belong to the infrastructure operator. Do not use transaction-mode connection pooling with session advisory locks.
 - Production builds contain the CLI but not tests or this handbook; use the matching signed source ZIP for documentation. The deployment ZIP uses immutable own-image digests; do not rebuild it. Some optional services depend on upstream images; inspect and qualify those separately.
 - A documentation smoke test is not production certification. Readiness is not a backup drill. Passing a file-mode benchmark does not demonstrate PostgreSQL throughput. Complete the release, security, PITR and load gates for your infrastructure before exposing production traffic.
 

@@ -64,6 +64,7 @@
             "@php tests/postgres-identity-policy.php",
             "@php tests/postgres-reader.php",
             "@php tests/search-policy.php",
+            "@php tests/search-107.php",
             "@php tests/multilingual.php",
             "python3 tests/multilingual-http.py",
             "python3 tests/search-http.py",

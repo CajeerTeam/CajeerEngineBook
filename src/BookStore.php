@@ -39,7 +39,20 @@ final class BookStore {
     }
     public function search(string $visibility,string $role,array $options,bool $navigation=false):array {
         if($pg=$this->backend())return $pg->search($visibility,$role,$options,$navigation);
-        return $this->snapshot(fn($db)=>Search::portable($db,$visibility,$role,$options,$navigation));
+        if(!$options['groups']||array_filter($options['groups'],static fn(array $g):bool=>$g['phrase'])||!Embeddings::enabled())return $this->snapshot(fn($db)=>Search::portable($db,$visibility,$role,$options,$navigation));
+        $query=HybridSearch::query($options['q']);
+        if($query===null)return $this->snapshot(fn($db)=>Search::portable($db,$visibility,$role,$options,$navigation));
+        return $this->snapshot(function(array $db)use($visibility,$role,$options,$navigation,$query):array {
+            $all=$options;$all['offset']=0;$all['limit']=1000;
+            $lex=Search::portable($db,$visibility,$role,$all,$navigation);
+            $semantic=HybridSearch::portableCandidates($this->dir,$db,$visibility,$role,$options,$query);
+            return HybridSearch::combine($lex,$semantic,$options);
+        });
+    }
+    public function refreshEmbeddings(int $limit=8):int {
+        if(!Embeddings::enabled())return 0;
+        if($pg=$this->backend())return $pg->refreshEmbeddings($limit);
+        return Embeddings::refreshPortable($this->dir,$limit);
     }
     public function publishedPage(string $key,string $visibility,string $role):array {
         if($pg=$this->backend())return $pg->publishedPage($key,$visibility,$role);
@@ -116,13 +129,19 @@ final class BookStore {
             $pg->transaction(true,function(array $db)use($pg,$fn,$historyAction,$historyNote,$historySource){
                 self::validateDatabase($db);$before=$db;$events=$this->mutate($db,$fn,$historyAction,$historyNote,$historySource);
                 self::validateDatabase($db);self::checkSize($db);$pg->write($before,$db,$events);
-            });return;
+            });
+            $this->refreshEmbeddingsAfterWrite();return;
         }
         Files::dir($this->dir); $lock=$this->dir.'/books.lock';
         if(is_link($lock)) throw new \RuntimeException('Unsafe lock');
         $h=fopen($lock,'c+'); if(!$h) throw new \RuntimeException('Lock unavailable');
         try { if(!flock($h,LOCK_EX)) throw new \RuntimeException('Lock failed'); $db=$this->read(); $this->mutate($db,$fn,$historyAction,$historyNote,$historySource); if($this->backend())throw new \RuntimeException('Content backend changed; retry after migration.'); self::writeDatabase($this->dir.'/books.json',$db); }
         finally { fclose($h); }
+        $this->refreshEmbeddingsAfterWrite();
+    }
+    private function refreshEmbeddingsAfterWrite():void {
+        if(!Embeddings::enabled())return;
+        try{$this->refreshEmbeddings(2);}catch(\Throwable $e){Observability::log('search.indexing_pending',['error_type'=>get_class($e)]);}
     }
     private function mutate(array &$db,callable $fn,?string $historyAction,string $historyNote,?string $historySource):array {
         $before=$db; $fn($db); if($historyAction!==null)ReviewWorkflow::trackAuthors($before,$db,$this->historyActor,$historyAction); ReviewWorkflow::refresh($db); CiPublishing::refresh($db); if($historyAction!==null)RevisionHistory::capture($before,$db,$historyAction,$this->historyActor,$historyNote,$historySource); self::books($db); $events=ActivityJournal::content($before,$db,$this->historyActor,$historyAction); AutomationQueue::capture($before,$db);

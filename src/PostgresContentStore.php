@@ -349,17 +349,48 @@ final class PostgresContentStore
     }
     public function search(string $visibility,string $role,array $options,bool $navigation):array
     {
+        // Network inference is outside the SQL read lock and never holds up content writers.
+        $embedding=$options['groups']&&!array_filter($options['groups'],static fn(array $g):bool=>$g['phrase'])?HybridSearch::query($options['q']):null;
         $pdo=$this->db();$pdo->beginTransaction();
         try{$this->lock($pdo,false);PostgresSearch::assertReady($pdo,$this->params());
-            $compute=fn()=>PostgresSearch::find($pdo,$this->params(),$visibility,$role,$options,$navigation);
-            $redis=$visibility==='public'&&!Permissions::allows($role,'read')?RedisRuntime::forBinding($this->namespace,$this->binding):null;
+            $compute=function()use($pdo,$visibility,$role,$options,$navigation,$embedding){
+                if($embedding===null)return PostgresSearch::find($pdo,$this->params(),$visibility,$role,$options,$navigation);
+                $all=$options;$all['limit']=1000;$all['offset']=0;
+                $lex=PostgresSearch::find($pdo,$this->params(),$visibility,$role,$all,$navigation);
+                $semantic=HybridSearch::postgresCandidates($pdo,$this->params(),$visibility,$role,$options,$embedding);
+                return HybridSearch::combine($lex,$semantic,$options);
+            };
+            // External vectors change without content revision. Do not cache hybrid results
+            // under the older full-text-only Redis key.
+            $redis=!Embeddings::enabled()&&$visibility==='public'&&!Permissions::allows($role,'read')?RedisRuntime::forBinding($this->namespace,$this->binding):null;
             if($redis){
-                // The row lock pins the revision; search-state xmin changes on rebuild as well as publication.
                 $revision=$this->query($pdo,'SELECT revision::text || chr(58) || xmin::text FROM cajeer_book.search_state WHERE installation=? AND scope=?',$this->params())->fetchColumn();
                 $result=$redis->remember('search',['0.4.6',$this->scope,$revision,$options,$navigation],$compute);
             }else $result=$compute();
-            $pdo->commit();return $result;}
-        catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+            $pdo->commit();return $result;
+        }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+    }
+    /** Incrementally materialize missing/stale vectors, guarded by a compare-and-swap
+     * against the current published projection. Provider calls occur without SQL locks. */
+    public function refreshEmbeddings(int $limit=8):int
+    {
+        if(!Embeddings::enabled())return 0;
+        $limit=max(1,min(16,$limit));$model=Embeddings::model();$pdo=$this->db();
+        $q=$this->query($pdo,'SELECT d.page_key,d.title,d.section,d.body FROM cajeer_book.search_document d LEFT JOIN cajeer_book.search_embedding e ON e.installation=d.installation AND e.scope=d.scope AND e.page_key=d.page_key AND e.model=? WHERE d.installation=? AND d.scope=? AND e.page_key IS NULL ORDER BY d.page_key LIMIT '.$limit,[$model,...$this->params()]);
+        $rows=$q->fetchAll(PDO::FETCH_ASSOC);if(!$rows)return 0;
+        $inputs=array_map(static fn(array $r):string=>Embeddings::input($r['title'],$r['section'],$r['body']),$rows);
+        $vectors=Embeddings::generate($inputs);$saved=0;
+        foreach($rows as $i=>$r){
+            $pdo->beginTransaction();try{
+                $q=$this->query($pdo,'SELECT title,section,body FROM cajeer_book.search_document WHERE installation=? AND scope=? AND page_key=? FOR UPDATE',[...$this->params(),$r['page_key']]);
+                $current=$q->fetch(PDO::FETCH_ASSOC);
+                if($current!==false&&hash_equals(Embeddings::digest($inputs[$i]),Embeddings::digest(Embeddings::input($current['title'],$current['section'],$current['body'])))){
+                    $this->query($pdo,'INSERT INTO cajeer_book.search_embedding(installation,scope,page_key,model,digest,vector) VALUES(?,?,?,?,?,CAST(? AS jsonb)) ON CONFLICT (installation,scope,page_key) DO UPDATE SET model=EXCLUDED.model,digest=EXCLUDED.digest,vector=EXCLUDED.vector,updated_at=clock_timestamp()',[...$this->params(),$r['page_key'],$model,Embeddings::digest($inputs[$i]),self::json($vectors[$i])]);$saved++;
+                }
+                $pdo->commit();
+            }catch(\Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        }
+        return $saved;
     }
     public function checkSearch():void{$this->searchInfo();}
     /** Offline schema upgrade/rebuild; all scopes commit together, including archived ones. */

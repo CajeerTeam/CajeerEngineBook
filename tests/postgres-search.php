@@ -40,4 +40,30 @@ try{
     $q=$pdo->prepare('DELETE FROM cajeer_book.search_state WHERE installation=?');$q->execute([$ns]);$q=$pdo->prepare('DELETE FROM cajeer_book.search_document WHERE installation=?');$q->execute([$ns]);
     deny(fn()=>$search('quasar'),'missing index fails closed instead of scanning stale JSON');deny(fn()=>$s->createBook('blocked','Blocked'),'writes refuse stale index before migration');
     $report=PostgresContentStore::reindex($root);ok($report[$scope]===2&&$report===PostgresContentStore::searchStatus($root),'offline rebuild backfills all current scopes and reports verified counts');ok($search('quasar')['total']===1&&$search('quasar','owner')['total']===2,'rebuild preserves private policy and current published snapshot');
+    // Actual PostgreSQL vector materialization, authorization and transactional
+    // invalidation against a real OpenAI-compatible loopback HTTP test provider.
+    $socket=stream_socket_server('tcp://127.0.0.1:0',$error,$message);if(!$socket)throw new RuntimeException($message);
+    $port=(int)substr(strrchr(stream_socket_get_name($socket,false),':'),1);fclose($socket);
+    $fixtureLog=sys_get_temp_dir().'/book107-pg-'.getmypid().'.log';
+    $provider=proc_open([PHP_BINARY,'-S','127.0.0.1:'.$port,'-t',__DIR__.'/fixtures',__DIR__.'/fixtures/embedding-api.php'],[0=>['pipe','r'],1=>['file',$fixtureLog,'a'],2=>['file',$fixtureLog,'a']],$pipes,dirname(__DIR__));
+    if(!is_resource($provider))throw new RuntimeException('Cannot start local embedding fixture.');fclose($pipes[0]);
+    try{
+        for($attempt=0;$attempt<30;$attempt++){$probe=@fsockopen('127.0.0.1',$port,$error,$message,.1);if($probe){fclose($probe);break;}usleep(100000);}
+        putenv('BOOK_EMBEDDING_MODEL=book-test-v1');putenv('BOOK_EMBEDDING_URL=http://127.0.0.1:'.$port.'/v1/embeddings');
+        $save('guide','network','Ethernet setup','Network connectivity and cables.');
+        $save('secret','network','Private ethernet','Private network password material.');
+        $s->refreshEmbeddings(16);
+        $guest=$search('connection');$member=$search('connection','viewer');
+        ok($keys($guest)===['guide/1/network']&&$guest['match']==='hybrid'&&in_array('secret/1/network',$keys($member),true),'real SQL vectors retrieved with per-book access check');
+        $q=$pdo->prepare('SELECT count(*) FROM cajeer_book.search_embedding WHERE installation=? AND scope=?');$q->execute([$ns,$scope]);
+        ok((int)$q->fetchColumn()>=2,'embedded vector rows persisted with installation and scope');
+        $rev=$s->read()['pages']['guide/1/network']['revision'];$save('guide','network','Alpine hiking','Mountain trails and climbing.',$rev);
+        $s->refreshEmbeddings(16);
+        ok($keys($search('connection'))===[]&&$keys($search('alpine'))===['guide/1/network'],'SQL publication replaces stale semantic embedding');
+        $s->remove('guide/1/network',$s->read()['pages']['guide/1/network']['revision'],true);
+        ok($keys($search('alpine'))===[],'unpublish cascades vector removal and denies stale hit');
+    }finally{
+        putenv('BOOK_EMBEDDING_MODEL');putenv('BOOK_EMBEDDING_URL');proc_terminate($provider);proc_close($provider);@unlink($fixtureLog);
+    }
+
 }finally{putenv('BOOK_PG_DSN='.$dsn);try{$pdo=PostgresContentStore::connect();$q=$pdo->prepare('DELETE FROM cajeer_book.content_installation WHERE installation=?');$q->execute([$ns]);}catch(Throwable $e){fwrite(STDERR,'Cleanup: '.$e->getMessage()."\n");}clean($root);}

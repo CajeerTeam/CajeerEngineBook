@@ -1437,3 +1437,8 @@ Supported declarations include flowchart/graph, sequenceDiagram, classDiagram, s
 Use the block grip to drag blocks before/after other blocks or the Move block up/down buttons; Alt+Shift+Up/Down moves the focused block. Moves keep original source bytes and add separators where needed; crossing protected Markdown or moving an unclosed fence is refused.
 
 Upgrade from 0.1.8: back up `BOOK_DATA_DIR`, overlay the changed files and rebuild Docker (or install the local Mermaid asset with the shell command above). No schema migration. Test with `composer test` and `python tests/mermaid-browser.py` after installing Playwright Chromium and the pinned asset.
+
+
+### Semantic / hybrid search (1.0.7)
+
+Full-text search continues to work without an external embedding service. To activate semantic retrieval, configure an **operator-approved** OpenAI-compatible `POST /embeddings` provider with `BOOK_EMBEDDING_URL`, `BOOK_EMBEDDING_MODEL` and optionally `BOOK_EMBEDDING_API_KEY`, and run `php bin/search.php embeddings --offline` to backfill existing published documents. New publications are indexed after content commits; `bin/worker.php --loop` retries pending vectors. PostgreSQL deployments must apply schema **6** offline before starting 1.0.7. The configured provider receives the first 6 KiB of the rendered published document (including title/section); do **not** configure a third-party service if that is prohibited by your documentation privacy policy. Details: [semantic search operations](docs/admin/search-embeddings.md).

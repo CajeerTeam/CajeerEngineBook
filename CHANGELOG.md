@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.7 — Search indexing, embeddings and hybrid search
+
+- Add real OpenAI-compatible embedding API client with HTTPS or local loopback endpoint, API key and model settings, strict finite-vector checks, bounded payloads, short network timeout and no redirects. The provider is explicitly opt-in; no private document is transmitted unless the operator configures an external provider.
+- Materialize versioned per-document vectors in private, atomically written file-mode sidecars or PostgreSQL `search_embedding` rows. Update only published content; compare-and-swap prevents in-flight embeddings from overwriting a newer revision. PostgreSQL updates invalidate stale vectors transactionally.
+- Fuse existing fulltext/FTS and authorized cosine-similarity candidates using reciprocal-rank fusion with deterministic ordering, filters and pagination. Semantic candidates are checked against the same Workspace/book/locale permissions as Reader. On provider outage, the validated existing lexical search continues operating.
+- Run bounded indexing after publication and through the existing worker. Add explicit all-workspace CLI backfill (`php bin/search.php embeddings --offline`). Derived vector data may be rebuilt after recovery without impacting source content.
+- Add reversible offline PostgreSQL schema migration 6, API protocol/regression tests and operational documentation. Real provider credentials and deployed PostgreSQL/Redis qualifications are still required to certify a specific production environment.
+
+
 ## 1.0.6 — Documentation analytics, search queries, conversions and vendor integrations
 
 - Replace the original tabular-only report with a working manager-only 30-day dashboard: daily activity chart, popular documentation URLs, search-query frequencies, per-goal conversion counts and normalized conversion volume per 100 page views. Keep role, CSRF and revision checks for Workspace settings.

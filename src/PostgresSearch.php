@@ -37,6 +37,12 @@ final class PostgresSearch
         $old=$rebuild||!isset($before['pages'])?[]:Search::projection($before);$new=Search::projection($after);
         if($rebuild)self::q($pdo,'DELETE FROM cajeer_book.search_document WHERE installation=? AND scope=?',$scope);
         else foreach(array_chunk(array_keys(array_diff_key($old,$new)),128) as $chunk)self::q($pdo,'DELETE FROM cajeer_book.search_document WHERE installation=? AND scope=? AND page_key IN ('.implode(',',array_fill(0,count($chunk),'?')).')',[...$scope,...$chunk]);
+        // Invalidate exactly the changed published representations, in bounded batches.
+        // Removal of unpublished/deleted pages already cascades from search_document.
+        if(!$rebuild&&isset($before['pages'])){
+            $changed=[];foreach($new as $key=>$p)if(!isset($old[$key])||$old[$key]!==$p)$changed[]=$key;
+            foreach(array_chunk($changed,128) as $chunk)self::q($pdo,'DELETE FROM cajeer_book.search_embedding WHERE installation=? AND scope=? AND page_key IN ('.implode(',',array_fill(0,count($chunk),'?')).')',[...$scope,...$chunk]);
+        }
         $batch=[];$bytes=0;
         $flush=static function()use($pdo,&$batch,&$bytes){
             if(!$batch)return;
