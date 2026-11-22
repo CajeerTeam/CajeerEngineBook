@@ -6,6 +6,7 @@ require_once __DIR__.'/MintlifyImport.php';
 require_once __DIR__.'/MintlifyMdx.php';
 require_once __DIR__.'/DocusaurusImport.php';
 require_once __DIR__.'/DocusaurusMdx.php';
+require_once __DIR__.'/GitBookImport.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -59,6 +60,8 @@ final class MarkdownImport
     /** Resolve a local link against the source tree, never the server filesystem. */
     private static function destination(string $url,string $source,array $pages,array $assets,array &$warnings):string{
         $raw=html_entity_decode($url,ENT_QUOTES|ENT_HTML5,'UTF-8');
+        $cut=strcspn($raw,'?#');$absolute=substr($raw,0,$cut);
+        if(isset($pages[$absolute])&&str_starts_with($absolute,'https://app.gitbook.com/s/'))return '/docs/'.$pages[$absolute].substr($raw,$cut);
         if($raw===''||preg_match('~^(?:[a-z][a-z0-9+.-]*:|//|#|\?)~i',$raw))return $url;
          $n=strcspn($raw,'?#');$canonical=substr($raw,0,$n);if(str_starts_with($canonical,"/")&&isset($pages[$canonical]))return '/docs/'.$pages[$canonical].substr($raw,$n);
         $root=str_starts_with($raw,'/');if($root&&preg_match('~^/(?:docs|media|studio|api|w|l)(?:/|$)~',$raw))return $url;
@@ -128,11 +131,12 @@ REGEX;
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
         // Sign the original inputs, including Mintlify navigation/redirect configuration.
         foreach($files as $source=>$file){ImportFiles::path((string)$source);if(!is_file($file))throw new \InvalidArgumentException('Import source missing');$hashes[(string)$source]=Files::hash($file);}
-        $mint=MintlifyImport::prepare($files);
-        $docus=$mint['mintlify']?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
-        $files=$mint['mintlify']?$mint['files']:$docus['files'];
-        $warnings=$mint['mintlify']?$mint['warnings']:$docus['warnings'];
-        $navFiles=$docus['docusaurus']?$docus['nav']:[];foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
+        $gitbook=GitBookImport::prepare($files,$book,$version);
+        $mint=$gitbook['gitbook']?['mintlify'=>false,'files'=>$files,'nav'=>[],'redirects'=>[],'warnings'=>[]]:MintlifyImport::prepare($files);
+        $docus=($mint['mintlify']||$gitbook['gitbook'])?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
+        $files=$gitbook['gitbook']?$gitbook['files']:($mint['mintlify']?$mint['files']:$docus['files']);
+        $warnings=$gitbook['gitbook']?$gitbook['warnings']:($mint['mintlify']?$mint['warnings']:$docus['warnings']);
+        $navFiles=$gitbook['gitbook']?$gitbook['nav']:($docus['docusaurus']?$docus['nav']:[]);foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
         
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
         foreach($db['media']??[] as $item)$total+=$item['size'];
@@ -141,18 +145,24 @@ REGEX;
             if(preg_match('/\.(md|mdx|markdown)$/i',$path)){
                 if($size>Markdown::MAX_BYTES)throw new \InvalidArgumentException('Markdown exceeds 256 KiB: '.$path);if(($markdownBytes+=$size)>8*1024*1024)throw new \InvalidArgumentException('Markdown import exceeds 8 MiB; split the import');
                 $source=(string)file_get_contents($file);$converted=[];
-                if($docus['docusaurus'])$source=DocusaurusMdx::convert($source,$converted);
+                if($gitbook['gitbook'])$source=GitBookImport::convert($source,$path,$gitbook['original'],$converted);
+                elseif($docus['docusaurus'])$source=DocusaurusMdx::convert($source,$converted);
                 elseif($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
                 foreach($converted as $warning){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many Mintlify conversion warnings');$warning['source']=$path;$warnings[]=$warning;}
                 $doc=self::document($source,$path,++$order*10);
-                $targetVersion=$version;
+                $targetVersion=$version;$targetBook=$book;
+                if($gitbook['gitbook']){
+                    $sourcePage=$gitbook['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected GitBook document');
+                    $targetBook=$sourcePage['book'];$targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];
+                    if($sourcePage['title']!==null)$doc['title']=$sourcePage['title'];
+                }
                 if($docus['docusaurus']){
                     $sourcePage=$docus['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected Docusaurus document');
                     $targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];$doc['locale']=$sourcePage['locale'];
                     if($sourcePage['title']!==null&&!str_contains($source,'title:'))$doc['title']=$sourcePage['title'];
                 }
                 if(isset($navFiles[$path])){$doc['order']=$navFiles[$path]['order'];if($navFiles[$path]['section']!=='')$doc['section']=$navFiles[$path]['section'];$doc['explicit_order']=true;}
-                $key=BookStore::key($book,$targetVersion,$doc['path']);
+                $key=BookStore::key($targetBook,$targetVersion,$doc['path']);
                 if(isset($used[$key]))throw new \InvalidArgumentException('Multiple files map to the same page: '.$key);$used[$key]=true;$docs[$path]=['key'=>$key,'doc'=>$doc];
             }else{
                 $meta=MediaStore::inspect($file,basename($path));$folder=MediaStore::folder(dirname($path)==='.'?'':dirname($path));$id=null;
@@ -203,12 +213,27 @@ REGEX;
             }
             if($route==='index'){$root=rtrim($base,'/');if(!isset($links[$root]))$links[$root]=$target;}
         }
+        if($gitbook['gitbook'])foreach($gitbook['pages'] as $source=>$spec){
+            if(!isset($mapping[$source]))continue;
+            $segments=explode('/',trim($spec['space_prefix'],'/'));$spaceId=end($segments);
+            if($spaceId!==false&&$spaceId!==''){
+                $url='https://app.gitbook.com/s/'.$spaceId.'/'.($spec['route']==='index'?'':$spec['route']);
+                $links[rtrim($url,'/')]=$mapping[$source];
+            }
+        }
         $assetsLinks=$mediaMap;
         foreach($mediaMap as $asset=>$id){
             if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
             if($docus['docusaurus']&&str_starts_with($asset,'static/'))$assetsLinks[substr($asset,7)]=$id;
         }
         $redirects=[];
+        foreach($gitbook['redirects'] as $item){
+            $dest=$mapping[$item['target']]??null;$alias=BookStore::key($item['book'],$item['version'],$item['old']);
+            if($dest===null||$dest===$alias)continue;
+            if(isset($db['pages'][$alias])||isset($used[$alias])||isset($redirects[$alias])||PageTree::reserved($db,$alias,($db['pages'][$dest]['id']??''))){
+                if(count($warnings)<1000)$warnings[]=['source'=>'redirects','url'=>'Reserved GitBook redirect: '.$alias];continue;
+            }$redirects[$alias]=$dest;
+        }
         foreach($mint['redirects'] as $old=>$target){
             $source=MintlifyImport::find($target,$files);
             if($source===null||!isset($mapping[$source])){if(count($warnings)<1000)$warnings[]=['source'=>'redirects','url'=>'Missing destination: '.$target];continue;}
@@ -217,9 +242,19 @@ REGEX;
             if(isset($db['pages'][$alias])||isset($used[$alias])||PageTree::reserved($db,$alias,($db['pages'][$dest]['id']??''))){if(count($warnings)<1000)$warnings[]=['source'=>'redirects','url'=>'Reserved destination: '.$old];continue;}
             $redirects[$alias]=$dest;
         }
-        foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){$d['doc']['body']=self::rewrite($d['doc']['body'],$path,$links,$assetsLinks,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
+        foreach($docs as $path=>&$d){$w=[];if($d['action']!=='skip'){
+                $localLinks=$links;$localAssets=$assetsLinks;
+                if($gitbook['gitbook']){
+                    $root=$gitbook['pages'][$path]['root'];
+                    foreach($mapping as $name=>$dest)if(str_starts_with($name,$root))$localLinks['/'.substr($name,strlen($root))]=$dest;
+                    foreach($mediaMap as $name=>$id){
+                        if(str_starts_with($name,$root))$localAssets['/'.substr($name,strlen($root))]=$id;
+                        elseif(str_starts_with($name,$gitbook['pages'][$path]['space_prefix'].'.gitbook/assets/'))$localAssets['/'.substr($name,strlen($gitbook['pages'][$path]['space_prefix']))]=$id;
+                    }
+                }
+                $d['doc']['body']=self::rewrite($d['doc']['body'],$path,$localLinks,$localAssets,$w);Markdown::validate($d['doc']['body']);$d['doc']['media']=Markdown::mediaReferences($d['doc']['body'],$d['key']);foreach($d['doc']['media'] as $id)if(!isset($db['media'][$id])&&!isset($assets[$id]))throw new \InvalidArgumentException('Unknown media file: '.$id);
                 if($d['action']==='update'){$current=$db['pages'][$d['key']]['draft'];if(isset($d['doc']['locale'])&&$d['doc']['locale']!==Locale::language($current))throw new \DomainException('Import language differs from existing document: '.$d['key']);unset($current['updated'],$current['locale'],$current['translation_group'],$current['source_digest']);$candidate=$d['doc'];unset($candidate['path'],$candidate['explicit_order'],$candidate['locale']);$current['media']??=[];ksort($current);ksort($candidate);if($current===$candidate)$d['action']='unchanged';}}foreach(array_keys($w) as $url){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many unresolved links; split import');$warnings[]=['source'=>$path,'url'=>$url];}$rows[]=['source'=>$path,'target'=>$d['key'],'action'=>$d['action'],'title'=>$d['doc']['title']];}unset($d);
-        return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes,'redirects'=>$redirects];
+        return ['docs'=>$docs,'assets'=>$assets,'rows'=>$rows,'warnings'=>$warnings,'media_new'=>$newMedia,'media_total'=>count($mediaMap),'hashes'=>$hashes,'redirects'=>$redirects,'books'=>$gitbook['books']];
     }
     private static function token(array $db,array $plan,string $book,string $version,string $strategy,string $secret,int $time):string{
         return $time.'.'.hash_hmac('sha256',json_encode([$time,WorkspaceUrls::prefix(),$book,$version,$strategy,$plan['hashes'],hash('sha256',json_encode($db,JSON_THROW_ON_ERROR))],JSON_THROW_ON_ERROR),$secret);
@@ -257,7 +292,8 @@ REGEX;
         $created=[];$result=[];
         try{$this->store->change(function(&$db)use($book,$planner,$after,&$created,&$result){
             $p=$planner($db);
-            $db['media']??=[];$books=BookStore::books($db);if(!isset($books[$book])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$book]=['slug'=>$book,'id'=>bin2hex(random_bytes(16)),'title'=>$book];}$db['books']=$books;
+            $db['media']??=[];$books=BookStore::books($db);$needed=($p['books']??[])?:[$book=>['slug'=>$book,'title'=>$book]];
+            foreach($needed as $slug=>$item)if(!isset($books[$slug])){if(count($books)>=1000)throw new \DomainException('Book limit reached');$books[$slug]=['slug'=>$slug,'id'=>bin2hex(random_bytes(16)),'title'=>$item['title']];}$db['books']=$books;
             foreach($p['assets'] as $id=>$item){$source=$item['source'];unset($item['source']);$path=$this->media->blob($id);$this->installBlob($source,$path,$item['sha256']);$created[$id]=$path;$db['media'][$id]=$item;}
             // Git Sync may identify an exact, unambiguous source rename. Retain the
             // stable page ID and old public path; ordinary tree publication remains separate.

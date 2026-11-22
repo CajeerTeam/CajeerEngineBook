@@ -1,3 +1,7 @@
+### GitBook Spaces and API migration (1.0.11)
+
+Import GitBook Git Sync or export ZIP/directory in **Studio → Import documentation**, retaining `SUMMARY.md` hierarchy, `.gitbook.yaml` redirects, pages, supported rich blocks, reusable includes and validated media. Multi-Space bundles create separate Books; everything is imported as drafts through the same signed atomic preview/apply workflow. A read-only GitBook REST API exporter (`php bin/gitbook-import.php`) generates an uploadable ZIP using `GITBOOK_API_TOKEN`. Imported external URLs can resolve between Spaces when they refer to pages in the same bundle. Unsafe conditional/adaptive content is rejected, not silently published. See [GitBook migration guide](docs/admin/gitbook-import.md). No schema migration.
+
 ### Docusaurus documentation migration (1.0.10)
 
 Studio imports Docusaurus Markdown/MDX, static `sidebars.js`/`sidebars.ts`/`sidebars.json`, versioned documentation and navigation, localized documents, supported `:::` admonitions, native MDX tabs/callouts and local media. Repository JavaScript is never executed. Imports are previewed and applied atomically **as drafts only**, with Book's existing permissions and revision semantics. No schema migration is necessary. See [Docusaurus migration guide](docs/admin/docusaurus-import.md) for supported structures, limits and verification.
@@ -12,7 +16,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.10** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.11** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

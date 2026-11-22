@@ -1,3 +1,10 @@
+## 1.0.11 — GitBook Spaces and documentation migration (2026-11-22)
+
+- Extend the existing Studio import planner with actual GitBook Git Sync/export support: `.gitbook.yaml` root/structure/redirects, `SUMMARY.md` navigation, multiple independent Spaces mapped to Books, Markdown pages, and validated local attachments. All changes use the signed preview/apply transaction and create drafts only.
+- Translate static GitBook hints, tabs, steppers, expandable details, content references, file links and included content into safe Book Markdown/rich blocks. Refuse conditional/adaptive page visibility and executable constructs; do not execute source templates. Preserve local links and rewrite cross-Space GitBook URLs when targets are in the imported bundle.
+- Add read-only authenticated GitBook REST API export with bounded pagination, HTTPS host checks, strict input and download limits; emit a ZIP suitable for the Studio importer, without storing API credentials in Book data. Add policy, API-protocol and Composer/ZIP end-to-end regression tests.
+- PostgreSQL schema unchanged at 7. Real GitBook credentials, deployment databases and a complete production release gate still require infrastructure validation.
+
 ## 1.0.10 — Docusaurus documentation migration (2026-11-22)
 
 - Import static Docusaurus sidebar configurations (JSON, JS and TS static literals), category order, auto-generated sidebar entries and versioned sidebar snapshots as Book section/order metadata. Untrusted JavaScript is never evaluated.
