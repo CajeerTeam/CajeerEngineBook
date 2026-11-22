@@ -16,6 +16,46 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = ('native', 'postgres', 'docker', 'distributed', 'domains')
+# These are executable regression tests, not optional checklist entries. A release
+# must not turn green when someone accidentally drops a critical path from composer.
+CRITICAL_REGRESSIONS = frozenset({
+    'tests/regressions-102.php', 'tests/oidc-http.py',
+    'tests/oidc-linking-http.py', 'tests/permissions.php',
+    'tests/mintlify-109-integration.php', 'tests/docusaurus-110-integration.php',
+    'tests/gitbook-111-integration.php', 'tests/readme-112-integration.php',
+    'tests/fumadocs-113-integration.php', 'tests/editor-ai-114.php',
+    'tests/analytics-106-http.py', 'tests/search-107.php', 'tests/chat-108.php',
+    'tests/reviews.php', 'tests/recovery.php', 'tests/recovery-110.php',
+    'tests/security-hardening.php', 'tests/security-lifecycle.php',
+    'tests/pitr-policy.php', 'tests/redis-policy.php', 'tests/postgres-policy.php',
+    'tests/enterprise-load.py', 'tests/release-signing.py',
+    'tests/update-manager.py', 'tests/release.php',
+})
+
+
+def regression_commands(root=ROOT):
+    commands = json.loads((root/'composer.json').read_text())['scripts']['test']
+    if not isinstance(commands, list) or not commands:
+        raise RuntimeError('Missing Composer regression commands')
+    paths = set()
+    seen = set()
+    for raw in commands:
+        if not isinstance(raw, str):
+            raise RuntimeError('Invalid Composer regression command')
+        args = shlex.split(raw)
+        if len(args) < 2 or args[0] not in ('@php', 'python3', 'node', 'bash'):
+            raise RuntimeError('Unsupported Composer regression command: '+raw)
+        path = args[1]
+        if raw in seen:
+            raise RuntimeError('Duplicate Composer regression command: '+raw)
+        seen.add(raw)
+        if not path.startswith('tests/') or not (root/path).is_file():
+            raise RuntimeError('Missing Composer test file: '+path)
+        paths.add(path)
+    missing = CRITICAL_REGRESSIONS-paths
+    if missing:
+        raise RuntimeError('Missing mandatory release regressions: '+', '.join(sorted(missing)))
+    return commands
 
 
 def isolated_env():
@@ -110,7 +150,7 @@ def native(g):
     g.require('php-lint', ['bash','-c', "set -o pipefail; find src core data public tests bin -name '*.php' -print0 | xargs -0 -n1 php -l && php -l bootstrap.php"])
     g.require('browser-dependency', ['python3','-c','import playwright'])
     # Read the same list as composer test. Execute each separately for actionable evidence.
-    commands = json.loads((ROOT/'composer.json').read_text())['scripts']['test']
+    commands = regression_commands()
     for i, command in enumerate(commands):
         args = shlex.split(command)
         if args[0] == '@php': args[0] = 'php'

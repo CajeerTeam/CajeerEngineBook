@@ -1,3 +1,10 @@
+## 1.1.0 — Unified regression, security, recovery and load gates (2026-11-22)
+
+- Repair file-mode backup loss of consent-only analytics aggregates. Under the analytics writer lock, capture and validate bounded daily files into each portable store TAR; restore atomically and reject malformed data, symlinks, undeclared members and unsafe filenames. Preserve compatibility with historical archives without these optional aggregates. PostgreSQL aggregates still require actual SQL/PITR recovery.
+- Harden standalone installation restores: reject unexpected top-level files, symlinks and directories before creating a restore target, enforcing the same closed member policy as authenticated remote archives.
+- Make security CI install locked Composer dependencies before running its independent PHP/HTTP tests; independently retest the backup boundary. Enforce 25 mandatory critical regression paths in the native release gate so they cannot be silently removed from Composer tests. Add negative policy tests and tests for analytics snapshot, tampered archives and remote-only encrypted restore.
+- Integrate 1.1.0 acceptance, security evidence, short load, physical recovery, historical upgrade, full 24h SQL/Redis qualification, signing prerequisites, operator procedures and rollback in the handbook. These checks remain required on a dedicated infrastructure/CI environment; a local source patch does not assert that they passed. No PostgreSQL schema migration (schema 7); embedded core remains 2.1.0.
+
 ## 1.0.14 — Editor AI assistant, coverage and review-bound corrections (2026-11-22)
 
 - Add the opt-in Studio AI assistant using real OpenAI Responses SSE transport: bounded coverage analysis of documentation excerpts, diagnosis of pasted migration/import errors, and complete Markdown suggestions for saved pages. No automatic SQL execution, draft write or publication occurs during generation.

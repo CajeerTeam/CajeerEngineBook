@@ -1,6 +1,6 @@
-# Documentation verification — 1.0.0
+# Documentation verification — 1.1.0
 
-The handbook is tested against the actual checkout. A syntax/link check is not proof that a deployment or restore works. Use the following tiers and record the release commit, UTC time, environment, command, exit code and report path. A skipped tier is **not** a passed tier.
+The handbook is tested against the actual checkout. For the current release acceptance and added file-analytics recovery validation, see [1.1.0 release acceptance](release-110.md). A syntax/link check is not proof that a deployment or restore works. Use the following tiers and record the release commit, UTC time, environment, command, exit code and report path. A skipped tier is **not** a passed tier.
 
 ## Tier 1: reference integrity
 
@@ -31,7 +31,7 @@ If Composer/runtime dependencies are unavailable, `python3 tests/admin-runbook.p
 On a **disposable** Linux test host with Docker/Compose, PHP drivers, Composer, Node/npm, browser/test dependencies, AWS CLI and required tools, use the existing release runner. See README's release gate prerequisites.
 
 ```bash
-python3 tests/release-gate.py --suite all --report-dir /tmp/book082-gate
+python3 tests/release-gate.py --suite all --report-dir /tmp/book-110-gate
 ```
 
 The directory must not already exist. Native includes this handbook and executable CLI workflow; PostgreSQL includes fresh SQL migration/owner/backup/restore and redacted admin reports; distributed/Docker gates cover replica startup, readiness, Redis/Sentinel failover, shared volume probes, signed updates and domain ingress. PITR gate destroys a disposable cluster and recovers from physical backup/WAL and remote sidecar. Security scanner must pass separately in the protected CI. Inspect actual JSON/JUnit and logs; failure or missing dependencies are blockers, not success. For production latency and 24-hour load testing follow [load qualification](load-qualification.md), not a short smoke test. For a signed release follow [signed releases](signed-releases.md); test keys/fixtures do not constitute official release evidence.

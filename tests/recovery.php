@@ -17,8 +17,22 @@ try{
  $input=$base.'/input.txt';$mediaText=str_repeat('media content unique and private\n',50000);file_put_contents($input,$mediaText);$media=new MediaStore($dir,$books);$mid=$media->upload($input,'attachment.txt')['item']['id'];
  if(!$storage){$books->setHistoryActor($owner);$books->saveResult(['book'=>'guide','version'=>'1','path'=>'start','title'=>'Start','section'=>'Guide','order'=>10,'body'=>"# Start\n\n[File](/media/$mid)",'revision'=>0],true);}
  if($postgres){if(!$dsn||!getenv('BOOK_BACKUP_DRILL_PG_DSN'))throw new RuntimeException('Source and drill PostgreSQL databases required.');putenv('BOOK_PG_DSN='.$dsn);PostgresContentStore::migrate($root);}
+ if(!$postgres){
+  $analyticsWorkspace=$w;
+  $analyticsWorkspace['analytics']=array_replace(\CajeerBook\Analytics::defaults(),['enabled'=>true,'search_terms'=>true,'goals'=>['documentation_signup']]);
+  \CajeerBook\Analytics::collect($root,$analyticsWorkspace,'page_view','/docs/guide/1/start');
+  \CajeerBook\Analytics::collect($root,$analyticsWorkspace,'conversion','/docs/guide/1/start','documentation_signup');
+  $analyticsBefore=\CajeerBook\Analytics::report($root,$analyticsWorkspace);
+ }
  $m=new RecoveryManager($public);ok($m->health(300)['status']==='unavailable','no verified capture is unhealthy');$a=$m->run();$id=$a['id'];$file=$spool.'/'.$id.'.cbk';
  ok($a['status']==='verified'&&$a['remote']===($s3?'s3':'filesystem')&&is_file($file),'scheduled backup verified after remote read-back and actual restore');
+ if(!$postgres){
+  \CajeerBook\InstallationBackup::create($root,$base.'/portable',$public);
+  file_put_contents($base.'/portable/unlisted.txt','unexpected');
+  deny(fn()=>\CajeerBook\InstallationBackup::restore($base.'/portable',$base.'/unexpected',$public),'standalone restore rejects unlisted bundle members');
+  ok(!file_exists($base.'/unexpected'),'failed portable restore cannot publish a target');
+  clean($base.'/portable');
+ }
  ok($m->run()['status']==='not_due','persistent interval prevents duplicate backups');
  $telemetry=CajeerBook\Observability::backupSnapshot();ok($telemetry['capture']===$a['captured_at']&&$telemetry['verified']>=$a['verified_at']&&$telemetry['failures']===0&&$telemetry['pending']===0,'real verified backup publishes capture and verification timestamps');
  putenv('BOOK_MONITOR_BACKUP=1');$diag=(new CajeerBook\Diagnostics())->collect();ok($diag['checks']['backup']==='ok','diagnostics reads verified backup without repository credentials');putenv('BOOK_MONITOR_BACKUP');
@@ -39,6 +53,7 @@ try{
  ok($result['users']===1&&$ri->backup()['organizations'][$org['id']]['id']===$org['id']&&$ri->current($token)===null,'remote-only restore retains identity and revokes old sessions');
  ok(glob($base.'/.book-recovery-*')===[],'verified recovery publishes atomically and removes destination-side staging');
  ok($restored->read()['books']['guide']['title']==='Private documentation'&&file_get_contents((new MediaStore(Workspaces::directory($base.'/restored',$w),$restored))->blob($mid))===$mediaText,'remote-only restore preserves private content and media');
+ if(!$postgres)ok(\CajeerBook\Analytics::report($base.'/restored',$analyticsWorkspace)===$analyticsBefore,'remote-only encrypted recovery preserves all workspace analytics aggregates');
  ok(CajeerBook\RecoveryEnvelope::key()===hex2bin($nextKey),'old encrypted remote restored after key rotation');
  if(!$storage)ok(count($restored->read()['pages'])===1&&count($restored->read()['history'])>0,'published page and revisions restored');
  deny(fn()=>$m->restore($id,$root,true),'cannot overwrite source');deny(fn()=>$m->restore('../escape',$base.'/bad',true),'invalid recovery ID rejected');

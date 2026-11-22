@@ -1,3 +1,5 @@
+> **Current release 1.1.0:** This guide documents the historical 0.7.2 physical PITR implementation; the current required PostgreSQL schema is 7. In 1.1.0 the file-backed daily analytics snapshots are included in verified encrypted portable backups. PostgreSQL analytics tables are recovered through physical/PITR, **not** restored from a file-only portable bundle. See [1.1.0 release acceptance](release-110.md) for the validation limits and required independent recovery drill.
+
 # Disaster recovery and PostgreSQL PITR (0.7.2)
 
 This optional deployment adds physical PostgreSQL 16 backup and WAL replay via pgBackRest. Portable `bin/recovery.php` backups remain supported. **Database schema remains 3.** A Book recovery point is a named WAL record paired with an authenticated, encrypted installation sidecar containing the exact media bytes, portable content, identity and retained audit evidence. PostgreSQL alone cannot reconstruct the filesystem at an arbitrary time. For application recovery choose a verified paired point, not an arbitrary timestamp.

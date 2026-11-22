@@ -1,3 +1,7 @@
+### Unified release and recovery acceptance (1.1.0)
+
+The 1.1.0 source release keeps PostgreSQL schema **7** and the embedded **CajeerEngine 2.1.0** core. File-mode backup and encrypted recovery now preserve consent-only daily analytics aggregates alongside documentation and media, with bounded JSON/TAR validation and atomic restore. The native release gate enforces mandatory regressions for authorization, imports, review/publication, PostgreSQL/Redis policies and recovery; the independent security runner installs Composer dependencies before retesting. Existing Docker, PITR, load/soak and signed-release gates remain mandatory. **Passing local tests is not production qualification**: the protected tag CI, infrastructure recovery drill and 24-hour SQL/Redis load must pass separately. See [1.1.0 acceptance and rollback](docs/admin/release-110.md).
+
 ### Editor AI Assistant (1.0.14)
 
 Studio now includes an opt-in editor assistant for documentation gap analysis, migration/import error explanations and suggested Markdown corrections. Suggestions are previewed, signed, saved atomically with an independent review request, and never auto-published. Configure `BOOK_EDITOR_AI_ENABLED=1` and the server-side `BOOK_CHAT_API_KEY`. See the [editor AI guide](docs/admin/editor-ai.md) for external data disclosure, quotas, permissions and qualification.
@@ -28,7 +32,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.14** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.0** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

@@ -8,7 +8,7 @@ final class InstallationBackup
 {
     private const MAX_IDENTITY=4*1024*1024;
     private const MAX_MANIFEST=128*1024;
-    private const MAX_TAR=MediaStore::MAX_TOTAL+BookStore::MAX_DB_BYTES+4*1024*1024;
+    private const MAX_TAR=MediaStore::MAX_TOTAL+BookStore::MAX_DB_BYTES+AnalyticsBackup::MAX_BYTES+8*1024*1024;
     private static function path(string $path,string $public):string
     {
         $name=basename($path);if($name===''||$name==='.'||$name==='..'||preg_match('/[\x00-\x1f\x7f\\\\]/',$name))throw new \InvalidArgumentException('Invalid destination name');
@@ -45,7 +45,7 @@ final class InstallationBackup
     private static function verifyFile(string $bundle,string $name,array $entry,int $max):string
     {
         $path=Files::path($bundle,$name);
-        if(!is_file($path)||!is_int($entry['size']??null)||$entry['size']<1||$entry['size']>$max||!is_string($entry['sha256']??null)||!preg_match('/\A[a-f0-9]{64}\z/D',$entry['sha256'])||filesize($path)!==$entry['size']||!hash_equals($entry['sha256'],Files::hash($path)))throw new \RuntimeException('Backup integrity mismatch: '.$name);
+        if(!is_file($path)||is_link($path)||!is_int($entry['size']??null)||$entry['size']<1||$entry['size']>$max||!is_string($entry['sha256']??null)||!preg_match('/\A[a-f0-9]{64}\z/D',$entry['sha256'])||filesize($path)!==$entry['size']||!hash_equals($entry['sha256'],Files::hash($path)))throw new \RuntimeException('Backup integrity mismatch: '.$name);
         return $path;
     }
     /** Explicit recovery only for historical adoption of an untouched demo seed. */
@@ -135,6 +135,13 @@ final class InstallationBackup
         $manifestFile=Files::path($bundle,'manifest.json');if(!is_file($manifestFile)||filesize($manifestFile)>self::MAX_MANIFEST)throw new \InvalidArgumentException('Invalid installation manifest');
         $m=Files::read($manifestFile);if(($m['format']??null)!==1||!is_array($m['files']??null)||count($m['files'])>Workspaces::LIMIT+102)throw new \InvalidArgumentException('Invalid installation manifest');
         $files=$m['files'];foreach($files as $name=>$entry)if(!is_string($name)||!is_array($entry)||!preg_match('/\A(?:identity\.json|legacy\.tar|[a-f0-9]{32}\.tar|audit-[a-f0-9]{32}\.jsonl)\z/D',$name))throw new \InvalidArgumentException('Invalid bundle member');
+        // Standalone operator restores have the same exact-member policy as the
+        // authenticated recovery envelope. Never silently ignore rogue files.
+        $actual=[];foreach(new \DirectoryIterator($bundle) as $entry){if($entry->isDot())continue;
+            $name=$entry->getFilename();if($entry->isLink()||!$entry->isFile()||($name!=='manifest.json'&&!isset($files[$name])))throw new \InvalidArgumentException('Unexpected installation backup member: '.$name);
+            $actual[$name]=true;
+        }
+        if(!isset($actual['manifest.json'])||count($actual)!==count($files)+1)throw new \InvalidArgumentException('Incomplete installation bundle');
         $identity=Files::read(self::verifyFile($bundle,'identity.json',$files['identity.json']??[],self::MAX_IDENTITY));
         $stage=self::stage($target);
         try{
@@ -149,7 +156,7 @@ final class InstallationBackup
             if(array_diff_key($files,$expected)||array_diff_key($expected,$files))throw new \InvalidArgumentException('Bundle does not match workspace registry');
             // The root content TAR restores to its own staging directory, then merges only known content paths.
             $legacy=$stage.'/.legacy';MediaBackup::restore(self::verifyFile($bundle,'legacy.tar',$files['legacy.tar'],self::MAX_TAR),$legacy);
-            foreach(['books.json','media'] as $name)if(file_exists($legacy.'/'.$name)&&!rename($legacy.'/'.$name,$stage.'/'.$name))throw new \RuntimeException('Cannot install legacy content');rmdir($legacy);
+            foreach(['books.json','media','analytics'] as $name)if(file_exists($legacy.'/'.$name)&&!rename($legacy.'/'.$name,$stage.'/'.$name))throw new \RuntimeException('Cannot install legacy content');rmdir($legacy);
             foreach($workspaces as $w){if($w['legacy'])continue;$dir=Workspaces::directory($stage,$w);Files::dir(dirname($dir));$name=$w['id'].'.tar';MediaBackup::restore(self::verifyFile($bundle,$name,$files[$name],self::MAX_TAR),$dir);}
             self::audit($stage,$public,true);self::publish($stage,$target);
         }finally{self::clean($stage);}

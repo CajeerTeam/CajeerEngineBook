@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace CajeerBook;
 
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/AnalyticsBackup.php';
 
 /** Portable uncompressed TAR; never extracts archive paths directly. */
 final class MediaBackup
@@ -17,6 +18,9 @@ final class MediaBackup
         $this->books->snapshot(function(array $db)use($target){
             BookStore::checkSize($db);
             Files::json($target.'/books.json',$db);
+            foreach(AnalyticsBackup::snapshot($this->dir) as $name=>$bytes){
+                Files::dir($target.'/analytics');Files::write($target.'/analytics/'.$name,$bytes);
+            }
             foreach($db['media']??[] as $id=>$item){
                 $source=$this->media->blob($id);$dest=$target.'/media/'.$id.'.blob';
                 if(is_link($source)||!is_file($source)||filesize($source)!==($item['size']??null))throw new \RuntimeException('Missing or damaged media: '.$id);
@@ -41,6 +45,7 @@ final class MediaBackup
                     if(!is_file($path)||filesize($path)!==$item['size']||Files::hash($path)!==$item['sha256']) throw new \RuntimeException('Missing or damaged media: '.$id);
                     $tar->addFile($path,'media/'.$id.'.blob');
                 }
+                foreach(AnalyticsBackup::snapshot($this->dir) as $name=>$bytes)$tar->addFromString('analytics/'.$name,$bytes);
                 $tar->stopBuffering();unset($tar);
             });
             // Atomic no-overwrite publication; same filesystem as target.
@@ -62,7 +67,7 @@ final class MediaBackup
     /** Offline restore into a new directory; existing data is never overwritten. */
     public static function restore(string $archive,string $target): void
     {
-        if(!is_file($archive)||is_link($archive)||!str_ends_with($archive,'.tar')||filesize($archive)>MediaStore::MAX_TOTAL+self::MAX_DB+4*1024*1024)throw new \InvalidArgumentException('Invalid backup archive');
+        if(!is_file($archive)||is_link($archive)||!str_ends_with($archive,'.tar')||filesize($archive)>MediaStore::MAX_TOTAL+self::MAX_DB+AnalyticsBackup::MAX_BYTES+8*1024*1024)throw new \InvalidArgumentException('Invalid backup archive');
         $target=rtrim($target,'/');$parent=dirname($target);
         if($target===''||file_exists($target)||is_link($target)||!is_dir($parent)||is_link($parent))throw new \InvalidArgumentException('Restore destination must be a new directory with an existing parent');
         $stage=$parent.'/.book-restore-'.bin2hex(random_bytes(12));Files::dir($stage);
@@ -76,14 +81,31 @@ final class MediaBackup
             // hidden content was silently accepted even though its manifest was not exact.
             $expected=['books.json'=>true];if($items!==[])$expected['media']=true;
             foreach($items as $id=>$item)$expected['media/'.$id.'.blob']=true;
+            $analytics=[];$analyticsBytes=0;
+            foreach(new \RecursiveIteratorIterator($tar,\RecursiveIteratorIterator::SELF_FIRST) as $member){
+                $relative=substr($member->getPathname(),strlen('phar://'.realpath($archive).'/'));
+                if($relative==='analytics')continue;
+                if(!str_starts_with($relative,'analytics/'))continue;
+                $name=substr($relative,strlen('analytics/'));
+                AnalyticsBackup::day($name);
+                if($member->isDir()||$member->isLink()||$member->getSize()>2097152||count($analytics)>=AnalyticsBackup::MAX_DAYS)throw new \InvalidArgumentException('Invalid analytics backup member.');
+                $analyticsBytes+=$member->getSize();
+                if($analyticsBytes>AnalyticsBackup::MAX_BYTES)throw new \InvalidArgumentException('Analytics backup exceeds quota.');
+                $analytics[$relative]=$name;$expected[$relative]=true;
+            }
+            if($analytics!==[])$expected['analytics']=true;
             $members=[];$prefix='phar://'.realpath($archive).'/';
             foreach(new \RecursiveIteratorIterator($tar,\RecursiveIteratorIterator::SELF_FIRST) as $member){
                 $name=$member->getPathname();if(!str_starts_with($name,$prefix))throw new \InvalidArgumentException('Invalid backup member');
                 $relative=substr($name,strlen($prefix));
-                if(!isset($expected[$relative])||isset($members[$relative])||$member->isLink()||($member->isDir()!==($relative==='media')))throw new \InvalidArgumentException('Unexpected backup member: '.$relative);
+                if(!isset($expected[$relative])||isset($members[$relative])||$member->isLink()||($member->isDir()!==($relative==='media'||$relative==='analytics')))throw new \InvalidArgumentException('Unexpected backup member: '.$relative);
                 $members[$relative]=true;
             }
             if(array_diff_key($expected,$members))throw new \InvalidArgumentException('Missing backup member');
+            foreach($analytics as $relative=>$name){
+                $bytes=$tar[$relative]->getContent();AnalyticsBackup::validate($name,$bytes);
+                Files::dir($stage.'/analytics');Files::write($stage.'/analytics/'.$name,$bytes);
+            }
             foreach($items as $id=>$item){
                 if(!is_string($id)||!MediaStore::validId($id)||!is_array($item)||($item['id']??null)!==$id||!is_string($item['name']??null)||!is_string($item['folder']??null)||!is_int($item['size']??null)||$item['size']<1||$item['size']>MediaStore::MAX_FILE||!is_int($item['revision']??null)||$item['revision']<1||!is_string($item['created']??null)||!is_string($item['updated']??null))throw new \InvalidArgumentException('Invalid media metadata');
                 MediaStore::folder($item['folder']);$total+=$item['size'];if($total>MediaStore::MAX_TOTAL)throw new \InvalidArgumentException('Backup exceeds media quota');
@@ -121,7 +143,7 @@ final class MediaBackup
             if(file_exists($target)||is_link($target)||!rename($stage,$target))throw new \RuntimeException('Cannot publish restored directory');
             Files::syncDir($parent);
         }finally{
-            if(is_dir($stage)){foreach(glob($stage.'/media/*')?:[] as $f)unlink($f);if(is_dir($stage.'/media'))rmdir($stage.'/media');if(is_file($stage.'/books.json'))unlink($stage.'/books.json');rmdir($stage);}
+            if(is_dir($stage)){foreach(glob($stage.'/media/*')?:[] as $f)unlink($f);if(is_dir($stage.'/media'))rmdir($stage.'/media');if(is_file($stage.'/books.json'))unlink($stage.'/books.json');if(is_dir($stage.'/analytics')){foreach(glob($stage.'/analytics/*')?:[] as $f)unlink($f);rmdir($stage.'/analytics');}rmdir($stage);}
         }
     }
 }

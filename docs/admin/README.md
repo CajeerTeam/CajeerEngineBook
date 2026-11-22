@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.0.14
+# Administrator handbook — CajeerEngine Book 1.1.0
 
 **Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -6,6 +6,7 @@
 
 | Task | Instructions |
 | --- | --- |
+| Acceptance for 1.1.0: regression, security, recovery, load and rollback | [1.1.0 release acceptance](release-110.md) |
 | Choose topology, install, initialize owner, validate deployment | [Installation and operations](operations.md) |
 | Configure storage, PostgreSQL, Redis, secrets, TLS, SSO | [Configuration reference](configuration.md), [SkiF4er ID integration](skif4er-id.md) |
 | Diagnose faults and run maintenance safely | [Incident runbook](incidents.md), [CLI reference](cli-reference.md) |
