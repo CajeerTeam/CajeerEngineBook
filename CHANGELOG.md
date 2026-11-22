@@ -1,3 +1,10 @@
+## 1.0.12 — ReadMe Guides / API Reference / Recipes import (2026-11-22)
+
+- Extend Studio's real transactional import to recognize ReadMe branch ZIP and Git Sync layouts, including `docs/` Guides, `reference/` API reference pages, `recipes/`, and nested `_order.yaml` sidebar order. Preserve page metadata, group titles, local Markdown/MDX, section order, and supported uploaded attachments.
+- Convert bundled OpenAPI 3.0/3.1 JSON/YAML through the existing validated `OpenApiDocument`/`OpenApiReference` engine into editable overview, endpoint and schema drafts. Resolve ReadMe `api.file`/`operationId` to corresponding imported operation pages when supplied, with warnings for missing references. Reject unsupported external `$ref` URLs rather than fetching them.
+- Support bounded branch/version directories, static ReadMe callouts/tabs/steps, local links and media rewrites. Preserve remote image links with explicit warnings because ReadMe ZIP exports do not include image binaries; do not evaluate executable MDX or arbitrary custom components. Keep same signed `preview → apply` and no automatic publication.
+- Add conversion regression tests and an end-to-end Composer/ZIP test to the release suite, operator guidance and version bump. No SQL migration (schema 7). Production deployment still needs full CI and real data-provider qualification.
+
 ## 1.0.11 — GitBook Spaces and documentation migration (2026-11-22)
 
 - Extend the existing Studio import planner with actual GitBook Git Sync/export support: `.gitbook.yaml` root/structure/redirects, `SUMMARY.md` navigation, multiple independent Spaces mapped to Books, Markdown pages, and validated local attachments. All changes use the signed preview/apply transaction and create drafts only.

@@ -99,6 +99,8 @@
             "@php tests/gitbook-111.php",
             "@php tests/gitbook-111-api.php",
             "@php tests/gitbook-111-integration.php",
+            "@php tests/readme-112.php",
+            "@php tests/readme-112-integration.php",
             "python3 tests/import-http.py",
             "@php tests/stable.php",
             "@php tests/installation.php",

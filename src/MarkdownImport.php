@@ -7,6 +7,9 @@ require_once __DIR__.'/MintlifyMdx.php';
 require_once __DIR__.'/DocusaurusImport.php';
 require_once __DIR__.'/DocusaurusMdx.php';
 require_once __DIR__.'/GitBookImport.php';
+require_once __DIR__.'/ReadMeImport.php';
+require_once __DIR__.'/OpenApiDocument.php';
+require_once __DIR__.'/OpenApiReference.php';
 
 use CajeerEngine\Update\OperationFiles as Files;
 
@@ -131,26 +134,35 @@ REGEX;
         $docs=$assets=$mapping=$mediaMap=$rows=$hashes=$warnings=$used=[];$order=0;$total=0;$newMedia=0;$sourceBytes=0;$markdownBytes=0;
         // Sign the original inputs, including Mintlify navigation/redirect configuration.
         foreach($files as $source=>$file){ImportFiles::path((string)$source);if(!is_file($file))throw new \InvalidArgumentException('Import source missing');$hashes[(string)$source]=Files::hash($file);}
-        $gitbook=GitBookImport::prepare($files,$book,$version);
-        $mint=$gitbook['gitbook']?['mintlify'=>false,'files'=>$files,'nav'=>[],'redirects'=>[],'warnings'=>[]]:MintlifyImport::prepare($files);
-        $docus=($mint['mintlify']||$gitbook['gitbook'])?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
-        $files=$gitbook['gitbook']?$gitbook['files']:($mint['mintlify']?$mint['files']:$docus['files']);
-        $warnings=$gitbook['gitbook']?$gitbook['warnings']:($mint['mintlify']?$mint['warnings']:$docus['warnings']);
-        $navFiles=$gitbook['gitbook']?$gitbook['nav']:($docus['docusaurus']?$docus['nav']:[]);foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
+        $readme=ReadMeImport::prepare($files,$book,$version);
+        $gitbook=$readme['readme']?['gitbook'=>false,'files'=>$files,'pages'=>[],'nav'=>[],'warnings'=>[],'redirects'=>[],'books'=>[]]:GitBookImport::prepare($files,$book,$version);
+        $mint=($readme['readme']||$gitbook['gitbook'])?['mintlify'=>false,'files'=>$files,'nav'=>[],'redirects'=>[],'warnings'=>[]]:MintlifyImport::prepare($files);
+        $docus=($readme['readme']||$mint['mintlify']||$gitbook['gitbook'])?['docusaurus'=>false,'pages'=>[],'nav'=>[],'warnings'=>[]]:DocusaurusImport::prepare($files,$version);
+        $files=$readme['readme']?$readme['files']:($gitbook['gitbook']?$gitbook['files']:($mint['mintlify']?$mint['files']:$docus['files']));
+        if($readme['readme'])foreach($readme['virtual'] as $virtualPath=>$sourceText)$files[$virtualPath]=null;
+        $warnings=$readme['readme']?$readme['warnings']:($gitbook['gitbook']?$gitbook['warnings']:($mint['mintlify']?$mint['warnings']:$docus['warnings']));
+        $navFiles=$readme['readme']?$readme['nav']:($gitbook['gitbook']?$gitbook['nav']:($docus['docusaurus']?$docus['nav']:[]));foreach($mint['nav'] as $route=>$settings){$source=MintlifyImport::find($route,$files);if($source!==null){if(!isset($navFiles[$source]))$navFiles[$source]=$settings;}elseif(count($warnings)<1000)$warnings[]=['source'=>'navigation','url'=>'Referenced page not uploaded: '.$route];}
         
         if(count($files)>ImportFiles::MAX_FILES)throw new \InvalidArgumentException('Too many import files');ksort($files,SORT_STRING);
         foreach($db['media']??[] as $item)$total+=$item['size'];
         foreach($files as $path=>$file){
-            $path=(string)$path;ImportFiles::path($path);$size=filesize($file);if($size===false||$size>MediaStore::MAX_FILE||($sourceBytes+=$size)>ImportFiles::MAX_TOTAL)throw new \InvalidArgumentException('Import exceeds source size limit');$hashes[$path]=Files::hash($file);
+            $path=(string)$path;ImportFiles::path($path);$virtual=$readme['virtual'][$path]??null;$size=$virtual!==null?strlen($virtual):filesize($file);if($size===false||$size>MediaStore::MAX_FILE||($sourceBytes+=$size)>ImportFiles::MAX_TOTAL)throw new \InvalidArgumentException('Import exceeds source size limit');$hashes[$path]=$virtual!==null?hash('sha256',$virtual):Files::hash($file);
             if(preg_match('/\.(md|mdx|markdown)$/i',$path)){
                 if($size>Markdown::MAX_BYTES)throw new \InvalidArgumentException('Markdown exceeds 256 KiB: '.$path);if(($markdownBytes+=$size)>8*1024*1024)throw new \InvalidArgumentException('Markdown import exceeds 8 MiB; split the import');
-                $source=(string)file_get_contents($file);$converted=[];
-                if($gitbook['gitbook'])$source=GitBookImport::convert($source,$path,$gitbook['original'],$converted);
+                $source=$virtual??(string)file_get_contents($file);$converted=[];
+                if($readme['readme']&&$virtual===null)$source=ReadMeImport::convert($source,$path,$converted,$readme['pages'][$path]['api_target']??null);
+                elseif($gitbook['gitbook'])$source=GitBookImport::convert($source,$path,$gitbook['original'],$converted);
                 elseif($docus['docusaurus'])$source=DocusaurusMdx::convert($source,$converted);
                 elseif($mint['mintlify']||preg_match('/\.mdx$/i',$path))$source=MintlifyMdx::convert($source,$converted);
                 foreach($converted as $warning){if(count($warnings)>=1000)throw new \InvalidArgumentException('Too many Mintlify conversion warnings');$warning['source']=$path;$warnings[]=$warning;}
                 $doc=self::document($source,$path,++$order*10);
                 $targetVersion=$version;$targetBook=$book;
+                if($readme['readme']){
+                    $sourcePage=$readme['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected ReadMe page');
+                    $targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];
+                    if($sourcePage['title']!==null)$doc['title']=$sourcePage['title'];
+                    $doc['section']=$sourcePage['section'];
+                }
                 if($gitbook['gitbook']){
                     $sourcePage=$gitbook['pages'][$path]??null;if($sourcePage===null)throw new \InvalidArgumentException('Unexpected GitBook document');
                     $targetBook=$sourcePage['book'];$targetVersion=$sourcePage['version'];$doc['path']=$sourcePage['route'];
@@ -193,6 +205,10 @@ REGEX;
 
         // Extensionless Mintlify paths, root-relative links and MDX filenames all resolve to Book URLs.
         $links=$mapping;
+        if($readme['readme'])foreach($readme['pages'] as $source=>$page)if(isset($mapping[$source])){
+            $route=$page['route'];$links['/'.$route]=$mapping[$source];$links[$route]=$mapping[$source];
+            if(str_starts_with($route,'guides/'))$links['/docs/'.substr($route,7)]=$mapping[$source];
+        }
         foreach($mapping as $source=>$target){
             $route=preg_replace('/\.(?:md|mdx|markdown)$/i','',$source);
             foreach([$route, '/'.$route] as $alias)if(!isset($links[$alias]))$links[$alias]=$target;
@@ -224,6 +240,7 @@ REGEX;
         $assetsLinks=$mediaMap;
         foreach($mediaMap as $asset=>$id){
             if(str_starts_with($asset,'public/'))$assetsLinks[substr($asset,7)]=$id;
+            if($readme['readme']){foreach(['images/','assets/','uploads/'] as $prefix)if(str_contains($asset,'/'.$prefix))$assetsLinks['/'.substr($asset,strpos($asset,'/'.$prefix)+1)]=$id;}
             if($docus['docusaurus']&&str_starts_with($asset,'static/'))$assetsLinks[substr($asset,7)]=$id;
         }
         $redirects=[];

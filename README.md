@@ -1,3 +1,7 @@
+### ReadMe Guides, API Reference and Recipes migration (1.0.12)
+
+Import a ReadMe ZIP or Git Sync tree through **Studio → Import documentation**. The importer recognizes `docs/`, `reference/`, `recipes/` and `_order.yaml`, preserves supported titles, page order and Markdown/MDX content, and creates editable Book drafts. Bundled OpenAPI 3.0/3.1 specifications generate real reference/operation/schema pages through the existing OpenAPI renderer; source reference pages can link to those operations by `api.file` and `api.operationId`. Multiple `branches/<version>/` or `versions/<version>/` directories become distinct Book versions. Local media is imported with existing MIME checks and rewritten URLs. ReadMe exports do **not** bundle remote image bytes, and ReadMe-only interactive components, unpublished privacy rules and redirects are not automatically migrated. Review warnings and publish only after verifying permissions. See [ReadMe migration guide](docs/admin/readme-import.md). PostgreSQL schema remains 7.
+
 ### GitBook Spaces and API migration (1.0.11)
 
 Import GitBook Git Sync or export ZIP/directory in **Studio → Import documentation**, retaining `SUMMARY.md` hierarchy, `.gitbook.yaml` redirects, pages, supported rich blocks, reusable includes and validated media. Multi-Space bundles create separate Books; everything is imported as drafts through the same signed atomic preview/apply workflow. A read-only GitBook REST API exporter (`php bin/gitbook-import.php`) generates an uploadable ZIP using `GITBOOK_API_TOKEN`. Imported external URLs can resolve between Spaces when they refer to pages in the same bundle. Unsafe conditional/adaptive content is rejected, not silently published. See [GitBook migration guide](docs/admin/gitbook-import.md). No schema migration.
@@ -16,7 +20,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.11** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.12** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 ## 1.0.6 — Documentation analytics dashboard, search, conversions, and four providers
 

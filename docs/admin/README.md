@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.0.11
+# Administrator handbook — CajeerEngine Book 1.0.12
 
 **Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -22,6 +22,7 @@
 | Import Mintlify docs.json/mint.json, MDX and media into drafts | [Mintlify migration guide](mintlify-import.md) |
 | Import Docusaurus sidebars, versions, languages, admonitions, MDX and media | [Docusaurus migration guide](docusaurus-import.md) |
 | Migrate GitBook Spaces, pages, Git Sync exports, API content, navigation and attachments | [GitBook migration guide](gitbook-import.md) |
+| Import ReadMe Guides, API Reference, OpenAPI, Recipes, versions and attachments | [ReadMe migration guide](readme-import.md) |
 | Measure capacity and qualify production SLOs | [Performance](performance.md), [load qualification](load-qualification.md) |
 | Qualify historical upgrade, total-loss recovery and long load | [Production qualification](production-qualification.md) |
 | Reproduce documentation checks | [Verification](verification.md) |
