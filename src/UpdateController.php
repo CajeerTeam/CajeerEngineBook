@@ -7,10 +7,11 @@ final class UpdateController
 {
     public function __construct(private readonly IdentityStore $identity,private readonly AuthController $auth,
         private readonly string $root,private readonly string $installationDir,private readonly ?UpdateCenter $center=null,
-        private readonly ?UpdateAgentClient $agent=null) {}
+        private readonly ?UpdateAgentClient $agent=null,private readonly ?UpdateScheduler $scheduler=null) {}
     private static function e(string $value):string{return htmlspecialchars($value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');}
     private function center():UpdateCenter{return $this->center??new UpdateCenter($this->root,$this->installationDir);}
     private function agent():UpdateAgentClient{return $this->agent??new UpdateAgentClient();}
+    private function scheduler():UpdateScheduler{return $this->scheduler??new UpdateScheduler($this->center(),$this->installationDir,$this->agent());}
     public function dispatch(string $method,callable $page):void
     {
         header('Cache-Control: private, no-store');header('Vary: Cookie');header('X-Robots-Tag: noindex, nofollow');
@@ -22,11 +23,23 @@ final class UpdateController
         if($method==='POST'){
             $csrf=$_POST['csrf']??null;$action=$_POST['action']??null;
             if(!is_string($csrf)||!hash_equals($ctx['session']['csrf'],$csrf)){http_response_code(403);$page('Forbidden','<h1>Invalid CSRF token</h1>');return;}
-            if(!in_array($action,['check','prepare','fetch','preflight','apply'],true)){http_response_code(422);$page('Invalid action','<h1>Unsupported update action</h1>');return;}
+            if(!in_array($action,['check','prepare','fetch','preflight','apply','schedule-save'],true)){http_response_code(422);$page('Invalid action','<h1>Unsupported update action</h1>');return;}
             try{
                 // Owner, session and durable CSRF/rate-limit checks precede host RPC.
                 $this->identity->updateCenterAuthorize($this->auth->token(),$csrf);
-                if(in_array($action,['check','prepare'],true)){
+                if($action==='schedule-save'){
+                    $interval=$_POST['interval_minutes']??'360';
+                    if(!is_string($interval)||!preg_match('/\A[0-9]{1,4}\z/D',$interval))throw new \DomainException('Invalid schedule interval');
+                    $this->scheduler()->configure([
+                        'enabled'=>($_POST['enabled']??'')==='1',
+                        'channel'=>$_POST['channel']??'stable',
+                        'mode'=>$_POST['mode']??'notify_only',
+                        'interval_minutes'=>(int)$interval,
+                        'notification_email'=>$_POST['notification_email']??'',
+                    ]);
+                    $this->identity->updateCenterAction($this->auth->token(),$csrf,'schedule-save','none');
+                    $notice='Scheduled checks configuration saved. An installed timer runs the checks.';
+                }elseif(in_array($action,['check','prepare'],true)){
                     $channel=$_POST['channel']??'stable';
                     if(!is_string($channel)||!in_array($channel,['stable','beta'],true))throw new \DomainException('Unsupported release channel');
                     $result=$center->check($channel);
@@ -149,6 +162,38 @@ final class UpdateController
                 }
             }catch(\Throwable){$h.='<p role="alert">Host update agent unavailable; direct execution disabled. Check the local socket service.</p>';}
         }else{$h.='<p>Host execution is not configured. Set <code>BOOK_UPDATE_AGENT_SOCKET</code> only after deploying the trusted host agent.</p>';}
+        try{
+            $schedule=$this->scheduler()->snapshot();$cfg=$schedule['settings'];
+            $h.='<h2>Scheduled checks & notifications</h2><p>Checks are performed by the unprivileged scheduler timer, not HTTP requests. Scheduled operations never activate an update.</p>';
+            $h.='<p>Last check: '.self::e(isset($schedule['last_checked_at'])?gmdate('Y-m-d H:i:s', (int)$schedule['last_checked_at']).' UTC':'never')
+                .' · Status: '.self::e((string)($schedule['last_status']??'not started'))
+                .' · Next check: '.self::e(isset($schedule['next_check_at'])?gmdate('Y-m-d H:i:s', (int)$schedule['next_check_at']).' UTC':'not scheduled').'</p>';
+            if(isset($schedule['stage_status']))$h.='<p role="alert">'.self::e((string)$schedule['stage_status']).'</p>';
+            $h.='<form method="post" action="/admin/updates" class="editor">'
+                .'<input type="hidden" name="csrf" value="'.self::e($ctx['session']['csrf']).'">'
+                .'<input type="hidden" name="action" value="schedule-save">'
+                .'<label><input type="checkbox" name="enabled" value="1"'.($cfg['enabled']?' checked':'').'> Enable scheduled checks</label>';
+            $h.='<label>Channel<select name="channel">';
+            foreach(['stable'=>'Stable','beta'=>'Beta (notification only)'] as $v=>$label)$h.='<option value="'.$v.'"'.($cfg['channel']===$v?' selected':'').'>'.$label.'</option>';
+            $h.='</select></label><label>Mode<select name="mode">';
+            foreach(['notify_only'=>'Notify only','download_only'=>'Stage signed package','manual_approval'=>'Stage + preflight (manual apply)'] as $v=>$label)
+                $h.='<option value="'.$v.'"'.($cfg['mode']===$v?' selected':'').'>'.$label.'</option>';
+            $h.='</select></label><label>Check interval<select name="interval_minutes">';
+            foreach([15,60,360,720,1440] as $minutes)$h.='<option value="'.$minutes.'"'.($cfg['interval_minutes']===$minutes?' selected':'').'>'.$minutes.' minutes</option>';
+            $h.='</select></label><label>Notification email (optional; requires configured MTA)<input name="notification_email" type="email" maxlength="254" value="'.self::e($cfg['notification_email']).'"></label>'
+                .'<button type="submit">Save scheduled checks</button></form>';
+            $h.='<h3>Recent update notifications</h3>';
+            if(empty($schedule['notifications']))$h.='<p>No scheduled notifications yet.</p>';
+            else{
+                $h.='<ul>';
+                foreach(array_slice($schedule['notifications'],0,15) as $event){
+                    if(!is_array($event))continue;
+                    $summary=($event['kind']??'')==='release'?'Signed update '.($event['version']??'unknown'):'Discovery needs attention: '.($event['status']??'unknown');
+                    $h.='<li>'.self::e(gmdate('Y-m-d H:i',(int)($event['time']??0))).' UTC · '.self::e($summary).'</li>';
+                }
+                $h.='</ul>';
+            }
+        }catch(\Throwable){$h.='<p role="alert">Scheduled update state unavailable; inspect application logs.</p>';}
         $h.='<form method="post" action="/admin/updates" class="editor">'
             .'<input type="hidden" name="csrf" value="'.self::e($ctx['session']['csrf']).'">'
             .'<input type="hidden" name="action" value="check">'

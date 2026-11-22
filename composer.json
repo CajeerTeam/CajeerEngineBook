@@ -36,6 +36,8 @@
             "@php tests/update-center-114.php",
             "python3 tests/update-manager-114-overlay.py",
             "python3 tests/update-backup-115.py",
+            "@php tests/update-scheduler-116.php",
+            "@php tests/update-scheduler-controller-116.php",
             "python3 tests/update-manager.py",
             "@php tests/pitr-policy.php",
             "python3 tests/pitr-policy.py",

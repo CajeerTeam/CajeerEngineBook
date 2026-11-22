@@ -1,3 +1,11 @@
+## 1.1.6 — Scheduled Updates & Notifications (2026-11-22)
+
+- Add a real unprivileged `bin/update-scheduler.php tick|status` worker and installable Docker-host systemd timer. Checks run with UID 33 in the existing Book container and use the same signed GitHub metadata verifier as Admin Update Center. The timer is opt-in and maintains its own private flock-controlled state.
+- Add installation-owner-only schedule, release channel, delivery and mode settings to `/admin/updates`; validate CSRF, owner sessions and schedule permissions, and audit changes. Defaults are disabled, stable, `notify_only` and no email recipient.
+- Persist bounded, deduplicated in-app notifications and optionally send email using a configured local MTA. Failed notifications are retried on a bounded schedule. Discovery errors and incomplete inventories are not reported as up-to-date.
+- Support `notify_only`, `download_only` (stage signed bundle) and `manual_approval` (stage and preflight). Staging reuses the host-agent's signed candidate validation and authorization. **Scheduled activation is deliberately unsupported**: offline maintenance fencing, operator permit, backup and rollback remain required before `apply`.
+- Add dedicated signed-release and owner HTTP tests, independent security CI and release-gate requirements. No PostgreSQL migration; core remains CajeerEngine 2.1.0. Full live Docker, email delivery and GitHub Release qualification remain separate.
+
 ## 1.1.5 — Backup, Recovery & Rollback (2026-11-22)
 
 - Harden the existing signed Docker updater's real pre-activation backup path: audit the isolated portable restore and scan all PostgreSQL custom dump payloads, not only the table of contents. These are integrity checks, not a replacement for an independent SQL/PITR restore drill.

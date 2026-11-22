@@ -1,0 +1,11 @@
+[Unit]
+Description=Check signed CajeerEngine Book releases every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=cajeerbook-update-check.service
+
+[Install]
+WantedBy=timers.target

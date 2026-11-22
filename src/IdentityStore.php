@@ -449,7 +449,7 @@ final class IdentityStore
     /** Installation-level update audit; never confers Workspace administration privileges. */
     public function updateCenterAction(string $token,string $csrf,string $action,string $version):void
     {
-        if(!in_array($action,['check','prepare','fetch','preflight','apply'],true)||!preg_match('/\A(?:none|[0-9]+\.[0-9]+\.[0-9]+)\z/D',$version))throw new \InvalidArgumentException('Invalid update operation');
+        if(!in_array($action,['check','prepare','fetch','preflight','apply','schedule-save'],true)||!preg_match('/\A(?:none|[0-9]+\.[0-9]+\.[0-9]+)\z/D',$version))throw new \InvalidArgumentException('Invalid update operation');
         $this->transaction(function(&$db)use($token,$csrf,$action,$version){
             $s=self::requireSession($db,$token);$actor=$db['users'][$s['user']];
             if(!$actor['owner']||!$actor['enabled'])throw new \DomainException('Installation owner permission required.');

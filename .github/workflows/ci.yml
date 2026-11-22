@@ -39,6 +39,10 @@ jobs:
           python3 tests/update-manager-114-overlay.py
           sudo python3 tests/update-agent-114.py
           python3 tests/update-backup-115.py
+      - name: Verify scheduled signed updates and owner notifications (1.1.6)
+        run: |
+          php tests/update-scheduler-116.php
+          php tests/update-scheduler-controller-116.php
       - run: python3 tests/release-gate.py --suite native --report-dir "$RUNNER_TEMP/book-gate-native"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -159,6 +163,8 @@ jobs:
             python3 tests/update-manager-114-overlay.py
             sudo python3 tests/update-agent-114.py
             python3 tests/update-backup-115.py
+            php tests/update-scheduler-116.php
+            php tests/update-scheduler-controller-116.php
             php tests/security-hardening.php --require-zip
             php tests/security-lifecycle.php
             php tests/recovery-110.php
