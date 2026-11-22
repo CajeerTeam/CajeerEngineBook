@@ -33,11 +33,7 @@ def number(v):return type(v) in (int,float) and math.isfinite(v) and v>=0
 
 
 def source_digest(root=ROOT):
-    # Same committed runtime/test input set as performance-benchmark.py.
-    d=hashlib.sha256()
-    for p in sorted([root/'VERSION',*[p for folder in ('src','sql','tests') for p in (root/folder).rglob('*') if p.is_file() and p.suffix in ('.php','.py','.sql','.sh')]]):
-        d.update(str(p.relative_to(root)).encode()+b'\0'+hashlib.sha256(p.read_bytes()).digest())
-    return d.hexdigest()
+    return policy.source_digest_tree(root)
 
 
 policy=load('qualification_policy',ROOT/'bin/qualification_policy.py')
@@ -50,7 +46,7 @@ def release_evidence(summary_path,candidate_path,images,commit,version):
     """Revalidate actual CI evidence before signing. Never accept a smoke or a summary alone."""
     summary_path=Path(summary_path);directory=summary_path.parent
     summary=u.release.json_read(summary_path)
-    require(summary.get('mode')=='full' and summary.get('status')=='lab-qualified' and summary.get('commit')==commit and summary.get('release')==version and summary.get('source_digest')==source_digest(),'Full qualification not for this release source')
+    require(summary.get('mode')=='full' and summary.get('status')=='lab-qualified' and summary.get('full_qualification_verified') is True and summary.get('commit')==commit and summary.get('release')==version and summary.get('source_digest')==source_digest(),'Full qualification not for this release source')
     require([s['name'] for s in summary['steps']]==['preflight','lifecycle','lifecycle-evidence','24h-load','24h-evidence'] and all(s['status']=='passed' for s in summary['steps']),'Qualification incomplete')
     prior,head,v=life.revisions(ROOT,summary['previous_commit']);require(head==commit and v==version,'Git history mismatch')
     lifecycle=directory/'lifecycle/lifecycle.json';soak=directory/'load/qualification/report.json'
@@ -72,7 +68,7 @@ def release_evidence(summary_path,candidate_path,images,commit,version):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--report-dir',required=True,type=Path);p.add_argument('--previous-ref');p.add_argument('--mode',choices=('smoke','full'),default='full');a=p.parse_args()
     report=a.report_dir.resolve();report.mkdir(mode=0o700,parents=True,exist_ok=False);os.umask(0o077)
-    state={'format':1,'release':(ROOT/'VERSION').read_text().strip(),'mode':a.mode,'status':'failed','steps':[],'production_certified':False}
+    state={'format':1,'release':(ROOT/'VERSION').read_text().strip(),'mode':a.mode,'status':'failed','steps':[],'production_certified':False,'full_qualification_verified':False}
     def save():
         u.atomic(report/'qualification.json',state)
         suite=ET.Element('testsuite',name='production-qualification',tests=str(len(state['steps'])+1))
@@ -123,6 +119,7 @@ def main():
             path=report/'load/qualification/report.json';require(path.is_file() and path.stat().st_size<=256*1024*1024,'Missing or oversized soak evidence')
             state['load']=step('24h-evidence',lambda:validate_soak(u.release.json_read(path,u.release.MAX_SOAK),version,state['source_digest']))
             state['evidence_sha256']={'lifecycle':u.release.sha(report/'lifecycle/lifecycle.json'),'load':u.release.sha(path)}
+            state['full_qualification_verified']=True
             state['status']='lab-qualified'
         else:state['status']='smoke-passed'
         save();return 0

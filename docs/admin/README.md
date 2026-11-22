@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.1.7
+# Administrator handbook — CajeerEngine Book 1.2.0
 
 **Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -6,6 +6,7 @@
 
 | Task | Instructions |
 | --- | --- |
+| Production Auto Update 1.2.0 | [Full release gates, trusted installation, operational rollback](release-120.md) |
 | Update history and operations 1.1.7 | [Owner history, safe retries, diagnostic export and recovery boundaries](update-history-117.md) |
 | Scheduled GitHub updates and notifications 1.1.6 | [Signed checks, owner alerts and staging without activation](update-scheduler-116.md) |
 | Backup, recovery and rollback 1.1.5 | [Attested update backups, offline recovery and rollback](update-recovery-115.md) |

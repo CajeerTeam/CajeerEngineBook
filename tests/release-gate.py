@@ -31,7 +31,8 @@ CRITICAL_REGRESSIONS = frozenset({
     'tests/enterprise-load.py', 'tests/release-signing.py', 'tests/release-111-github.py',
     'tests/update-history-117.py', 'tests/update-operations-117.php',
     'tests/update-backup-115.py', 'tests/update-scheduler-116.php', 'tests/update-scheduler-controller-116.php',
-    'tests/update-manager.py', 'tests/update-discovery-112.py', 'tests/release.php',
+    'tests/update-manager.py', 'tests/update-discovery-112.py', 'tests/production-update-120.py',
+    'tests/production-qualification-policy.py', 'tests/release.php',
 })
 
 

@@ -35,7 +35,6 @@ jobs:
       - name: Verify secure host update agent and owner-controlled execution (1.1.4)
         run: |
           php tests/update-center-114.php
-          python3 tests/update-backup-115.py
           python3 tests/update-manager-114-overlay.py
           sudo python3 tests/update-agent-114.py
           python3 tests/update-backup-115.py
@@ -43,6 +42,10 @@ jobs:
         run: |
           php tests/update-scheduler-116.php
           php tests/update-scheduler-controller-116.php
+      - name: Verify production update execution and qualification gates (1.2.0)
+        run: |
+          python3 tests/production-update-120.py
+          python3 tests/production-qualification-policy.py
       - name: Verify Update History and Operations (1.1.7)
         run: |
           php tests/update-operations-117.php
@@ -171,6 +174,8 @@ jobs:
             php tests/update-scheduler-controller-116.php
             php tests/update-operations-117.php
             sudo python3 tests/update-history-117.py
+            python3 tests/production-update-120.py
+            python3 tests/production-qualification-policy.py
             php tests/security-hardening.php --require-zip
             php tests/security-lifecycle.php
             php tests/recovery-110.php
@@ -323,6 +328,8 @@ jobs:
           php tests/update-center-114.php
           php tests/update-operations-117.php
           sudo python3 tests/update-history-117.py
+          python3 tests/production-update-120.py
+          python3 tests/production-qualification-policy.py
       - name: Sign, verify and publish immutable release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

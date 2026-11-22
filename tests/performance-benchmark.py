@@ -5,6 +5,7 @@ import concurrent.futures
 from contextlib import nullcontext
 import http.client
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -26,6 +27,9 @@ from load_maintenance import Maintenance, Dependencies
 
 ROOT = Path(__file__).resolve().parents[1]
 FORMAT = 1
+_policy_spec = importlib.util.spec_from_file_location('release_qualification_policy', ROOT/'bin/qualification_policy.py')
+release_policy = importlib.util.module_from_spec(_policy_spec)
+_policy_spec.loader.exec_module(release_policy)
 
 
 def dump(path, data):
@@ -242,10 +246,20 @@ def main():
         except OSError:pass
     try:environment['cpu_model']=next(x.split(':',1)[1].strip() for x in Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name'))
     except (OSError,StopIteration):pass
-    digest=hashlib.sha256()
-    for file in sorted([ROOT/'VERSION',*[p for folder in ('src','sql','tests') for p in (ROOT/folder).rglob('*') if p.is_file() and p.suffix in ('.php','.py','.sql','.sh')]]):
-        digest.update(str(file.relative_to(ROOT)).encode()+b'\0'+hashlib.sha256(file.read_bytes()).digest())
-    report={'source_digest':digest.hexdigest(),'format':FORMAT,'release':(ROOT/'VERSION').read_text().strip(),'profile':profile,'environment':environment,'status':'failed','phases':[]}
+    try:
+        digest=release_policy.source_digest_tree(ROOT)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        # Source ZIPs without .git may still run *diagnostic* benchmarks. They
+        # cannot mint a 24-hour signed-release qualification source identity.
+        if a.qualify:
+            p.error('A clean Git checkout is required for signed qualification')
+        diagnostic = [(file.relative_to(ROOT).as_posix(), file.read_bytes())
+                      for file in [ROOT/'VERSION', *[
+                          item for folder in ('src','sql','tests')
+                          for item in (ROOT/folder).rglob('*')
+                          if item.is_file() and item.suffix in ('.php','.py','.sql','.sh')]]]
+        digest=release_policy.source_digest_entries(diagnostic)
+    report={'source_digest':digest,'format':FORMAT,'release':(ROOT/'VERSION').read_text().strip(),'profile':profile,'environment':environment,'status':'failed','phases':[]}
     children=[];logs=[];env=None;seeded=False
     with tempfile.TemporaryDirectory(prefix='book-performance-') as tmp:
         root=Path(tmp)/'data';root.mkdir(mode=0o700);(root/'.benchmark-disposable').touch()

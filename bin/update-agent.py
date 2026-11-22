@@ -14,6 +14,8 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
+import signal
 import socket
 import socketserver
 import stat
@@ -33,6 +35,8 @@ PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 ALLOWED = {'fetch', 'preflight', 'apply', 'status', 'recovery-status', 'history'}
 HISTORY_KEEP = 60
 HISTORY_PUBLIC = 24
+MAX_UPDATER_STDOUT = 256 * 1024
+MAX_UPDATER_STDERR = 1024 * 1024
 
 
 class Rejected(Exception):
@@ -86,6 +90,73 @@ def write_json(path, obj):
         if os.path.exists(tmp): os.unlink(tmp)
 
 
+def run_bounded_updater(args, output, error, timeout):
+    """Run the trusted updater without permitting unbounded child output or orphans.
+
+    The existing updater is allowed to run for hours while migrations complete.
+    Both pipe streams are drained concurrently; excess output fails the operation
+    and terminates the entire child process group rather than exhausting the
+    host's root-owned backup/state filesystem.
+    """
+    streams = ((output, MAX_UPDATER_STDOUT), (error, MAX_UPDATER_STDERR))
+    files = []
+    process = None
+    selector = selectors.DefaultSelector()
+    try:
+        for path, cap in streams:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            files.append((os.fdopen(fd, 'wb'), cap))
+        process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   cwd='/', env={'PATH': PATH, 'LANG': 'C', 'HOME': '/root'},
+                                   start_new_session=True, close_fds=True)
+        selector.register(process.stdout, selectors.EVENT_READ, files[0])
+        selector.register(process.stderr, selectors.EVENT_READ, files[1])
+        deadline = time.monotonic() + timeout
+        written = {files[0][0]: 0, files[1][0]: 0}
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(args, timeout)
+            for key, _ in selector.select(min(remaining, 0.5)):
+                file, cap = key.data
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                written[file] += len(chunk)
+                require(written[file] <= cap, 'Updater diagnostic output exceeds safe limit')
+                file.write(chunk)
+        if deadline - time.monotonic() <= 0:
+            raise subprocess.TimeoutExpired(args, timeout)
+        rc = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        for f, _ in files:
+            f.flush(); os.fsync(f.fileno())
+        return rc
+    except BaseException:
+        if process is not None:
+            # The direct child may exit while a descendant keeps stdout/stderr
+            # open. Terminate the *group* even if process.poll() is non-None.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+        raise
+    finally:
+        selector.close()
+        if process is not None:
+            for pipe in (process.stdout, process.stderr):
+                if pipe is not None: pipe.close()
+        for file, _ in files:
+            file.close()
+
+
 class Agent:
     def __init__(self, state_dir, updater, permit_file=None):
         self.dir = private_dir(state_dir, True)
@@ -135,6 +206,20 @@ class Agent:
                     (e.get('version') is None or (isinstance(e['version'], str) and len(e['version']) <= 40 and VERSION.fullmatch(e['version']))),
                     'Invalid update history entry')
         return events
+
+    def prune_diagnostics(self):
+        """Keep bounded private diagnostics; history itself remains durable."""
+        jobs = {}
+        for path in self.dir.iterdir():
+            match = re.fullmatch(r'(output|error)-([0-9a-f]{32})\.(json|log)', path.name)
+            if not match:
+                continue
+            require(not path.is_symlink() and path.is_file(), 'Unsafe diagnostic entry')
+            jobs.setdefault(match[2], []).append(path)
+        jobs = sorted(jobs.items(), key=lambda pair: max(p.stat().st_mtime_ns for p in pair[1]), reverse=True)
+        for _, paths in jobs[8:]:
+            for path in paths:
+                path.unlink()
 
     def event(self, job, code):
         """Append sanitized operational event; never store stderr, secrets, host paths or tokens."""
@@ -350,12 +435,9 @@ class Agent:
             output = self.dir / ('output-' + job_id + '.json')
             error = self.dir / ('error-' + job_id + '.log')
             # Output and diagnostics remain root-only; never return raw updater stderr to PHP.
-            fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            ef = os.open(error, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, 'wb') as out, os.fdopen(ef, 'wb') as err:
-                proc = subprocess.run(args, stdout=out, stderr=err, timeout={'fetch':2400,'preflight':2400,'apply':10800}[action],
-                                      stdin=subprocess.DEVNULL, cwd='/', env={'PATH':PATH,'LANG':'C','HOME':'/root'}, check=False)
-            require(proc.returncode == 0 and output.stat().st_size <= 262144, 'Update manager rejected operation; review host logs')
+            returncode = run_bounded_updater(args, output, error,
+                                              {'fetch':2400, 'preflight':2400, 'apply':10800}[action])
+            require(returncode == 0, 'Update manager rejected operation; review host logs')
             report = json.loads(output.read_text())
             receipt = report if action == 'fetch' else report.get('candidate') if action == 'preflight' else report.get('current')
             require(isinstance(receipt, dict) and receipt.get('version') == c['version'] and receipt.get('commit') == c['commit']
@@ -381,6 +463,7 @@ class Agent:
                                    'stage':stage,'result':result,'finished_at':int(time.time()),'heartbeat_at':int(time.time())})
                     write_json(self.record, latest)
                     self.event(latest, error_code)
+                    self.prune_diagnostics()
 
 
 class Handler(socketserver.BaseRequestHandler):

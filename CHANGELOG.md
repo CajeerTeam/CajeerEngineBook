@@ -1,3 +1,11 @@
+## 1.2.0 — Production Auto Update Release (2026-11-22)
+
+- Bind the actual 24-hour SQL/Redis qualification and release signing to a full tracked-source digest, including Compose, Dockerfile, updater, dependencies, frontend and CI—not just selected PHP/tests. Reject missing/duplicated fingerprint entries and mismatched releases.
+- Mark full lab qualification only after both the real lifecycle and load evidence validate. Require its explicit verification flag in the signed package. Preserve `production_certified=false` because an isolated lab qualification is not certification of a live deployment.
+- Execute the trusted updater through bounded concurrent stdout/stderr pipes. Reject output overflow or timeout, terminate its process group and retain only the eight newest root-private diagnostic jobs while preserving the bounded operational history.
+- Add executable subprocess, timeout, output-quota, evidence-fingerprint and negative qualification tests. Make them mandatory in the Composer suite, security CI and pre-signing checks, alongside the existing signed release, rollback and recovery tests.
+- Update the operator acceptance, offline maintenance, GitHub verification and rollback runbook. PostgreSQL schema 7 and embedded CajeerEngine Core 2.1.0 remain unchanged. Infrastructure, security and 24-hour qualification remain strict production gates, not presumed local successes.
+
 ## 1.1.7 — Update History & Operations (2026-11-22)
 
 - Add an actual durable root-owned operation history to the trusted host update agent. The 0600 `history.json` journal is fsynced and bounded, and records queued/running/succeeded/failed/reconcile transitions, version, safe duration and classified outcome codes without stdout, stderr or secrets. Corrupt, symbolic-link or untrusted history is rejected rather than silently ignored.

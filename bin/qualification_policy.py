@@ -2,7 +2,9 @@
 import math
 import re
 import hashlib
-from pathlib import PurePosixPath
+import stat
+import subprocess
+from pathlib import Path, PurePosixPath
 
 STEPS = ('source-history','docker-preflight','build-actual-0.8.2','build-actual-target','build-physical-postgres','seed-historical-http','enroll','upgrade','rollback','reupgrade','replica-redis-recovery','physical-backup-and-wal','destroy-source','physical-restore-and-http','cleanup')
 
@@ -70,16 +72,45 @@ def validate_soak(data,version,digest):
 
 
 def source_digest_entries(entries):
-    """Match the load runner's source fingerprint, including test inputs."""
-    d = hashlib.sha256()
-    for name, body in sorted(entries, key=lambda x: PurePosixPath(x[0])):
-        p = PurePosixPath(name)
-        if name == 'VERSION' or (p.parts[0] in ('src', 'sql', 'tests') and p.suffix in ('.php', '.py', '.sql', '.sh')):
-            d.update(name.encode()+b'\0'+hashlib.sha256(body).digest())
-    return d.hexdigest()
+    """Bind long-running qualification to *every* shipped Git file, not just PHP.
+
+    Changes to Compose, Dockerfiles, host updater, dependencies, public assets or
+    workflow security policy must invalidate old load evidence too.
+    """
+    digest = hashlib.sha256()
+    seen = set()
+    for name, body in sorted(entries, key=lambda row: row[0]):
+        require(isinstance(name, str) and name and name not in seen and
+                not name.startswith('/') and not any(x in ('', '.', '..') for x in name.split('/')) and
+                isinstance(body, bytes), 'Invalid source fingerprint input')
+        seen.add(name)
+        digest.update(name.encode('utf-8') + b'\0' + hashlib.sha256(body).digest())
+    require(bool(seen), 'Empty source fingerprint')
+    return digest.hexdigest()
+
+
+def source_digest_tree(root):
+    """Fingerprint tracked working-tree bytes; untracked vendor and secrets excluded.
+
+    Release packaging fingerprints the committed blob bytes using the identical
+    source_digest_entries algorithm. A dirty checkout cannot manufacture matching
+    qualification evidence for a different immutable release.
+    """
+    root = Path(root)
+    names = subprocess.check_output(['git', 'ls-files', '--cached', '-z'], cwd=root, stderr=subprocess.DEVNULL).split(b'\0')
+    require(names and names[-1] == b'', 'Invalid Git file list')
+    entries = []
+    for raw in names[:-1]:
+        name = raw.decode('utf-8')
+        file = root / name
+        info = file.lstat()
+        require(stat.S_ISREG(info.st_mode) and not file.is_symlink(), 'Non-regular tracked source: ' + name)
+        entries.append((name, file.read_bytes()))
+    return source_digest_entries(entries)
+
 
 def validate_reports(summary, lifecycle, soak, candidate, version, commit, images, digest):
-    require(summary.get('mode')=='full' and summary.get('status')=='lab-qualified' and summary.get('commit')==commit and summary.get('release')==version and summary.get('source_digest')==digest, 'Full qualification not for this release source')
+    require(summary.get('mode')=='full' and summary.get('status')=='lab-qualified' and summary.get('full_qualification_verified') is True and summary.get('commit')==commit and summary.get('release')==version and summary.get('source_digest')==digest, 'Full qualification not for this release source')
     require([s['name'] for s in summary['steps']]==['preflight','lifecycle','lifecycle-evidence','24h-load','24h-evidence'] and all(s['status']=='passed' for s in summary['steps']), 'Qualification incomplete')
     prior=summary['previous_commit']
     require(isinstance(prior,str) and re.fullmatch(r'[0-9a-f]{40}',prior), 'Invalid historical commit')

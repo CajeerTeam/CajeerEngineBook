@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Policy regressions with real Git history and explicitly synthetic evidence."""
 import copy
+import hashlib
 import os
 import stat
 import importlib.util
@@ -82,6 +83,31 @@ class Qualification(unittest.TestCase):
         with self.assertRaises(ValueError):q.validate_lifecycle(x,V,C,P)
     def reject_soak(self,x):
         with self.assertRaises(ValueError):q.validate_soak(x,V,D)
+    def test_qualification_not_certified_rejected(self):
+        images={'book':'ghcr.io/example/book@sha256:'+'1'*64,
+                'postgres-pitr':'ghcr.io/example/book-postgres-pitr@sha256:'+'2'*64}
+        summary={'mode':'full','status':'lab-qualified','full_qualification_verified':False,
+                 'commit':C,'release':V,'source_digest':D,
+                 'steps':[{'name':x,'status':'passed'} for x in
+                          ('preflight','lifecycle','lifecycle-evidence','24h-load','24h-evidence')],
+                 'previous_commit':P,'lifecycle':{},'load':{}}
+        with self.assertRaises(ValueError):q.policy.validate_reports(summary,lifecycle(),soak(),lifecycle(),V,C,images,D)
+
+    def test_full_source_fingerprint_covers_deployment_and_updater(self):
+        base=[('VERSION',b'1.2.0\n'),('src/App.php',b'body'),
+              ('compose.yaml',b'services: {}'),('bin/update.py',b'old'),
+              ('.github/workflows/ci.yml',b'jobs: {}')]
+        fingerprint=q.policy.source_digest_entries(base)
+        self.assertEqual(fingerprint,q.policy.source_digest_entries(list(reversed(base))))
+        for i in range(len(base)):
+            changed=list(base)
+            name,body=changed[i];changed[i]=(name,body+b' changed')
+            self.assertNotEqual(fingerprint,q.policy.source_digest_entries(changed),name)
+
+    def test_source_fingerprint_rejects_duplicate_paths(self):
+        with self.assertRaises(ValueError):
+            q.policy.source_digest_entries([('VERSION',b'a'),('VERSION',b'b')])
+
     def test_soak_valid(self):self.assertEqual(q.validate_soak(soak(),V,D)['minute_windows'],1440)
     def test_soak_missing_window(self):
         x=soak();x['phases'][-1]['windows'].pop();self.reject_soak(x)

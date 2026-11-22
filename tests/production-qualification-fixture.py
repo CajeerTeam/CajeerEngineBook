@@ -54,7 +54,7 @@ def write_fixture(release, directory, root, version, commit, images):
     release.dump(directory/'qualification-lifecycle.json',lab)
     release.dump(directory/'qualification-candidate.json',candidate)
     release.dump(directory/'qualification-soak.json',load)
-    summary={'mode':'full','status':'lab-qualified','release':version,'commit':commit,'previous_commit':prior,'source_digest':digest,
+    summary={'mode':'full','status':'lab-qualified','full_qualification_verified':True,'production_certified':False,'release':version,'commit':commit,'previous_commit':prior,'source_digest':digest,
         'steps':[{'name':n,'status':'passed'} for n in ('preflight','lifecycle','lifecycle-evidence','24h-load','24h-evidence')],
         'lifecycle':policy.validate_lifecycle(lab,version,commit,prior),'load':policy.validate_soak(load,version,digest),
         'evidence_sha256':{'lifecycle':release.sha(directory/'qualification-lifecycle.json'),'load':release.sha(directory/'qualification-soak.json')}}
