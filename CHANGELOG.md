@@ -1,3 +1,10 @@
+## 1.1.3 — Admin Update Center (2026-11-22)
+
+- Add the live installation-owner-only `/admin/updates` route with CSRF/Origin protection, a durable per-owner request limiter, signed stable-release discovery and manual candidate preparation. The UI shows release version, commit, changelog, database schema and cryptographically authenticated manifest digest. Workspace administrators are not installation owners.
+- Query official GitHub Releases over bounded, no-redirect HTTPS and verify `release.json` using the independently configured Ed25519 public key (`BOOK_UPDATE_PUBLIC_KEY_FILE`, PHP sodium). Require an exact uploaded asset inventory and match signed size and digest metadata. Never accept a prerelease as an installable stable package; fail closed for missing keys, incomplete assets, mismatched signatures, malformed manifests and API failures.
+- Store inspected/pinned *metadata only* atomically under the private Book data directory with 0600 permissions. Do not download application ZIPs, invoke root, Docker or `update.py` from PHP; the existing host updater must still execute `fetch`, `preflight` and `apply` with complete ZIP, OCI and topology verification. Installation/execution through the web UI is deliberately outside 1.1.3 (host agent scheduled for 1.1.4).
+- Record owner check/prepare actions in the existing transactional identity activity journal; add real Ed25519, corrupted asset, admin/CSRF, rate limit, HTTP controller and session revocation tests to Composer and Actions. PostgreSQL schema 7 and embedded CajeerEngine 2.1.0 remain unchanged. Actual production Docker/genuine signed releases require separate CI/operator qualification.
+
 ## 1.1.2 — GitHub Update Discovery (2026-11-22)
 
 - Add the real `bin/update.py check --channel stable|beta [--refresh]` operation for enrolled local Docker installations. Fetch public GitHub Releases through a bounded read-only REST client with ETag/304 caching, pagination, optional GitHub token, no redirects/proxy inherited credentials, rate-limit handling and fail-closed HTTP/JSON errors.

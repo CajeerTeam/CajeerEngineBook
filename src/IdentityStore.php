@@ -430,6 +430,33 @@ final class IdentityStore
     public function profile(string $token,string $name,string $email):void{$this->transaction(function(&$db)use($token,$name,$email){$s=self::requireSession($db,$token);$name=self::name($name);$email=self::email($email);foreach($db['users'] as $id=>$u)if($id!==$s['user']&&$u['email']===$email)throw new \DomainException('Email already exists.');$db['users'][$s['user']]['name']=$name;$db['users'][$s['user']]['email']=$email;ActivityJournal::record($db,$db['users'][$s['user']],'account.profile','Profile updated',$s['user']);});}
     public function changePassword(string $token,string $old,string $new,string $ip):array{return $this->transaction(function(&$db)use($token,$old,$new,$ip){$now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];if(isset($u['oidc']))return ['status'=>'invalid'];if(!self::rate($db,'password',$ip,$u['id'],$now))return ['status'=>'limited'];if(strlen($old)>72||str_contains($old,"\0")||!password_verify($old,$u['hash']))return ['status'=>'invalid'];$u['hash']=self::password($new);$db['users'][$u['id']]=$u;self::revoke($db,$u['id']);ActivityJournal::record($db,$u,'account.password','Password changed',$u['id']);return ['status'=>'ok']+self::session($db,$u,$now);});}
     private static function owner(array $db,string $token):void{$s=self::requireSession($db,$token);if(!$db['users'][$s['user']]['owner'])throw new \DomainException('Owner permission required.');}
+    /** Durable owner/CSRF verification with a per-owner limit before outbound GitHub access. */
+    public function updateCenterAuthorize(string $token,string $csrf):void
+    {
+        $this->transaction(function(&$db)use($token,$csrf){
+            $now=time();self::prune($db,$now);$s=self::requireSession($db,$token);$u=$db['users'][$s['user']];
+            if(!$u['owner']||!$u['enabled'])throw new \DomainException('Installation owner permission required.');
+            if($csrf===''||!hash_equals($s['csrf'],$csrf))throw new \DomainException('Invalid CSRF token.');
+            $key=hash('sha256','update-center:'.$u['id']);
+            $item=$db['attempts'][$key]??null;
+            if($item!==null&&$item['until']>$now&&$item['count']>=10)throw new \DomainException('Update check rate limit exceeded.');
+            if($item===null&&count($db['attempts'])>=4096)throw new \DomainException('Rate limiter unavailable.');
+            $db['attempts'][$key]=($item!==null&&$item['until']>$now)
+                ?['count'=>$item['count']+1,'until'=>$item['until']]
+                :['count'=>1,'until'=>$now+600];
+        });
+    }
+    /** Installation-level update audit; never confers Workspace administration privileges. */
+    public function updateCenterAction(string $token,string $csrf,string $action,string $version):void
+    {
+        if(!in_array($action,['check','prepare'],true)||!preg_match('/\A(?:none|[0-9]+\.[0-9]+\.[0-9]+)\z/D',$version))throw new \InvalidArgumentException('Invalid update operation');
+        $this->transaction(function(&$db)use($token,$csrf,$action,$version){
+            $s=self::requireSession($db,$token);$actor=$db['users'][$s['user']];
+            if(!$actor['owner']||!$actor['enabled'])throw new \DomainException('Installation owner permission required.');
+            if($csrf===''||!hash_equals($s['csrf'],$csrf))throw new \DomainException('Invalid CSRF token.');
+            ActivityJournal::record($db,$actor,'account.update.'.$action,'GitHub release '.$version,$actor['id']);
+        });
+    }
     public function users(string $token):array{return $this->transaction(function(&$db)use($token){self::owner($db,$token);return array_values(array_map(self::safe(...),$db['users']));});}
     public function createUser(string $token,string $username,string $name,string $email,string $password):array{return $this->transaction(function(&$db)use($token,$username,$name,$email,$password){self::owner($db,$token);$u=self::add($db,self::username($username),self::name($name),self::email($email),self::password($password),false);ActivityJournal::record($db,$db['users'][self::requireSession($db,$token)['user']],'account.create',$u['username'],$u['id']);return self::safe($u);});}
     public function setEnabled(string $token,string $id,bool $enabled):void{$this->transaction(function(&$db)use($token,$id,$enabled){self::owner($db,$token);$u=$db['users'][$id]??null;if(!$u||$u['owner'])throw new \DomainException('Cannot change this account.');if(!$enabled)foreach($db['organizations'] as $o)if($o['owner']===$id)throw new \DomainException('Transfer organization ownership before disabling this account.');$db['users'][$id]['enabled']=$enabled;if(!$enabled)self::revoke($db,$id);if($u['enabled']!==$enabled)ActivityJournal::record($db,$db['users'][self::requireSession($db,$token)['user']],$enabled?'account.enable':'account.disable',$u['username'],$id);});}

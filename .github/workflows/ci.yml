@@ -27,6 +27,11 @@ jobs:
         run: python3 tests/release-111-github.py
       - name: Verify signed update discovery and GitHub API failure behavior
         run: python3 tests/update-discovery-112.py
+      - name: Verify signed Admin Update Center (1.1.3)
+        run: |
+          php tests/update-center-113.php
+          php tests/update-center-access-113.php
+          php tests/update-center-controller-113.php
       - run: python3 tests/release-gate.py --suite native --report-dir "$RUNNER_TEMP/book-gate-native"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -140,6 +145,9 @@ jobs:
           set -e -o pipefail
           {
             python3 tests/security-retest.py
+            php tests/update-center-113.php
+            php tests/update-center-access-113.php
+            php tests/update-center-controller-113.php
             php tests/security-hardening.php --require-zip
             php tests/security-lifecycle.php
             php tests/recovery-110.php

@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.1.2
+# Administrator handbook — CajeerEngine Book 1.1.3
 
 **Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
@@ -6,6 +6,7 @@
 
 | Task | Instructions |
 | --- | --- |
+| Admin Update Center 1.1.3 | [Owner-only GitHub update administration](update-center-113.md) |
 | GitHub Release discovery 1.1.2 | [Secure version discovery via GitHub Releases](update-discovery-112.md) |
 | GitHub Release Infrastructure 1.1.1 | [GitHub Release qualification and public asset verification](release-111.md) |
 | Acceptance for 1.1.0: regression, security, recovery, load and rollback | [1.1.0 release acceptance](release-110.md) |
