@@ -1,10 +1,14 @@
+### Update History & Operations (1.1.7)
+
+The installation-owner update page `/admin/updates` now displays a durable **root-owned host operation history** with queued/running/completed/failed transitions, bounded duration and sanitized error codes. Failed signed `fetch` and `preflight` can be retried through their existing authorized actions; failed `apply`, interrupted recovery, unsafe rollback, and key/topology changes remain host-operator-only. A read-only `/admin/updates?download=diagnostics` JSON export includes only allowlisted state and recent scheduled-check events (no notification email, secret, raw stderr, Docker socket path or host backup paths). The agent keeps up to 60 events in a private 0600 journal, returns only the latest 24 to PHP, and rejects unsafe history files. See [Update history and operations](docs/admin/update-history-117.md) for implementation, installation and recovery. PostgreSQL schema stays 7; CajeerEngine Core stays 2.1.0.
+
 ### Scheduled Updates & Notifications (1.1.6)
 
 The installation-owner-only `/admin/updates` page now configures real scheduled GitHub Release checks and a private notification inbox. A non-root PHP CLI scheduler verifies signed candidate metadata, deduplicates release alerts, optionally uses a configured mail transport, and can queue `fetch` or `preflight` through the existing host agent. Scheduling is **disabled by default**; the operator must install the included systemd timer on the Docker host. No timer may invoke `apply`, bypass a maintenance permit or start an automatic schema migration. See [scheduled updates](docs/admin/update-scheduler-116.md) for deployment, SMTP/MTA setup, behavior and failure recovery. Database schema remains **7**, embedded CajeerEngine **2.1.0**.
 
 ### Backup, Recovery & Rollback (1.1.5)
 
-The signed, root-owned Docker updater now verifies a full isolated portable restore and checks PostgreSQL dump contents before updating. It retains root-only SHA-256 backup receipts outside the application-writable backup directory, pins the receipt digest in the transaction journal and refuses unsafe recovery if a completed backup has changed. A new `verify-backup --id` command checks retained data, while the owner panel can view only redacted host recovery status. Recovery and rollback remain intentional **host operator** actions with required maintenance fencing; SQL/PITR recovery drills are separate. See [Backup, recovery and rollback](docs/admin/update-recovery-115.md) for commands, tests and limits. Current Book version **1.1.6**, schema **7**, embedded CajeerEngine **2.1.0**.
+The signed, root-owned Docker updater now verifies a full isolated portable restore and checks PostgreSQL dump contents before updating. It retains root-only SHA-256 backup receipts outside the application-writable backup directory, pins the receipt digest in the transaction journal and refuses unsafe recovery if a completed backup has changed. A new `verify-backup --id` command checks retained data, while the owner panel can view only redacted host recovery status. Recovery and rollback remain intentional **host operator** actions with required maintenance fencing; SQL/PITR recovery drills are separate. See [Backup, recovery and rollback](docs/admin/update-recovery-115.md) for commands, tests and limits. Current Book version **1.1.7**, schema **7**, embedded CajeerEngine **2.1.0**.
 
 ### Admin Update Center (1.1.3)
 
@@ -52,7 +56,7 @@ An opt-in, self-hosted Reader chat uses the OpenAI Responses API, sources from c
 
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.6** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.1.7** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
 
 
 ### Secure Update Execution (1.1.4)

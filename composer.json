@@ -38,6 +38,8 @@
             "python3 tests/update-backup-115.py",
             "@php tests/update-scheduler-116.php",
             "@php tests/update-scheduler-controller-116.php",
+            "@php tests/update-operations-117.php",
+            "python3 tests/update-history-117.py --policy-only",
             "python3 tests/update-manager.py",
             "@php tests/pitr-policy.php",
             "python3 tests/pitr-policy.py",

@@ -30,7 +30,9 @@ COMMIT = re.compile(r'[a-f0-9]{40}\Z')
 MAX_REQUEST = 2048
 MAX_RESPONSE = 16384
 PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-ALLOWED = {'fetch', 'preflight', 'apply', 'status', 'recovery-status'}
+ALLOWED = {'fetch', 'preflight', 'apply', 'status', 'recovery-status', 'history'}
+HISTORY_KEEP = 60
+HISTORY_PUBLIC = 24
 
 
 class Rejected(Exception):
@@ -94,6 +96,7 @@ class Agent:
         if self.permit_file is not None:
             require(self.permit_file.is_absolute(), 'Maintenance permit must be absolute')
         self.record = self.dir / 'operation.json'
+        self.history_path = self.dir / 'history.json'
         self.lock_path = self.dir / 'agent.lock'
 
     @contextlib.contextmanager
@@ -111,12 +114,47 @@ class Agent:
         require(isinstance(r, dict) and r.get('state') in ('queued', 'running', 'succeeded', 'failed') and r.get('stage') in ('none', 'fetched', 'preflight', 'applied'), 'Invalid agent journal')
         return r
 
+    def history(self):
+        """Read a bounded, root-owned, non-sensitive audit trail under the agent lock."""
+        p = self.history_path
+        if not p.exists() and not p.is_symlink():
+            return []
+        require(not p.is_symlink() and p.is_file(), 'Unsafe update history')
+        st = p.stat()
+        require(st.st_uid == 0 and stat.S_IMODE(st.st_mode) == 0o600 and st.st_size <= MAX_RESPONSE,
+                'Unsafe update history permissions or size')
+        events = json.loads(p.read_text())
+        require(isinstance(events, list) and len(events) <= HISTORY_KEEP,
+                'Corrupt update history')
+        for e in events:
+            require(isinstance(e, dict) and isinstance(e.get('time'), int) and
+                    e.get('action') in {'fetch', 'preflight', 'apply', 'reconcile'} and
+                    e.get('state') in {'queued', 'running', 'succeeded', 'failed'} and
+                    isinstance(e.get('id'), str) and re.fullmatch(r'[a-f0-9]{32}', e['id']) and
+                    isinstance(e.get('code'), str) and re.fullmatch(r'[A-Z_]{2,40}', e['code']) and
+                    (e.get('version') is None or (isinstance(e['version'], str) and len(e['version']) <= 40 and VERSION.fullmatch(e['version']))),
+                    'Invalid update history entry')
+        return events
+
+    def event(self, job, code):
+        """Append sanitized operational event; never store stderr, secrets, host paths or tokens."""
+        c = job.get('candidate') or {}
+        row = {'id': job.get('job_id') or os.urandom(16).hex(),
+               'time': int(time.time()), 'action': job['action'], 'state': job['state'],
+               'stage': job.get('stage', 'none'), 'version': c.get('version'),
+               'code': code}
+        if job['state'] in ('succeeded', 'failed') and job.get('started_at') is not None:
+            row['elapsed_seconds'] = max(0, min(86400, row['time'] - int(job['started_at'])))
+        events = self.history()
+        events.insert(0, row)
+        write_json(self.history_path, events[:HISTORY_KEEP])
+
     @staticmethod
     def candidate(req):
         c = req.get('candidate')
         require(isinstance(c, dict) and set(c) == {'version', 'commit', 'manifest_sha256'}, 'Invalid update candidate')
         require(all(isinstance(c[k], str) for k in c), 'Invalid update candidate types')
-        require(VERSION.fullmatch(c['version']) and COMMIT.fullmatch(c['commit']) and SHA.fullmatch(c['manifest_sha256']), 'Invalid signed release identity')
+        require(len(c['version']) <= 40 and VERSION.fullmatch(c['version']) and COMMIT.fullmatch(c['commit']) and SHA.fullmatch(c['manifest_sha256']), 'Invalid signed release identity')
         return c
 
     def permit(self, candidate, consume=False):
@@ -178,6 +216,8 @@ class Agent:
                 return public
             if action == 'recovery-status':
                 return self.recovery_status()
+            if action == 'history':
+                return {'state': 'ready', 'events': self.history()[:HISTORY_PUBLIC]}
             c = self.candidate(req)
             require(old['state'] not in ('queued', 'running'), 'Another update operation is active')
             require(not (old.get('action') == 'apply' and old.get('state') == 'failed'), 'Failed activation requires manual recovery')
@@ -194,6 +234,7 @@ class Agent:
                 'started_at': int(time.time()), 'heartbeat_at': int(time.time()),
             }
             write_json(self.record, job)
+            self.event(job, 'QUEUED')
             try:
                 # Detached worker outlives the PHP request; the durable journal survives broker restart.
                 subprocess.Popen([sys.executable, str(self.agent), 'worker', '--state-dir', str(self.dir),
@@ -205,6 +246,7 @@ class Agent:
             except OSError:
                 job['state'] = 'failed'; job['result'] = 'Worker launch failed'; job['finished_at'] = int(time.time())
                 write_json(self.record, job)
+                self.event(job, 'WORKER_LAUNCH_FAILED')
                 raise Rejected('Worker launch failed')
             return {'state': 'queued', 'stage': job['stage'], 'action': action, 'job_id': job['job_id']}
 
@@ -270,6 +312,7 @@ class Agent:
                           'result':'Operator reconciled verified host updater state',
                           'finished_at':int(time.time())}
                 write_json(self.record, record)
+                self.event(record, 'RECONCILED')
                 return {'stage':record['stage'],'status':'reconciled'}
             except (OSError, ValueError, subprocess.TimeoutExpired, json.JSONDecodeError):
                 raise Rejected('Reconciliation failed; inspect host updater state')
@@ -279,6 +322,7 @@ class Agent:
             job = self.load()
             require(job.get('job_id') == job_id and job['state'] == 'queued', 'Job no longer queued')
             job['state'] = 'running'; job['heartbeat_at'] = int(time.time()); write_json(self.record, job)
+            self.event(job, 'RUNNING')
         finished = threading.Event()
         def heartbeat():
             while not finished.wait(8):
@@ -290,7 +334,7 @@ class Agent:
                 except (OSError, ValueError, Rejected):
                     return
         thread = threading.Thread(target=heartbeat, daemon=True); thread.start()
-        result = 'failed'; stage = job['stage']; success = False
+        result = 'failed'; stage = job['stage']; success = False; error_code = 'UNEXPECTED_FAILURE'
         try:
             c = job['candidate']; action = job['action']
             updir = self.enrolled_dir()
@@ -320,9 +364,14 @@ class Agent:
             stage = {'fetch':'fetched','preflight':'preflight','apply':'applied'}[action]
             success = True
             result = 'Signed release verified' if action == 'fetch' else 'Preflight passed' if action == 'preflight' else 'Update activated'
+            error_code = 'COMPLETED'
         except (Rejected, OSError, ValueError, KeyError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
             # Error class only: no traceback or secrets leave the root-owned directory.
             result = 'Host update failed (' + type(e).__name__ + '); inspect host logs'
+            error_code = ('TIMEOUT' if isinstance(e, subprocess.TimeoutExpired) else
+                          'INVALID_RECEIPT' if isinstance(e, (ValueError, json.JSONDecodeError, KeyError)) else
+                          'UPDATE_MANAGER_REJECTED' if isinstance(e, Rejected) else
+                          'HOST_IO_FAILED' if isinstance(e, OSError) else 'UNEXPECTED_FAILURE')
         finally:
             finished.set(); thread.join(timeout=2)
             with self.lock():
@@ -331,6 +380,7 @@ class Agent:
                     latest.update({'state':'succeeded' if success else 'failed',
                                    'stage':stage,'result':result,'finished_at':int(time.time()),'heartbeat_at':int(time.time())})
                     write_json(self.record, latest)
+                    self.event(latest, error_code)
 
 
 class Handler(socketserver.BaseRequestHandler):

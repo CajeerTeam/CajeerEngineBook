@@ -20,6 +20,17 @@ final class UpdateController
         if(!$ctx){http_response_code(401);$page('Sign in required','<h1>Sign in required</h1><a href="/login">Sign in</a>');return;}
         if(($ctx['user']['owner']??false)!==true){http_response_code(403);$page('Forbidden','<h1>Installation owner permission required</h1>');return;}
         $notice='';$error='';$result=null;$center=$this->center();
+        // The owner-only export never exposes raw host logs, filesystem paths or credentials.
+        if($method==='GET'&&($_GET['download']??null)==='diagnostics'){
+            $report=UpdateOperations::report($center,$this->scheduler(),$this->agent());
+            $json=json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT);
+            if(strlen($json)>65536){http_response_code(503);return;}
+            header('Content-Type: application/json; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="book-update-diagnostics.json"');
+            header('X-Content-Type-Options: nosniff');
+            echo $json."\n";
+            return;
+        }
         if($method==='POST'){
             $csrf=$_POST['csrf']??null;$action=$_POST['action']??null;
             if(!is_string($csrf)||!hash_equals($ctx['session']['csrf'],$csrf)){http_response_code(403);$page('Forbidden','<h1>Invalid CSRF token</h1>');return;}
@@ -143,6 +154,24 @@ final class UpdateController
                         $h.='<button type="submit" class="primary">'.self::e(ucfirst($next).' signed update').'</button></form>';
                     }
                 }
+                // History is supplied by root-owned, read-only, bounded host-agent RPC.
+                $h.='<h2>Update history & operations</h2><p>Events are recorded durably. '
+                    .'Failed fetch/preflight operations can be retried through their normal signed actions. '
+                    .'Failed activation requires manual host recovery.</p>';
+                try {
+                    $events=UpdateOperations::events($agent->call('history'));
+                    if($events===[])$h.='<p>No host update operations recorded yet.</p>';
+                    else{
+                        $h.='<table><thead><tr><th>UTC</th><th>Operation</th><th>Version</th><th>Status</th><th>Code</th><th>Seconds</th></tr></thead><tbody>';
+                        foreach($events as $event){
+                            $h.='<tr><td>'.self::e(gmdate('Y-m-d H:i:s',$event['time'])).'</td>'
+                                .'<td>'.self::e($event['action']).'</td><td>'.self::e($event['version']??'—').'</td>'
+                                .'<td>'.self::e($event['state']).'</td><td><code>'.self::e($event['code']).'</code></td>'
+                                .'<td>'.self::e($event['elapsed_seconds']===null?'—':(string)$event['elapsed_seconds']).'</td></tr>';
+                        }
+                        $h.='</tbody></table>';
+                    }
+                }catch(\Throwable){$h.='<p role="alert">Host history unavailable; inspect root-owned agent logs.</p>';}
                 try {
                     $recovery = $agent->call('recovery-status');
                     $h .= '<h2>Backup / recovery</h2><p>Host updater: <strong>'.self::e((string)$recovery['state']).'</strong>'
@@ -182,6 +211,17 @@ final class UpdateController
             foreach([15,60,360,720,1440] as $minutes)$h.='<option value="'.$minutes.'"'.($cfg['interval_minutes']===$minutes?' selected':'').'>'.$minutes.' minutes</option>';
             $h.='</select></label><label>Notification email (optional; requires configured MTA)<input name="notification_email" type="email" maxlength="254" value="'.self::e($cfg['notification_email']).'"></label>'
                 .'<button type="submit">Save scheduled checks</button></form>';
+            $h.='<h3>Scheduled check history</h3>';
+            if(empty($schedule['history']))$h.='<p>No completed scheduled checks yet.</p>';
+            else {
+                $h.='<ul>';
+                foreach(array_slice($schedule['history'],0,12) as $entry){
+                    if(!is_array($entry))continue;
+                    $h.='<li>'.self::e(gmdate('Y-m-d H:i',max(0,(int)($entry['time']??0)))).' UTC · '
+                        .self::e((string)($entry['event']??'unknown')).' · '.self::e((string)($entry['status']??'unknown')).'</li>';
+                }
+                $h.='</ul>';
+            }
             $h.='<h3>Recent update notifications</h3>';
             if(empty($schedule['notifications']))$h.='<p>No scheduled notifications yet.</p>';
             else{
@@ -194,6 +234,7 @@ final class UpdateController
                 $h.='</ul>';
             }
         }catch(\Throwable){$h.='<p role="alert">Scheduled update state unavailable; inspect application logs.</p>';}
+        $h.='<p><a href="/admin/updates?download=diagnostics">Export sanitized update diagnostics (JSON)</a></p>';
         $h.='<form method="post" action="/admin/updates" class="editor">'
             .'<input type="hidden" name="csrf" value="'.self::e($ctx['session']['csrf']).'">'
             .'<input type="hidden" name="action" value="check">'

@@ -54,6 +54,12 @@ final class UpdateScheduler
             self::demand(rename($temp,$file),'Scheduler state commit failed');
         }finally{if(is_file($temp))unlink($temp);}
     }
+    private static function record(array &$state,int $now,string $event,string $status):void
+    {
+        $state['history']??=[];
+        array_unshift($state['history'],['time'=>$now,'event'=>$event,'status'=>$status]);
+        $state['history']=array_slice($state['history'],0,60);
+    }
     private static function defaults():array
     {
         return ['enabled'=>false,'channel'=>'stable','mode'=>'notify_only','interval_minutes'=>360,'notification_email'=>''];
@@ -86,6 +92,9 @@ final class UpdateScheduler
         return $this->lock(function($dir)use($settings){
             $old=$this->settingsRaw($dir);
             self::write($dir.'/schedule-settings.json',$settings);
+            $history=self::read($dir.'/schedule-state.json');
+            self::record($history,$this->now(),'settings',$settings['enabled']?'enabled':'disabled');
+            self::write($dir.'/schedule-state.json',$history);
             // A changed channel or mode requires fresh signed discovery before host actions.
             if($old['channel']!==$settings['channel']||$old['mode']!==$settings['mode']||(!$old['enabled']&&$settings['enabled'])){
                 $state=self::read($dir.'/schedule-state.json');$state['next_check_at']=0;
@@ -100,6 +109,7 @@ final class UpdateScheduler
             $s=self::read($dir.'/schedule-state.json');
             $s['settings']=$this->settingsRaw($dir);
             $s['notifications']=array_slice($s['notifications']??[],0,20);
+            $s['history']=array_slice($s['history']??[],0,30);
             return $s;
         });
     }
@@ -124,6 +134,7 @@ final class UpdateScheduler
                     $result=$this->center->check($settings['channel']);
                     $this->center->save($result,false);
                     $state['last_status']=$result['status'];unset($state['last_error']);
+                    self::record($state,$now,'discovery',(string)$result['status']);
                     $candidate=$result['candidate']??null;
                     if($result['status']==='available'&&is_array($candidate)){
                         $identity=$candidate['version'].':'.$candidate['manifest_sha256'];
@@ -151,6 +162,7 @@ final class UpdateScheduler
                     }
                 }catch(\Throwable $e){
                     $state['last_status']='error';$state['last_error']='GitHub check failed; inspect application logs';
+                    self::record($state,$now,'discovery','error');
                     $key='status:error';
                     if(($state['last_notice_key']??'')!==$key){
                         $state['last_notice_key']=$key;
@@ -178,15 +190,15 @@ final class UpdateScheduler
                                 $target=['version'=>$c['version'],'commit'=>$c['commit'],'manifest_sha256'=>$c['manifest_sha256']];
                                 $matches=($host['candidate']??null)===$target;
                                 if(!$matches||!in_array($host['stage']??'none',['fetched','preflight','applied'],true)){
-                                    $agent->call('fetch',$target);$state['last_stage_action']='fetch';$state['next_stage_attempt_at']=$now+900;unset($state['stage_status']);
+                                    $agent->call('fetch',$target);$state['last_stage_action']='fetch';self::record($state,$now,'host_fetch','queued');$state['next_stage_attempt_at']=$now+900;unset($state['stage_status']);
                                 }elseif($settings['mode']==='manual_approval'&&$matches&&($host['stage']??'')==='fetched'&&$host['state']==='succeeded'){
-                                    $agent->call('preflight',$target);$state['last_stage_action']='preflight';$state['next_stage_attempt_at']=$now+900;unset($state['stage_status']);
+                                    $agent->call('preflight',$target);$state['last_stage_action']='preflight';self::record($state,$now,'host_preflight','queued');$state['next_stage_attempt_at']=$now+900;unset($state['stage_status']);
                                 }
                             }
                         }else{$state['stage_status']='Host agent not configured';}
                     }
                 }catch(\Throwable $e){
-                    $state['stage_status']='Host staging unavailable; inspect operator logs';$state['next_stage_attempt_at']=$now+$settings['interval_minutes']*60;
+                    $state['stage_status']='Host staging unavailable; inspect operator logs';self::record($state,$now,'host_stage','error');$state['next_stage_attempt_at']=$now+$settings['interval_minutes']*60;
                     Observability::log('update.schedule.stage_failure',['error_type'=>get_class($e)]);
                 }
             }

@@ -25,10 +25,11 @@ try{
         'candidate'=>['tag'=>'v1.1.4','name'=>'Release','published_at'=>gmdate('c'),
             'schema'=>7,'requires_schema_upgrade'=>false,'changelog'=>'changes']+$candidate],true);
     $requests=[];$stage='none';
-    $commandCount=static fn(array $events):int=>count(array_filter($events,static fn($r):bool=>$r['action']!=='recovery-status'));
+    $commandCount=static fn(array $events):int=>count(array_filter($events,static fn($r):bool=>!in_array($r['action'],['recovery-status','history'],true)));
     $transport=static function(string $json)use(&$requests,&$stage,$candidate):string{
         $req=json_decode($json,true,10,JSON_THROW_ON_ERROR);$requests[]=$req;
         $action=$req['action'];
+        if($action==='history')return json_encode(['ok'=>true,'data'=>['state'=>'ready','events'=>[]]],JSON_THROW_ON_ERROR);
         if($action==='recovery-status')return json_encode(['ok'=>true,'data'=>[
             'state'=>'ready','current_version'=>'1.1.3','previous_version'=>'1.1.2',
             'backup_id'=>'20261122T120000Z-'.str_repeat('a',16),'backup_attested'=>true,
@@ -60,7 +61,7 @@ try{
     [$code]=$run('POST',$owner['token'],array_replace($post,['action'=>'apply']));verify114($code===409&&$stage==='preflight','Apply without maintenance confirmation denied');
     [$code,$html]=$run('POST',$owner['token'],array_replace($post,['action'=>'apply','confirm_maintenance'=>'yes']));
     verify114($code===200&&$stage==='applied'&&str_contains($html,'Host execution status'),'Confirmed activation accepted by agent');
-    $actions=array_values(array_map(static fn($r)=>$r['action'],array_filter($requests,static fn($r)=>!in_array($r['action'],['status','recovery-status'],true))));
+    $actions=array_values(array_map(static fn($r)=>$r['action'],array_filter($requests,static fn($r)=>!in_array($r['action'],['status','recovery-status','history'],true))));
     verify114($actions===['fetch','preflight','apply'],'PHP sends only allowlisted host actions');
     try{$agent->call('shell',$candidate);throw new RuntimeException('Arbitrary action permitted');}catch(InvalidArgumentException){}
     verify114(true,'PHP Unix-socket client rejects arbitrary operations');

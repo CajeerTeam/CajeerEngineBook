@@ -1,3 +1,10 @@
+## 1.1.7 — Update History & Operations (2026-11-22)
+
+- Add an actual durable root-owned operation history to the trusted host update agent. The 0600 `history.json` journal is fsynced and bounded, and records queued/running/succeeded/failed/reconcile transitions, version, safe duration and classified outcome codes without stdout, stderr or secrets. Corrupt, symbolic-link or untrusted history is rejected rather than silently ignored.
+- Add a strictly read-only, size-bounded `history` Unix socket RPC and server-side validated owner-only history view in `/admin/updates`. Keep `fetch`/`preflight` retries within the existing pinned signed release and authorization flow; failed `apply`/interrupted migration still require root-only reconciliation and recovery.
+- Record bounded scheduled-check and host staging events in the non-root scheduler state. Add an installation-owner-only sanitized diagnostic JSON export with explicit field allowlists, including discovery, scheduler and host/recovery summaries. Do not export notification recipients, tokens, raw host output, filesystem paths or database state.
+- Add root-host and PHP HTTP regression tests for persistence, failure retries, journal corruption, CSRF/owner roles and redaction; enforce tests through Composer, independent security CI and release gates. No PostgreSQL migration; embedded CajeerEngine stays 2.1.0. Full Docker/PostgreSQL/Redis incident testing remains an independent production acceptance gate.
+
 ## 1.1.6 — Scheduled Updates & Notifications (2026-11-22)
 
 - Add a real unprivileged `bin/update-scheduler.php tick|status` worker and installable Docker-host systemd timer. Checks run with UID 33 in the existing Book container and use the same signed GitHub metadata verifier as Admin Update Center. The timer is opt-in and maintains its own private flock-controlled state.
