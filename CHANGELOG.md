@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.6 — Documentation analytics, search queries, conversions and vendor integrations
+
+- Replace the original tabular-only report with a working manager-only 30-day dashboard: daily activity chart, popular documentation URLs, search-query frequencies, per-goal conversion counts and normalized conversion volume per 100 page views. Keep role, CSRF and revision checks for Workspace settings.
+- Add privacy-bounded, opt-in aggregation of normalized search phrases from actual Reader search results and named conversions from explicit UI interactions. Require allowlisted conversion goals, reject identifiers/URLs in search dimensions, suppress queries appearing fewer than three times in the report, and preserve existing 1.0.5 page/event data.
+- Integrate opt-in PostHog, Matomo, Plausible and Umami SDKs alongside GA4 and Yandex Metrica. Validate HTTPS origins and site IDs, create Workspace-specific CSP allowlists, disable optional autocapture/pageviews, and stop transmission after consent withdrawal or Global Privacy Control.
+- Ship immutable PostgreSQL schema migration 5 with an isolated daily dimension table and a guard preventing rollback while dimensions contain data. File mode appends dimensions to locked atomic daily aggregates. Existing PG deployments require an offline 4 → 5 migration before startup.
+- Add regression tests for search sanitization, conversion authorization, Workspace isolation, CSP, full anonymous HTTP collection, consent state and SDK injection. E2E checks still require an unblocked Chromium, live vendor credentials and fully deployed SQL/Redis/CI qualification.
+
 ## 1.0.5 — Working Workspace analytics and consent
 
 - Persist and enforce GA4, Yandex Metrica and Webvisor settings independently for every Workspace, with server-side role checks, CSRF protection, optimistic revisions and an administrative management/report page.

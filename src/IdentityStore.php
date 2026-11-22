@@ -516,6 +516,7 @@ final class IdentityStore
     /** Optimistic concurrency and live manage permissions protect each workspace's tracker IDs. */
     public function configureAnalytics(string $token,string $id,int $revision,array $config):void
     {
+        $config=array_replace(Analytics::defaults(),$config);
         Analytics::validate($config);
         $this->transaction(function(&$db)use($token,$id,$revision,$config){
             $uid=self::requireSession($db,$token)['user'];$w=$db['workspaces'][$id]??null;

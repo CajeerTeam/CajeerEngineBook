@@ -10,7 +10,7 @@ use PDO;
  */
 final class DatabaseMigrations
 {
-    public const VERSION = 4;
+    public const VERSION = 5;
     private const LOCK = '1128416305, 1'; // same database-wide lock as pre-0.5.2 schema installers
     private const SCHEMA = 'cajeer_book';
     private const BASELINE = ['postgres-content.sql','postgres-identity.sql','postgres-audit.sql'];
@@ -32,6 +32,7 @@ final class DatabaseMigrations
             2=>['name'=>'audit-outcome-index','release'=>'0.5.2','up'=>['migrations/0002-audit-outcome.up.sql'],'down'=>'migrations/0002-audit-outcome.down.sql'],
             3=>['name'=>'published-read-indexes','release'=>'0.6.0','up'=>['migrations/0003-published-read.up.sql'],'down'=>'migrations/0003-published-read.down.sql'],
             4=>['name'=>'analytics-daily','release'=>'1.0.5','up'=>['migrations/0004-analytics.up.sql'],'down'=>'migrations/0004-analytics.down.sql'],
+            5=>['name'=>'analytics-dimensions-daily','release'=>'1.0.6','up'=>['migrations/0005-analytics-dimensions.up.sql'],'down'=>'migrations/0005-analytics-dimensions.down.sql'],
         ];
         $out=[];$next=1;
         foreach($definitions as $version=>$definition){
@@ -110,14 +111,14 @@ final class DatabaseMigrations
         try{
             $v=self::validateLedger(self::rows($pdo),self::catalog());
             if($v!==self::VERSION)throw new \RuntimeException('Database schema '.$v.' is incompatible with this release (requires '.self::VERSION.'). Run bin/migrations.php apply --offline.');
-            self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);
+            self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);
         }catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
     }
     /** Fresh portable imports and restore drills use the same registry. No DDL on a current database. */
     public static function prepareInstallation(PDO $pdo,bool $boundLegacy=false): void
     {
         self::lock($pdo,true);
-        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);return;}
+        try{$v=self::validateLedger(self::rows($pdo),self::catalog());if($v===self::VERSION){self::verifyIndex($pdo,true);self::verifyReadIndexes($pdo,true);self::verifyAnalytics($pdo,true);self::verifyAnalyticsDimensions($pdo,true);return;}
             if(!$boundLegacy&&self::exists($pdo,'cajeer_book.content_installation')&&$pdo->query('SELECT 1 FROM cajeer_book.content_installation LIMIT 1')->fetchColumn()!==false)throw new \RuntimeException('A populated database needs an explicit offline schema upgrade with its matching installation before importing a new namespace.');}
         catch(\Throwable $e){self::unlock($pdo,true);throw $e;}
         self::unlock($pdo,true);
@@ -169,6 +170,20 @@ final class DatabaseMigrations
         foreach($rows as $r){$name=array_key_first($expected);if($r['column_name']!==$name||$r['data_type']!==$expected[$name]||$r['is_nullable']!=='NO')throw new \RuntimeException('Analytics table schema mismatch.');unset($expected[$name]);}
         $pk=$pdo->query("SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid='cajeer_book.analytics_daily'::regclass AND c.contype='p'")->fetchColumn();
         if($pk!=='PRIMARY KEY (installation, scope, day, event, page_path)')throw new \RuntimeException('Analytics primary key mismatch.');
+    }
+
+    /** Ensure the 1.0.6 search/conversion relation really exists after migration. */
+    private static function verifyAnalyticsDimensions(PDO $pdo,bool $present):void
+    {
+        $exists=self::exists($pdo,'cajeer_book.analytics_dimensions_daily');
+        if(!$present){if($exists)throw new \RuntimeException('Unexpected analytics dimensions table.');return;}
+        if(!$exists)throw new \RuntimeException('Analytics dimensions table missing; run the offline migration.');
+        $rows=self::q($pdo,"SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema='cajeer_book' AND table_name='analytics_dimensions_daily' ORDER BY ordinal_position")->fetchAll(PDO::FETCH_ASSOC);
+        $expected=['installation'=>'text','scope'=>'text','day'=>'date','kind'=>'text','dimension'=>'text','hits'=>'bigint'];
+        if(count($rows)!==count($expected))throw new \RuntimeException('Analytics dimensions columns changed.');
+        foreach($rows as $r){$name=array_key_first($expected);if($r['column_name']!==$name||$r['data_type']!==$expected[$name]||$r['is_nullable']!=='NO')throw new \RuntimeException('Analytics dimensions schema mismatch.');unset($expected[$name]);}
+        $pk=$pdo->query("SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid='cajeer_book.analytics_dimensions_daily'::regclass AND c.contype='p'")->fetchColumn();
+        if($pk!=='PRIMARY KEY (installation, scope, day, kind, dimension)')throw new \RuntimeException('Analytics dimensions primary key mismatch.');
     }
     private static function inventory(PDO $pdo,string $schema): array
     {
@@ -241,7 +256,7 @@ final class DatabaseMigrations
         try{
             $db=self::server($pdo);$catalog=self::catalog();$rows=self::rows($pdo);$v=self::validateLedger($rows,$catalog);
             self::verifyHistory($pdo,$catalog,$v);$legacy=self::legacy($pdo);if($v===0&&self::exists($pdo,self::LEDGER))throw new \RuntimeException('Empty migration registry.');$pending=array_values(array_filter($catalog,fn($m)=>$m['version']>$v));
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);}
             $bytes=self::exists($pdo,'cajeer_book.audit_event')?(int)$pdo->query("SELECT pg_total_relation_size('cajeer_book.audit_event'::regclass)")->fetchColumn():0;
             $exclusive=(int)$pdo->query('SELECT CASE WHEN pg_try_advisory_lock('.self::LOCK.') THEN 1 ELSE 0 END')->fetchColumn()===1;if($exclusive)self::unlock($pdo,false);
             $canCreate=$pdo->query("SELECT has_database_privilege(current_user,current_database(),'CREATE')")->fetchColumn()===true;
@@ -295,14 +310,14 @@ final class DatabaseMigrations
             $pdo->exec("SET LOCAL lock_timeout='30s'; SET LOCAL statement_timeout='30min'");
             $v=self::validateLedger(self::rows($pdo),$catalog);$before=$v;$changed=[];
             self::verifyHistory($pdo,$catalog,$v);
-            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);}
+            if($v>0){self::verifyBaseline($pdo);self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);}
             if($down){
                 if($v<=$target)throw new \RuntimeException('Rollback target must be below the applied schema version.');
                 // Validate the whole down path before executing any DDL.
                 for($n=$v;$n>$target;$n--)if(!$catalog[$n]['reversible'])throw new \RuntimeException('Migration '.$n.' requires restoring the matched backup.');
                 while($v>$target){$m=$catalog[$v];$start=hrtime(true);$pdo->exec(self::sql($m['down']));
                     self::record($pdo,$m,'rollback',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'rollback'];$v--;
-                    self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);
+                    self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);
                 }
             }else{
                 if($v===0){
@@ -312,7 +327,7 @@ final class DatabaseMigrations
                     self::registry($pdo);self::record($pdo,$catalog[1],$mode,(int)((hrtime(true)-$start)/1000000),$inventory);$v=1;$changed[]=['version'=>1,'operation'=>$mode];
                 }
                 while($v<$target){$m=$catalog[$v+1];$start=hrtime(true);foreach($m['up'] as $file)$pdo->exec(self::sql($file));
-                    $v++;self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
+                    $v++;self::verifyIndex($pdo,$v>=2);self::verifyReadIndexes($pdo,$v>=3);self::verifyAnalytics($pdo,$v>=4);self::verifyAnalyticsDimensions($pdo,$v>=5);self::record($pdo,$m,'apply',(int)((hrtime(true)-$start)/1000000));$changed[]=['version'=>$v,'operation'=>'apply'];
                 }
             }
             if($v!==$target||self::validateLedger(self::rows($pdo),$catalog)!==$target)throw new \RuntimeException('Migration target verification failed.');

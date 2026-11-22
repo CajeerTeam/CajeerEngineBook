@@ -25,6 +25,7 @@ final class App {
         $prefix=WorkspaceUrls::prefix();
         if($prefix!==''&&str_starts_with($analyticsPath,$prefix.'/'))$analyticsPath=substr($analyticsPath,strlen($prefix));
         $analyticsPage=$this->readerVisibility==='public'&&!$this->scopedIdentity&&http_response_code()===200&&preg_match('~\A/(?:$|search$|docs/)~D',$analyticsPath)===1;
+        header('Content-Security-Policy: '.Analytics::contentSecurityPolicy($this->workspace??$this->analyticsWorkspace,$analyticsPage));
         echo $this->view->renderName('book.layout',['title'=>$title,'description'=>'Self-hosted technical documentation','body'=>$body,'nav'=>$nav,'toc'=>$toc,'query'=>$query,'workspacePrefix'=>WorkspaceUrls::prefix(),'homeUrl'=>WorkspaceUrls::prefix().'/', 'searchUrl'=>WorkspaceUrls::url('/search'),'studioLink'=>$this->domainHost===null&&(!$this->workspace||Permissions::allows($this->studioRole,'edit'))?self::link('/studio',Locale::t('Studio')):'','controlLinks'=>$this->domainHost===null?self::link('/team',Locale::t('Team')).(getenv('BOOK_PG_DSN')?'<a href="/audit">Audit</a>':'').self::link('/workspaces',Locale::t('Workspaces')).self::link('/organizations',Locale::t('Organizations')).self::link('/login',Locale::t('Account')):'','uiLocale'=>Locale::ui(),'contentLocale'=>$lang,'searchLocale'=>$searchLocale,'uiLinks'=>Locale::uiLinks(),'searchLabel'=>Locale::t('Search'),'searchPlaceholder'=>Locale::t('Search documentation'),'teamLabel'=>Locale::t('Team'),'workspacesLabel'=>Locale::t('Workspaces'),'organizationsLabel'=>Locale::t('Organizations'),'accountLabel'=>Locale::t('Account'),'themeLabel'=>Locale::t('Toggle theme'),'documentationLabel'=>Locale::t('Documentation'),'footerLabel'=>Locale::t('Self-hosted documentation'),'documentHead'=>$this->documentHead,'analyticsSettings'=>json_encode(Analytics::browserConfig($this->workspace??$this->analyticsWorkspace,$analyticsPage),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES)]);
     }
     private function json(mixed $data):void{header('Content-Type: application/json; charset=utf-8');echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);}
@@ -445,8 +446,8 @@ final class App {
         try{
             $raw=file_get_contents('php://input',false,null,0,1025);
             if(!is_string($raw))throw new \InvalidArgumentException('Invalid analytics request.');
-            [$event,$path]=Analytics::accept($raw);
-            Analytics::collect($this->installationDir,$w,$event,$path);
+            [$event,$path,$dimension]=array_pad(Analytics::accept($raw),3,'');
+            Analytics::collect($this->installationDir,$w,$event,$path,$dimension);
             http_response_code(204);
         }catch(\InvalidArgumentException|\JsonException $e){http_response_code(400);}
          catch(\DomainException $e){http_response_code(404);}

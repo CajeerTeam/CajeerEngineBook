@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='book-analytics-http-') as tmp:
             check(raw(base,prefix+'/analytics/collect',{**payload,'visitor':'123'},base)[0]==400,'visitor identifier rejected')
             check(raw(base,prefix+'/analytics/collect',{**payload,'path':'/docs/guide/../private'},base)[0]==400,'traversal path rejected')
             _,stats=admin.request('/analytics?id='+wid,200)
-            check(b'Page views: 1' in stats and b'search' in stats and 'token=' not in (data/'workspaces'/oid/wid/'analytics'/(time.strftime('%Y-%m-%d',time.gmtime())+'.json')).read_text(), 'management dashboard displays aggregated events without raw URL query data')
+            check(b'Page views</span>' in stats and b'<strong>1</strong>' in stats and b'search' in stats and 'token=' not in (data/'workspaces'/oid/wid/'analytics'/(time.strftime('%Y-%m-%d',time.gmtime())+'.json')).read_text(), 'management dashboard displays aggregated events without raw URL query data')
             admin.request('/analytics?id='+wid,303,dict(csrf=admin.csrf('/analytics?id='+wid),revision='3',ga4='',metrica=''))
             check(raw(base,prefix+'/analytics/collect',payload,base)[0]==404,'disabled workspace does not collect subsequent events')
             check(b'G-ABCDEF1234' not in guest.request(prefix+'/',200)[1],'disabled workspace no longer exposes third-party IDs')

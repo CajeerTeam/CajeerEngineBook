@@ -20,7 +20,7 @@ try{
  deny(fn()=>$identity->configureAnalytics($token,$aId,1,['enabled'=>true,'ga4'=>'<script>','metrica'=>'','webvisor'=>false]),'malicious GA4 ID rejected');
  deny(fn()=>$identity->configureAnalytics($token,$aId,1,['enabled'=>true,'ga4'=>'','metrica'=>'','webvisor'=>true]),'Webvisor requires a Metrica counter');
  $identity->configureAnalytics($token,$aId,1,$cfg);
- ok(Analytics::settings($identity->workspaces($token)[0])===$cfg,'valid tracker settings persisted for one workspace');
+ ok(array_intersect_key(Analytics::settings($identity->workspaces($token)[0]),$cfg)===$cfg,'valid tracker settings persisted for one workspace');
  deny(fn()=>$identity->configureAnalytics($token,$aId,1,$cfg),'stale settings write rejected');
  $identity->mutateWorkspace($token,$aId,2,'visibility','public','');
  $a=$identity->withWorkspace($token,$org['id'],$aId,fn($ctx,$w)=>$w);$b=$identity->withWorkspace($token,$org['id'],$bId,fn($ctx,$w)=>$w);
