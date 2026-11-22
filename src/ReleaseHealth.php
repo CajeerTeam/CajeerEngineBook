@@ -10,10 +10,10 @@ final class ReleaseHealth
     /** Reject insecure/inconsistent operator settings without depending on a live IdP. */
     public static function configuration(): void
     {
-        $primary=CustomDomains::primary();$oidc=Oidc::config();
-        if(Oidc::required()&&$oidc===null)throw new \RuntimeException('Required OIDC provider is not configured.');
-        if(($primary!==null||$oidc!==null)&&getenv('BOOK_SECURE_COOKIE')==='0')throw new \RuntimeException('HTTPS domains and OIDC require secure cookies.');
-        if($primary!==null&&$oidc!==null&&($oidc['redirect_uri']!=='https://'.$primary.Oidc::CALLBACK))throw new \RuntimeException('OIDC callback must use the primary HTTPS domain.');
+        $primary=CustomDomains::primary();$providers=Oidc::configs();
+        if(Oidc::required()&&$providers===[])throw new \RuntimeException('Required OIDC provider is not configured.');
+        if(($primary!==null||$providers!==[])&&getenv('BOOK_SECURE_COOKIE')==='0')throw new \RuntimeException('HTTPS domains and OIDC require secure cookies.');
+        if($primary!==null)foreach($providers as $oidc)if($oidc['redirect_uri']!=='https://'.$primary.Oidc::CALLBACK)throw new \RuntimeException('OIDC callback must use the primary HTTPS domain.');
         RedisTopology::config();
         if(RedisRuntime::enabled()&&!getenv('BOOK_PG_DSN'))throw new \RuntimeException('Redis requires PostgreSQL.');
     }

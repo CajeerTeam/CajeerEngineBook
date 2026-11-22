@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.3** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.4** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+
+## 1.0.4 — Provider linking and multiple OIDC clients
+
+Book supports multiple separately configured OIDC clients, including SkiF4er ID. Local non-owner users with ordinary viewer/editor memberships can **link and unlink external accounts** from `/account`, with local-password confirmation, one-use PKCE/OIDC transactions and verified provider subject. Provider-issued email is never used for account linking. Federated sessions are bound to the issuing provider and revocation does not log out unrelated providers or local sessions. Provider roles are an upper bound for externally authenticated access and never promote linked users to administrator. Existing 1.0.3 single-provider users, databases and sessions remain readable; provider policy changes may require a new login. See [SkiF4er ID and multi-provider guide](docs/admin/skif4er-id.md). No SQL schema migration.
 
 ## 1.0.3 — SkiF4er ID sign-in
 

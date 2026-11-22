@@ -51,9 +51,12 @@ try{
     check($store->current($again['token'])===null&&$store->federatedLogin($config,$claims)['status']==='invalid','operator access revocation prevents new SkiF4er sessions');
     putenv('BOOK_SKIF4ER_DEFAULT_ROLE=none');fails(fn()=>Oidc::config(),'SkiF4er login is denied without explicit role policy');
     putenv('BOOK_SKIF4ER_DEFAULT_ROLE=viewer');
-    putenv('BOOK_OIDC_CONFIG={"issuer":"https://other.example"}');fails(fn()=>Oidc::config(),'ambiguous dual provider configuration is rejected');putenv('BOOK_OIDC_CONFIG');
+    $enterprise=['issuer'=>'https://company.example.org/realm','client_id'=>'book-work','redirect_uri'=>'https://book.example.org/auth/oidc/callback','organization'=>$org['id'],'label'=>'Company ID','groups'=>[],'default_role'=>'viewer'];
+    putenv('BOOK_OIDC_CONFIG='.json_encode($enterprise));putenv('BOOK_OIDC_CLIENT_SECRET=another-confidential-secret');
+    check(count(Oidc::configs())===2&&Oidc::config()===null&&Oidc::config('skif4er')['issuer']===$config['issuer']&&Oidc::config('enterprise')['issuer']===$enterprise['issuer'],'SkiF4er ID and enterprise OIDC can coexist without ambiguous defaults');
+    putenv('BOOK_OIDC_CONFIG');putenv('BOOK_OIDC_CLIENT_SECRET');
     putenv('BOOK_SKIF4ER_REDIRECT_URI=https://other.example.org/callback');fails(fn()=>Oidc::config(),'invalid SkiF4er callback rejected');
 }finally{
-    foreach(['BOOK_SKIF4ER_CLIENT_ID','BOOK_SKIF4ER_CLIENT_SECRET_FILE','BOOK_SKIF4ER_REDIRECT_URI','BOOK_SKIF4ER_ORGANIZATION','BOOK_SKIF4ER_DEFAULT_ROLE','BOOK_OIDC_CONFIG'] as $v)putenv($v);
+    foreach(['BOOK_SKIF4ER_CLIENT_ID','BOOK_SKIF4ER_CLIENT_SECRET_FILE','BOOK_SKIF4ER_REDIRECT_URI','BOOK_SKIF4ER_ORGANIZATION','BOOK_SKIF4ER_DEFAULT_ROLE','BOOK_OIDC_CONFIG','BOOK_OIDC_CLIENT_SECRET'] as $v)putenv($v);
     cleanDirectory($root);
 }

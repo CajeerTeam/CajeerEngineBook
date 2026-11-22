@@ -60,7 +60,7 @@ final class AdminReport
                 foreach($stores as $store)$store->snapshot(function(array $state){GitHubSync::verifyKey($state);AutomationQueue::verifyKey($state);});
             });},'Run security.php verify privately; retain old keys until all live credentials are rewrapped.');
         }else foreach(['installation_integrity','audit_chain','active_credentials'] as $id)$this->skip($id,$deep?'Runtime and identity must pass first.':'Use --deep for maintenance checks.');
-        if($oidc&&$config&&$ready)$this->probe('oidc_discovery',function()use($identity){$c=Oidc::config();if(!$c)throw new \RuntimeException('OIDC not configured');$identity->checkOidcOrganization($c['organization']);Oidc::discovery($c);},'Check IdP discovery, CA trust, organization and configured issuer.');
+        if($oidc&&$config&&$ready)$this->probe('oidc_discovery',function()use($identity){ $configs=Oidc::configs();if(!$configs)throw new \RuntimeException('OIDC not configured');foreach($configs as $c){$identity->checkOidcOrganization($c['organization']);Oidc::discovery($c);} },'Check IdP discovery, CA trust, organization and configured issuer.');
         elseif($oidc)$this->checks['oidc_discovery']=['status'=>'failed','duration_ms'=>0,'action'=>'Configuration and identity must pass first.'];
         else $this->skip('oidc_discovery','Use --oidc to contact the configured provider.');
         if($monitoring){$this->probe('monitoring',function(){if(!Observability::enabled())throw new \RuntimeException('Telemetry disabled');$d=(new Diagnostics())->collect();if($d['status']!=='ok')throw new \RuntimeException('Dependency unavailable');},'Run diagnostics.php status as the diagnostics service; inspect expected worker, backup, DNS and TLS checks.');}

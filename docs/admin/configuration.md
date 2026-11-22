@@ -58,10 +58,11 @@ Generate independent keys with `openssl rand -hex 32`; files must be absolute, r
 | `BOOK_PRIMARY_HOST` | Primary ASCII HTTPS host (no scheme/path). |
 | `BOOK_ACME_EMAIL` | ACME operator contact in domains overlay. |
 | `BOOK_DOMAIN_EDGE_SECRET` | Separate random 64 lowercase hex secret shared with trusted edge. Never accept this from public requests. |
-| `BOOK_OIDC_CONFIG` | JSON configuration, one provider and managed organization. |
+| `BOOK_OIDC_CONFIG` | Legacy JSON configuration for provider `enterprise` and its managed organization; can coexist with distinct issuers. |
 | `BOOK_OIDC_CLIENT_SECRET` / `BOOK_OIDC_CLIENT_SECRET_FILE` | Confidential client secret (file is a single value, not keyring). |
+| `BOOK_OIDC_PROVIDERS` | JSON map of additional named providers. Per-provider secret `BOOK_OIDC_<NAME>_CLIENT_SECRET` or `_FILE`; names uppercased with `-` changed to `_`. See [multi-provider guide](skif4er-id.md). |
 | `BOOK_OIDC_REQUIRED` | `1` requires SSO for non-owner local accounts; test emergency owner first. |
-| `BOOK_SKIF4ER_CLIENT_ID` | Dedicated SkiF4er ID confidential client; see [the complete configuration and access policy](skif4er-id.md). Do not combine with `BOOK_OIDC_CONFIG`. |
+| `BOOK_SKIF4ER_CLIENT_ID` | Dedicated SkiF4er ID confidential client (`skif4er`); see [multi-provider configuration and account linking](skif4er-id.md). |
 
 Example JSON (replace the organization ID and all issuer/client/host values; create the organization via the UI first):
 

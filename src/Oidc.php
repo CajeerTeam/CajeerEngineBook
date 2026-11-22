@@ -8,29 +8,59 @@ final class Oidc
 {
     public const CALLBACK='/auth/oidc/callback';
     public static function required():bool{return getenv('BOOK_OIDC_REQUIRED')==='1';}
-    public static function config():?array
+    /** Named, operator-defined OIDC clients. Never choose a provider from token claims. */
+    public static function configs():array
     {
-        $raw=getenv('BOOK_OIDC_CONFIG');
+        $providers=[];
         $skifClient=getenv('BOOK_SKIF4ER_CLIENT_ID');
         if($skifClient!==false&&$skifClient!==''){
-            if($raw!==false&&$raw!=='')throw new \RuntimeException('Configure either SkiF4er ID or enterprise OIDC, not both.');
             $groups=getenv('BOOK_SKIF4ER_GROUPS')?:'{}';
             if(strlen($groups)>8192)throw new \RuntimeException('Invalid SkiF4er group mapping.');
             $mapping=json_decode($groups,true,16,JSON_THROW_ON_ERROR);
             $redirect=getenv('BOOK_SKIF4ER_REDIRECT_URI')?:'';
-            $c=['issuer'=>'https://id.skif4er.ru/realms/skif4er','client_id'=>$skifClient,
+            $providers['skif4er']=[['issuer'=>'https://id.skif4er.ru/realms/skif4er','client_id'=>$skifClient,
                 'redirect_uri'=>$redirect,'organization'=>getenv('BOOK_SKIF4ER_ORGANIZATION')?:'',
                 'label'=>'SkiF4er ID','groups'=>$mapping,'group_claim'=>getenv('BOOK_SKIF4ER_GROUP_CLAIM')?:'groups',
                 'default_role'=>getenv('BOOK_SKIF4ER_DEFAULT_ROLE')?:'none',
                 'auth_method'=>'client_secret_basic','backchannel_logout'=>true,
-                'post_logout_redirect_uri'=>self::postLogout($redirect)];
-            $secretEnv='BOOK_SKIF4ER_CLIENT_SECRET';
-        }elseif($raw!==false&&$raw!==''){
+                'post_logout_redirect_uri'=>self::postLogout($redirect)],'BOOK_SKIF4ER_CLIENT_SECRET'];
+        }
+        $raw=getenv('BOOK_OIDC_CONFIG');
+        if($raw!==false&&$raw!==''){
             if(strlen($raw)>16384)throw new \RuntimeException('Invalid OIDC configuration.');
-            $c=json_decode($raw,true,16,JSON_THROW_ON_ERROR);
-            $secretEnv='BOOK_OIDC_CLIENT_SECRET';
-        }else return null;
-        if(!is_array($c))throw new \RuntimeException('Invalid OIDC configuration.');
+            $providers['enterprise']=[json_decode($raw,true,16,JSON_THROW_ON_ERROR),'BOOK_OIDC_CLIENT_SECRET'];
+        }
+        $extra=getenv('BOOK_OIDC_PROVIDERS');
+        if($extra!==false&&$extra!==''){
+            if(strlen($extra)>65536)throw new \RuntimeException('OIDC provider configuration too large.');
+            $entries=json_decode($extra,true,20,JSON_THROW_ON_ERROR);
+            if(!is_array($entries)||($entries!==[]&&array_is_list($entries))||count($entries)>8)throw new \RuntimeException('Invalid OIDC provider registry.');
+            foreach($entries as $id=>$config){
+                if(!is_string($id)||!preg_match('/\A[a-z][a-z0-9_-]{1,31}\z/D',$id)||isset($providers[$id]))throw new \RuntimeException('Duplicate or invalid OIDC provider name.');
+                // Provider secrets are loaded only from server environment or mounted secret files.
+                $providers[$id]=[$config,'BOOK_OIDC_'.strtoupper(str_replace('-','_',$id)).'_CLIENT_SECRET'];
+            }
+        }
+        if(count($providers)>10)throw new \RuntimeException('Too many OIDC providers.');
+        $out=[];$issuers=[];$secrets=[];
+        foreach($providers as $id=>[$c,$secretEnv]){
+            if(isset($secrets[$secretEnv]))throw new \RuntimeException('OIDC provider environment name collision.');$secrets[$secretEnv]=true;
+            $c=self::validateConfig($c,$secretEnv);
+            // One issuer per deployment avoids ambiguous subject and back-channel routing.
+            if(isset($issuers[$c['issuer']]))throw new \RuntimeException('Duplicate OIDC issuer.');
+            $issuers[$c['issuer']]=true;$c['provider']=$id;$out[$id]=$c;
+        }
+        return $out;
+    }
+    public static function config(?string $provider=null):?array
+    {
+        $configs=self::configs();
+        if($provider!==null)return $configs[$provider]??null;
+        return count($configs)===1?reset($configs):null;
+    }
+    private static function validateConfig(mixed $c,string $secretEnv):array
+    {
+        if(!is_array($c)||array_is_list($c))throw new \RuntimeException('Invalid OIDC configuration.');
         foreach(['issuer','client_id','redirect_uri','organization','label'] as $k)if(!is_string($c[$k]??null)||$c[$k]===''||strlen($c[$k])>512||preg_match('/[\x00-\x20\x7f]/',$k==='label'?str_replace(' ','',$c[$k]):$c[$k]))throw new \RuntimeException('Invalid OIDC configuration.');
         self::url($c['issuer']);self::url($c['redirect_uri']);
         if(str_ends_with($c['issuer'],'/')||parse_url($c['issuer'],PHP_URL_QUERY)!==null||parse_url($c['redirect_uri'],PHP_URL_PATH)!==self::CALLBACK||parse_url($c['redirect_uri'],PHP_URL_QUERY)!==null||!preg_match('/\A[a-f0-9]{32}\z/D',$c['organization']))throw new \RuntimeException('Invalid OIDC issuer, callback or organization.');

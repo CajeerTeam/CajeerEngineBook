@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4 — Linked accounts, multiple OIDC providers, bounded roles
+
+- Allow explicit, local-password-confirmed link/unlink of SkiF4er ID and other separately configured OIDC issuers from an existing non-owner account. Verify signed issuer, audience, nonce, state and PKCE before persisting an issuer/subject link. No automatic merges by email.
+- Bind one-time link attempts to an existing server session, reject account/subject collisions, preserve local password login, and keep original owner and organization role boundaries. Multiple issuer-specific links are stored atomically in identity state and persisted in file/PostgreSQL modes without SQL schema change.
+- Maintain issuer-scoped federated sessions, encrypted provider tokens, targeted back-channel logout and unlink-time session revocation. Reject provider assertions that would escalate existing local accounts to administrator or exceed their pre-existing membership.
+- Add HTTPS HTTP integration covering two independent providers, browser/callback binding, linking, provider logout, unlinking, and cross-provider isolation; add file-store regression coverage and OIDC checks to the Composer test script.
+- Schema 3 unchanged. Production readiness requires actual registered clients, TLS, PostgreSQL/Redis deployment testing and full release gates.
+
 ## 1.0.3 — SkiF4er ID sign-in and session revocation
 
 - Add directly configurable confidential SkiF4er ID client with the pinned Keycloak issuer, exact HTTPS callback, Authorization Code + PKCE S256, nonce/state validation and RS256 identity verification; no PHP SDK is published by the provider, so Book uses its existing native PHP OIDC client.

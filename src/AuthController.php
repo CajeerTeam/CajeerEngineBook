@@ -35,36 +35,54 @@ final class AuthController
         header('Referrer-Policy: same-origin');header('X-Robots-Tag: noindex, nofollow');header('Cache-Control: no-store');
         if($path==='/auth/oidc/backchannel-logout'){
             if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}
-            try{$c=Oidc::config();if(!$c||($c['backchannel_logout']??false)!==true){http_response_code(404);return;}
+            try{$provider=is_string($_GET['provider']??null)?$_GET['provider']:null;$c=Oidc::config($provider);if(!$c||($c['backchannel_logout']??false)!==true){http_response_code(404);return;}
                 $jwt=self::post('logout_token');if($jwt===''||strlen($jwt)>65536){http_response_code(400);return;}if(!$this->store->allowOidcLogout(self::ip())){http_response_code(429);header('Retry-After: 60');return;}$this->store->federatedLogout($c,Oidc::logoutClaims($c,$jwt));http_response_code(200);
             }catch(\Throwable){http_response_code(400);}
             return;
         }
         if($path==='/auth/oidc/complete'){if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}$page('Sign-in complete','<h1>'.self::e(Locale::t('Corporate sign-in complete')).'</h1><p><a href="/workspaces">'.self::e(Locale::t('Continue to your workspaces')).'</a></p>');return;}
         try{
-            $c=Oidc::config();if(!$c){http_response_code(404);$page('SSO unavailable','<h1>SSO is not configured</h1>');return;}
+            $provider=is_string($_POST['provider']??null)?$_POST['provider']:null;
+            $c=$path==='/auth/oidc/start'?Oidc::config($provider):null;
+            if($path==='/auth/oidc/start'&&!$c){http_response_code(404);$page('SSO unavailable','<h1>SSO is not configured</h1>');return;}
             if(!self::secure())throw new \RuntimeException('SSO requires secure cookies.');
             if($path==='/auth/oidc/start'){
                 if($method!=='POST'){http_response_code(405);header('Allow: POST');return;}
-                if($this->current()||!self::csrf(self::readCookie('preauth'))){http_response_code(403);$page('Invalid request','<h1>Invalid sign-in request</h1><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');return;}
-                $browser=bin2hex(random_bytes(32));$flow=$this->store->beginOidc($c,$browser,self::ip());
+                if(!self::csrf((self::post('intent')==='link'&&($ctx=$this->current()))?$ctx['session']['csrf']:self::readCookie('preauth'))||(self::post('intent')==='link'?!isset($ctx):($this->current()!==null))){http_response_code(403);$page('Invalid request','<h1>Invalid sign-in request</h1><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');return;}
+                $browser=bin2hex(random_bytes(32));$link=self::post('intent')==='link';$flow=$this->store->beginOidc($c,$browser,self::ip(),$link?$this->token():'',$link?self::post('password'):'');
                 if($flow['status']!=='ok'){http_response_code(429);header('Retry-After: 900');$page('Too many requests','<h1>Try again later</h1>');return;}
                 $url=Oidc::authorization($c,Oidc::discovery($c),$flow);self::oidcCookie($browser,time()+300);self::redirect($url);return;
             }
             if($method!=='GET'){http_response_code(405);header('Allow: GET');return;}
             $state=is_string($_GET['state']??null)?$_GET['state']:'';$browser=is_string($_COOKIE['__Host-book_oidc']??null)?$_COOKIE['__Host-book_oidc']:'';
-            self::oidcCookie('',time()-3600);$flow=$this->store->consumeOidc($c,$state,$browser);
+            $verifiedProvider=$this->store->oidcFlowProvider($state,$browser);$c=$verifiedProvider===null?null:Oidc::config($verifiedProvider);
+            self::oidcCookie('',time()-3600);$flow=$c?$this->store->consumeOidc($c,$state,$browser):null;
             if(!$flow||isset($_GET['error'])||(isset($_GET['iss'])&&$_GET['iss']!==$c['issuer']))throw new \DomainException('Invalid SSO response.');
             $code=is_string($_GET['code']??null)?$_GET['code']:'';$response=Oidc::finish($c,$flow,$code);
+            if(isset($flow['link_user'])){$this->store->completeOidcLink($c,$response['claims'],$flow,$this->token());$page('Provider linked','<h1>Identity provider linked</h1><p>Return to your account to manage connected providers.</p><p><a href="/account">Go to account</a></p>');return;}
             $r=$this->store->federatedLogin($c,$response['claims'],$response['tokens']);if($r['status']!=='ok')throw new \DomainException('SSO access denied.');
             self::issue($r);self::redirect('/auth/oidc/complete');
         }catch(\Throwable){$this->store->auditFailure('oidc.failed');http_response_code(401);$page('SSO sign-in failed','<h1>SSO sign-in failed</h1><p>Start again or contact your administrator.</p><a href="/login">'.self::e(Locale::t('Sign in')).'</a>');}
     }
     private static function oidcStatus():string{
-        try{$c=Oidc::config();return '<h2>Enterprise SSO</h2><p>'.($c?self::e($c['label'].' · '.$c['issuer']).' · '.count($c['groups']).' group mappings':'Not configured').'</p><p>Local login: '.(Oidc::required()?'installation owner only':'enabled for local accounts').'. Configuration is managed by the deployment operator.</p>';}catch(\Throwable){return '<h2>Enterprise SSO</h2><p>Invalid deployment configuration.</p>';}
+        try{$all=Oidc::configs();$items=[];foreach($all as $c)$items[]=self::e($c['label'].' · '.$c['issuer']).' · '.count($c['groups']).' group mappings';
+            return '<h2>OIDC providers</h2><p>'.($items?implode('<br>',$items):'Not configured').'</p><p>Local login: '.(Oidc::required()?'installation owner only':'enabled for local accounts').'. Configuration is managed by the deployment operator.</p>';
+        }catch(\Throwable){return '<h2>OIDC providers</h2><p>Invalid deployment configuration.</p>';}
     }
     private static function oidcForm(string $csrf):string{
-        try{$c=Oidc::config();return $c&&self::secure()?self::form('/auth/oidc/start',$csrf,'','Sign in with '.$c['label']):'';}catch(\Throwable){return '<p>Corporate sign-in is unavailable. Contact your administrator.</p>';}
+        try{$out='';foreach(Oidc::configs() as $id=>$c)if(self::secure())$out.=self::form('/auth/oidc/start',$csrf,'<input type="hidden" name="provider" value="'.self::e($id).'">','Sign in with '.$c['label']);return $out;}
+        catch(\Throwable){return '<p>Corporate sign-in is unavailable. Contact your administrator.</p>';}
+    }
+    private static function linkForms(string $csrf,array $linked):string{
+        try{
+            $out='<h2>Linked identity providers</h2><p>External accounts must be linked only after local password confirmation. Email matching never links accounts automatically.</p>';
+            foreach(Oidc::configs() as $id=>$c){$name=self::e($c['label']);
+                if(in_array($id,$linked,true))$out.='<p>'.$name.' · Connected</p>'.self::form('/account',$csrf,'<input type="hidden" name="provider" value="'.self::e($id).'">'.self::field('password','Confirm local password','password','','current-password'),'Unlink '.$c['label'],'unlink-oidc');
+                else $out.=self::form('/auth/oidc/start',$csrf,'<input type="hidden" name="provider" value="'.self::e($id).'"><input type="hidden" name="intent" value="link">'.self::field('password','Confirm local password','password','','current-password'),'Link '.$c['label']);
+            }
+            foreach($linked as $id)if(!isset(Oidc::configs()[$id])&&$id!=='legacy')$out.='<p>'.self::e($id).' · Provider no longer configured</p>'.self::form('/account',$csrf,'<input type="hidden" name="provider" value="'.self::e($id).'">'.self::field('password','Confirm local password','password','','current-password'),'Remove inactive provider link','unlink-oidc');
+            return $out;
+        }catch(\Throwable){return '<h2>Linked identity providers</h2><p>Provider configuration is unavailable.</p>';}
     }
     public function dispatch(string $path,string $method,callable $page):void{
         if(in_array($path,['/auth/oidc/start','/auth/oidc/callback','/auth/oidc/complete','/auth/oidc/backchannel-logout'],true)){$this->oidc($path,$method,$page);return;}
@@ -105,9 +123,9 @@ final class AuthController
                 if($path==='/logout'){
                     // Local logout must succeed even when the remote provider is unavailable.
                     $this->store->logout($token);self::clear();$target='/login';
-                    if(!empty($user['federated'])){
+                    if(isset($ctx['session']['oidc_policy'])){
                         try{
-                            $c=Oidc::config();
+                            $c=Oidc::config($ctx['session']['oidc_provider']??null);
                             if($c){
                                 try{Oidc::revokeTokens($c,$ctx['session']);}catch(\Throwable){/* local session is already gone */}
                                 $target=Oidc::endSessionUrl($c,$ctx['session'])??'/login';
@@ -122,7 +140,8 @@ final class AuthController
                     elseif($action==='revoke-sessions')$this->store->revokeUserSessions($token,self::post('id'));
                     elseif(in_array($action,['enable','disable'],true))$this->store->setEnabled($token,self::post('id'),$action==='enable');
                     else throw new \InvalidArgumentException('Unknown user action.');
-                }elseif($action==='profile')$this->store->profile($token,self::post('name'),self::post('email'));
+                }elseif($action==='unlink-oidc')$this->store->unlinkOidc($token,self::post('provider'),self::post('password'));
+                elseif($action==='profile')$this->store->profile($token,self::post('name'),self::post('email'));
                 elseif($action==='password'){
                     if(self::post('password')!==self::post('confirm'))throw new \InvalidArgumentException('Passwords do not match.');
                     $r=$this->store->changePassword($token,self::post('old'),self::post('password'),self::ip());
@@ -143,6 +162,8 @@ final class AuthController
             $html.='<p>Signed in as <strong>'.self::e($user['username']).'</strong>'.($user['owner']?' · Installation owner':' · Personal account').'</p><h2>Profile</h2>'.self::form('/account',$csrf,self::field('name','Display name','text',$user['name']).self::field('email','Email','email',$user['email'],'email'),'Save profile','profile').(!empty($user['federated'])?'<p>Corporate credentials are managed by your identity provider.</p>':'<h2>Change password</h2>'.self::form('/account',$csrf,self::field('old','Current password','password','','current-password').self::field('password','New password (12–72 bytes)','password','','new-password').self::field('confirm','Confirm password','password','','new-password'),'Change password','password')).'<h2>Active sessions</h2><p>Changing your password or recovering access signs out all previous sessions.</p>';
             foreach($this->store->sessions($token) as $s)$html.='<div class="account-row"><p>Created '.self::e(gmdate('Y-m-d H:i',$s['created']).' UTC · Last active '.gmdate('Y-m-d H:i',$s['seen']).' UTC').($s['id']===$ctx['session']['id']?' · Current session':'').'</p>'.self::form('/account',$csrf,'<input type="hidden" name="id" value="'.$s['id'].'">','Revoke session','revoke').'</div>';
             $html.=self::form('/account',$csrf,'<input type="hidden" name="id" value="all">','Sign out all sessions','revoke');
+            if(!$user['owner']&&empty($user['federated']))$html.=self::linkForms($csrf,$this->store->linkedProviders($token));
+
         }
         $html.=self::form('/logout',$csrf,'','Sign out').'</div>';$page('Account',$html);
     }

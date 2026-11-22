@@ -1,4 +1,4 @@
-# Administrator handbook — CajeerEngine Book 1.0.3
+# Administrator handbook — CajeerEngine Book 1.0.4
 
 **Current PostgreSQL schema: 3.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
 
