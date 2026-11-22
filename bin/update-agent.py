@@ -30,7 +30,7 @@ COMMIT = re.compile(r'[a-f0-9]{40}\Z')
 MAX_REQUEST = 2048
 MAX_RESPONSE = 16384
 PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-ALLOWED = {'fetch', 'preflight', 'apply', 'status'}
+ALLOWED = {'fetch', 'preflight', 'apply', 'status', 'recovery-status'}
 
 
 class Rejected(Exception):
@@ -130,6 +130,41 @@ class Agent:
         if consume:
             p.unlink()
 
+    def recovery_status(self):
+        """Expose only non-sensitive operational state, never the root-owned journal.
+
+        Recovery and rollback are intentionally root-operator CLI actions. They
+        are not accepted as arbitrary web RPC operations.
+        """
+        cmd = [sys.executable, str(self.updater), '--state-dir', str(self.enrolled_dir()), 'status']
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=45,
+                                    env={'PATH': PATH, 'LANG': 'C', 'HOME': '/root'},
+                                    stdin=subprocess.DEVNULL, cwd='/', check=False)
+            require(result.returncode == 0 and len(result.stdout) <= 262144,
+                    'Host updater state unavailable')
+            state = json.loads(result.stdout)
+            require(isinstance(state, dict), 'Invalid updater state')
+            pending = state.get('pending')
+            require(pending is None or isinstance(pending, dict), 'Invalid pending transaction')
+            current = state.get('current') or {}
+            previous = state.get('previous') or {}
+            tx = pending or state.get('last_transaction') or {}
+            require(isinstance(tx, dict), 'Invalid transaction history')
+            backup = tx.get('backup')
+            backup_recorded = bool(tx.get('backup_complete') and isinstance(tx.get('backup_receipt'), str))
+            return {'state': 'pending' if pending else 'ready',
+                    'current_version': current.get('version') if VERSION.fullmatch(current.get('version', '')) else None,
+                    'previous_version': previous.get('version') if VERSION.fullmatch(previous.get('version', '')) else None,
+                    'pending_phase': pending.get('phase') if pending else None,
+                    'last_result': tx.get('result') if tx.get('result') in ('completed', 'rolled-back') else None,
+                    'backup_id': backup if isinstance(backup, str) and re.fullmatch(r'[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}', backup) else None,
+                    'backup_attested': backup_recorded,
+                    'manual_recovery_required': pending is not None,
+                    'env_changed': state.get('env_changed') is True}
+        except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            raise Rejected('Host updater status is unavailable')
+
     def request(self, req):
         require(isinstance(req, dict) and set(req) <= {'action', 'candidate'} and req.get('action') in ALLOWED, 'Unsupported agent command')
         action = req['action']
@@ -141,6 +176,8 @@ class Agent:
                     public['state'] = 'interrupted'
                     public['result'] = 'Operator recovery required; journal remains locked'
                 return public
+            if action == 'recovery-status':
+                return self.recovery_status()
             c = self.candidate(req)
             require(old['state'] not in ('queued', 'running'), 'Another update operation is active')
             require(not (old.get('action') == 'apply' and old.get('state') == 'failed'), 'Failed activation requires manual recovery')

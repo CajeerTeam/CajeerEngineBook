@@ -17,11 +17,11 @@ final class UpdateAgentClient
     }
     public function call(string $action, ?array $candidate = null):array
     {
-        if (!in_array($action, ['status','fetch','preflight','apply'], true)) {
+        if (!in_array($action, ['status','recovery-status','fetch','preflight','apply'], true)) {
             throw new \InvalidArgumentException('Unsupported host update action');
         }
         $request = ['action' => $action];
-        if ($action !== 'status') {
+        if (!in_array($action, ['status', 'recovery-status'], true)) {
             if (!is_array($candidate) || array_keys($candidate) !== ['version','commit','manifest_sha256'] ||
                 !preg_match('/\A(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\z/D', $candidate['version'] ?? '') ||
                 !preg_match('/\A[a-f0-9]{40}\z/D', $candidate['commit'] ?? '') ||

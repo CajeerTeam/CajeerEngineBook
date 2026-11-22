@@ -41,6 +41,11 @@ HTTPS_PORTS = {None,443}
 MAX_UNPACK = 512 * 1024 * 1024
 MAX_TOTAL = 1024 * 1024 * 1024
 MAX_FILES = 10000
+# Bounded offline backup attestation. Receipts are stored outside the UID 33
+# writable bind mount; their hashes are also pinned in the updater transaction.
+BACKUP_ID = re.compile(r'[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}\Z')
+MAX_BACKUP_FILES = 200000
+MAX_BACKUP_BYTES = 1024 * 1024 * 1024 * 1024
 
 
 def version(v):
@@ -349,7 +354,8 @@ class Compose:
         directory.mkdir(mode=0o700); os.chown(directory,33,33)
         self.one('php','bin/installation.php','backup','/book-update-backup/portable',mount=directory)
         # Restore to an isolated portable directory and verify before touching schema.
-        self.one('sh','-ec','unset BOOK_PG_DSN BOOK_PG_NAMESPACE BOOK_PG_USER BOOK_PG_PASSWORD BOOK_REDIS_HOST BOOK_REDIS_SENTINELS; BOOK_DATA_DIR=/book-update-backup/drill php bin/installation.php restore /book-update-backup/portable',mount=directory)
+        # Actually open and audit the restored portable data, not merely parse its archive.
+        self.one('sh','-ec','unset BOOK_PG_DSN BOOK_PG_NAMESPACE BOOK_PG_USER BOOK_PG_PASSWORD BOOK_REDIS_HOST BOOK_REDIS_SENTINELS; export BOOK_DATA_DIR=/book-update-backup/drill; php bin/installation.php restore /book-update-backup/portable && php bin/installation.php check',mount=directory)
         if sql:
             # Dedicated Book DB, native dump preserves SQL ledger and audit (portable restore does not).
             with (directory/'database.dump').open('xb') as f:
@@ -358,6 +364,10 @@ class Compose:
             require((directory/'database.dump').stat().st_size>0,'Empty database dump')
             with (directory/'database.dump').open('rb') as f:
                 self.call('exec','-T','postgres','pg_restore','--list',stdin=f,timeout=180)
+            # pg_restore --list reads only TOC. This additionally decompresses and
+            # validates every data entry without modifying a live database.
+            with (directory/'database.dump').open('rb') as f:
+                self.call('exec','-T','postgres','pg_restore','--file=/dev/null',stdin=f,timeout=2400)
         # Persist the actual backup files and directory entries before the migration journal advances.
         for d,dirs,files in os.walk(directory,topdown=False):
             for n in files:
@@ -415,6 +425,99 @@ def normalized(c,tree):
     return c
 
 
+class BackupLedger:
+    """Root-only content attestation for the pre-update backup, not a SQL/PITR substitute.
+
+    The backup directory is temporarily mounted read-write into the Book container
+    as UID 33. Its receipt must never be stored inside that writable directory.
+    """
+    def __init__(self, root):
+        self.root = Path(root)
+        self.backups = self.root / 'backups'
+        self.receipts = self.root / 'backup-receipts'
+        self.receipts.mkdir(mode=0o700, exist_ok=True)
+        info = self.receipts.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and
+                stat.S_IMODE(info.st_mode) == 0o700 and not self.receipts.is_symlink(),
+                'Backup receipt directory must be operator-owned 0700')
+
+    def paths(self, identifier):
+        require(isinstance(identifier, str) and BACKUP_ID.fullmatch(identifier), 'Invalid backup identifier')
+        return self.backups / identifier, self.receipts / (identifier + '.json')
+
+    @staticmethod
+    def snapshot(directory, sql):
+        directory = Path(directory)
+        root_stat = directory.lstat()
+        require(stat.S_ISDIR(root_stat.st_mode) and not directory.is_symlink(), 'Backup directory is invalid')
+        files = {}
+        directories = []
+        total = 0
+        for current, names, entries in os.walk(directory, topdown=True, followlinks=False):
+            names.sort(); entries.sort()
+            for name in names:
+                child = Path(current) / name
+                st = child.lstat()
+                require(stat.S_ISDIR(st.st_mode) and not child.is_symlink(), 'Unexpected backup directory type')
+                directories.append(child.relative_to(directory).as_posix())
+                require(len(directories) <= MAX_BACKUP_FILES, 'Too many backup directories')
+            for name in entries:
+                file = Path(current) / name
+                st = file.lstat()
+                require(stat.S_ISREG(st.st_mode) and not file.is_symlink(), 'Unexpected backup file type')
+                require(st.st_size >= 0 and total + st.st_size <= MAX_BACKUP_BYTES, 'Backup exceeds size limit')
+                total += st.st_size
+                require(len(files) < MAX_BACKUP_FILES, 'Too many backup files')
+                digest = hashlib.sha256()
+                fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                with os.fdopen(fd, 'rb') as stream:
+                    opened = os.fstat(stream.fileno())
+                    require(stat.S_ISREG(opened.st_mode) and opened.st_ino == st.st_ino and
+                            opened.st_dev == st.st_dev and opened.st_size == st.st_size,
+                            'Backup file replaced during verification')
+                    while True:
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk: break
+                        digest.update(chunk)
+                    after = os.fstat(stream.fileno())
+                    require((after.st_ino, after.st_dev, after.st_size, after.st_mtime_ns) ==
+                            (opened.st_ino, opened.st_dev, opened.st_size, opened.st_mtime_ns),
+                            'Backup changed during verification')
+                files[file.relative_to(directory).as_posix()] = {'size': st.st_size, 'sha256': digest.hexdigest()}
+        require('portable/manifest.json' in files, 'Portable backup manifest is missing')
+        require(('database.dump' in files) == sql, 'Native PostgreSQL dump mismatch')
+        return {'directories': directories, 'files': files, 'total_bytes': total}
+
+    def capture(self, identifier, sql):
+        directory, receipt = self.paths(identifier)
+        require(not receipt.exists() and not receipt.is_symlink(), 'Backup already has an attestation')
+        manifest = self.snapshot(directory, sql)
+        attestation = {'format': 1, 'backup': identifier, 'postgresql': bool(sql),
+                       'created_at': int(time.time()), **manifest}
+        atomic(receipt, attestation)
+        os.chmod(receipt, 0o600)
+        syncdir(receipt.parent)
+        return release.sha(receipt)
+
+    def verify(self, identifier, expected_digest=None):
+        directory, receipt = self.paths(identifier)
+        private_file(receipt)
+        actual_digest = release.sha(receipt)
+        if expected_digest is not None:
+            require(isinstance(expected_digest, str) and re.fullmatch(r'[a-f0-9]{64}', expected_digest) and
+                    actual_digest == expected_digest, 'Backup receipt does not match durable update journal')
+        attestation = release.json_read(receipt)
+        require(isinstance(attestation, dict) and attestation.get('format') == 1 and
+                attestation.get('backup') == identifier and type(attestation.get('postgresql')) is bool,
+                'Invalid backup receipt')
+        observed = self.snapshot(directory, attestation['postgresql'])
+        require(all(attestation.get(k) == observed[k] for k in ('files', 'directories', 'total_bytes')),
+                'Backup files have been added, removed or modified')
+        return {'status': 'verified', 'backup': identifier, 'postgresql': attestation['postgresql'],
+                'files': len(observed['files']), 'total_bytes': observed['total_bytes'],
+                'receipt_sha256': actual_digest}
+
+
 class Manager:
     def __init__(self, root, command=run, verify_oci=oci):
         self.root=Path(root); self.command=command; self.verify_oci=verify_oci
@@ -426,6 +529,7 @@ class Manager:
         for d in ('releases','backups'):
             p=self.root/d; p.mkdir(mode=0o700,exist_ok=True)
             require(p.resolve()==p and p.stat().st_uid==os.geteuid() and stat.S_IMODE(p.stat().st_mode)==0o700,'Invalid private state subdirectory')
+        self.backup_ledger = BackupLedger(self.root)
         self.statefile=self.root/'state.json'; self.pub=self.root/'release-public.pem'
 
     @contextlib.contextmanager
@@ -573,6 +677,10 @@ class Manager:
         try:
             old.stop(oc); tx['phase']='backup'; self.save(s)
             old.check(om,sql); old.backup(self.root/'backups'/tx['backup'],sql)
+            # A root-only receipt pins every backup byte before any migration can
+            # begin. Failure here must roll back without activating the candidate.
+            tx['backup_receipt']=self.backup_ledger.capture(tx['backup'],sql)
+            self.backup_ledger.verify(tx['backup'],tx['backup_receipt'])
             tx['backup_complete']=True; self.save(s)
             new.check_version(nm)
             tx['phase']='migration'; self.save(s)
@@ -604,6 +712,12 @@ class Manager:
     def recover(self,s,accept):
         tx=s['pending']; require(tx is not None,'No pending update')
         require(tx['phase']!='activating' or accept,'Activation began; assess data compatibility and pass --accept-data-compatibility to recover')
+        # An intact pre-update backup is required before proceeding with a
+        # recovery involving a completed backup. A damaged receipt leaves the
+        # journal intact and requires separate operator intervention.
+        if tx.get('backup_complete'):
+            require('backup_receipt' in tx, 'Completed backup has no trusted receipt; manual recovery required')
+            self.backup_ledger.verify(tx['backup'],tx['backup_receipt'])
         cfg=s['config']; old,om=self.load(cfg,tx['from']); new,nm=self.load(cfg,tx['to'])
         oc=old.config(om); nc=new.config(nm)
         require(normalized(oc,old.tree)==normalized(nc,new.tree),'Compose configuration mismatch')
@@ -650,13 +764,15 @@ def main():
     check.add_argument('--channel', choices=('stable', 'beta'), default='stable')
     check.add_argument('--refresh', action='store_true', help='Ignore cached GitHub ETags')
     sub.add_parser('status'); sub.add_parser('reconcile-env'); sub.add_parser('enable-agent-overlay')
+    backup_verify=sub.add_parser('verify-backup', help='Rehash a retained pre-update backup against its root-only receipt')
+    backup_verify.add_argument('--id', required=True, help='Backup ID recorded in last_transaction or pending')
     args=p.parse_args()
     try:
         os.umask(0o077)
         require(os.geteuid()==0,'Run as root on the local Docker host (private backup bind mount requires UID 33)')
         mgr=Manager(args.state_dir)
         with mgr.locked():
-            s=None if args.action=='enroll' else mgr.read(allow_env_change=args.action in ('reconcile-env','status','check'))
+            s=None if args.action=='enroll' else mgr.read(allow_env_change=args.action in ('reconcile-env','status','check','verify-backup'))
             project=args.project if s is None else s['config']['project']
             with project_lock(project):
                 if args.action=='enroll': result=mgr.enroll(args)
@@ -673,6 +789,12 @@ def main():
                             env_changed=release.sha(private_file(Path(cfg['env'])))!=cfg['env_sha'])
                         discovery.cache_save(mgr.root,new_cache)
                     elif args.action=='status': result=dict(s,env_changed=release.sha(private_file(Path(s['config']['env'])))!=s['config']['env_sha'])
+                    elif args.action=='verify-backup':
+                        known=[tx for tx in (s.get('pending'),s.get('last_transaction')) if isinstance(tx,dict) and tx.get('backup')==args.id]
+                        expected=known[0].get('backup_receipt') if known else None
+                        require(expected is None or isinstance(expected,str), 'Invalid backup journal receipt')
+                        result=mgr.backup_ledger.verify(args.id, expected)
+                        result['journal_bound']=expected is not None
                     elif args.action=='reconcile-env': result=mgr.reconcile_env(s)
                     elif args.action=='enable-agent-overlay': result=mgr.enable_agent_overlay(s)
                     elif args.action=='recover': result=mgr.recover(s,args.accept_data_compatibility)

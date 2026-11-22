@@ -130,6 +130,23 @@ final class UpdateController
                         $h.='<button type="submit" class="primary">'.self::e(ucfirst($next).' signed update').'</button></form>';
                     }
                 }
+                try {
+                    $recovery = $agent->call('recovery-status');
+                    $h .= '<h2>Backup / recovery</h2><p>Host updater: <strong>'.self::e((string)$recovery['state']).'</strong>'
+                        .' · Installed: '.self::e((string)($recovery['current_version']??'unknown'))
+                        .' · Previous: '.self::e((string)($recovery['previous_version']??'none')).'</p>';
+                    if (($recovery['backup_id']??null)!==null) {
+                        $h .= '<p>Retained backup: <code>'.self::e((string)$recovery['backup_id']).'</code>'
+                            .' · Root-owned integrity receipt: '.(($recovery['backup_attested']??false)===true?'recorded':'not available')
+                            .'. Verify the backup on the host before recovery.</p>';
+                    }
+                    if (($recovery['manual_recovery_required']??false)===true || ($recovery['env_changed']??false)===true)
+                        $h .= '<p role="alert">The host updater requires operator attention. Keep traffic fenced and inspect the host journal before any recovery or rollback.</p>';
+                    $h .= '<p>Recovery and rollback require a trusted host operator; they cannot be started by PHP. '
+                        .'See the 1.1.5 backup and recovery runbook.</p>';
+                } catch (\Throwable) {
+                    $h .= '<p>Root-owned backup and recovery details are unavailable. Consult the host operator.</p>';
+                }
             }catch(\Throwable){$h.='<p role="alert">Host update agent unavailable; direct execution disabled. Check the local socket service.</p>';}
         }else{$h.='<p>Host execution is not configured. Set <code>BOOK_UPDATE_AGENT_SOCKET</code> only after deploying the trusted host agent.</p>';}
         $h.='<form method="post" action="/admin/updates" class="editor">'

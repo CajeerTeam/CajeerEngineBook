@@ -74,6 +74,14 @@ print(json.dumps(result))
         spec=importlib.util.spec_from_file_location('update_agent_114',code)
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         agent=module.Agent(agent_state,updater,permit)
+        recovery = agent.request({'action':'recovery-status'})
+        check(recovery['state']=='ready' and recovery['current_version']=='1.1.4',
+              'Owner panel can read sanitized recovery state without host paths')
+        (updater_state/'pending').touch()
+        recovery = agent.request({'action':'recovery-status'})
+        check(recovery['state']=='pending' and recovery['manual_recovery_required'],
+              'Pending journal is reported without enabling unsafe web rollback')
+        (updater_state/'pending').unlink()
         c={'version':'1.1.4','commit':'e'*40,'manifest_sha256':'a'*64}
         other={'version':'1.1.5','commit':'f'*40,'manifest_sha256':'a'*64}
         (updater_state/'releases'/('1.1.4-'+'e'*40)/'bundle').mkdir(parents=True)

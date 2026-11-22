@@ -1,3 +1,10 @@
+## 1.1.5 — Backup, Recovery & Rollback (2026-11-22)
+
+- Harden the existing signed Docker updater's real pre-activation backup path: audit the isolated portable restore and scan all PostgreSQL custom dump payloads, not only the table of contents. These are integrity checks, not a replacement for an independent SQL/PITR restore drill.
+- Create private root-owned `0600` backup receipts outside the UID-33 writable Docker bind mount. Attest every regular file and directory with SHA-256, sizes and bounds; pin the receipt SHA-256 in the durable update journal, and fail before migration if attestation fails.
+- Add a `verify-backup --id` host command to rehash retained backups; refuse recovery with a completed but corrupted/unattested backup while preserving the pending journal and operator maintenance fence. Preserve intentional same-schema rollback and its own new backup; never auto-downgrade incompatible SQL data.
+- Show the operator a **sanitized, read-only** host recovery status via the Unix-socket Admin Update Center. Web callers cannot execute recovery/rollback or read root-owned backup files. Add fault-injection tests, CI/security release gates and an operational runbook. PostgreSQL schema 7 and CajeerEngine 2.1.0 remain unchanged. Real production Docker/PostgreSQL/PITR qualification is required separately.
+
 ## 1.1.4 — Secure Update Execution (2026-11-22)
 
 - Implement a real root-owned Linux Unix-socket broker (`bin/update-agent.py`) with `SO_PEERCRED` authorization, a fixed allowlist of `status/fetch/preflight/apply`, detached update execution and root-private fsynced operation receipts. No application PHP code launches Docker, passes host command strings or reads privileged files.

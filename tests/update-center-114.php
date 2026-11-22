@@ -25,9 +25,14 @@ try{
         'candidate'=>['tag'=>'v1.1.4','name'=>'Release','published_at'=>gmdate('c'),
             'schema'=>7,'requires_schema_upgrade'=>false,'changelog'=>'changes']+$candidate],true);
     $requests=[];$stage='none';
+    $commandCount=static fn(array $events):int=>count(array_filter($events,static fn($r):bool=>$r['action']!=='recovery-status'));
     $transport=static function(string $json)use(&$requests,&$stage,$candidate):string{
         $req=json_decode($json,true,10,JSON_THROW_ON_ERROR);$requests[]=$req;
         $action=$req['action'];
+        if($action==='recovery-status')return json_encode(['ok'=>true,'data'=>[
+            'state'=>'ready','current_version'=>'1.1.3','previous_version'=>'1.1.2',
+            'backup_id'=>'20261122T120000Z-'.str_repeat('a',16),'backup_attested'=>true,
+            'manual_recovery_required'=>false,'env_changed'=>false]], JSON_THROW_ON_ERROR);
         if($action!=='status'){
             if($req['candidate']!==$candidate)throw new RuntimeException('Wrong candidate sent to host');
             $stage=['fetch'=>'fetched','preflight'=>'preflight','apply'=>'applied'][$action];
@@ -43,24 +48,24 @@ try{
         http_response_code(200);$output='';ob_start();$controller->dispatch($method,$render);ob_end_clean();
         return [http_response_code(),$output];
     };
-    [$code]=$run('GET');verify114($code===401&&count($requests)===0,'Anonymous user cannot query host agent');
-    [$code]=$run('GET',$editor['token']);verify114($code===403&&count($requests)===0,'Editor cannot query host agent (HTTP '.(string)$code.', requests '.count($requests).')');
-    [$code,$html]=$run('GET',$owner['token']);verify114($code===200&&str_contains($html,'Fetch signed update'),'Owner sees prepared signed candidate and fetch button');
+    [$code]=$run('GET');verify114($code===401&&$commandCount($requests)===0,'Anonymous user cannot query host agent');
+    [$code]=$run('GET',$editor['token']);verify114($code===403&&$commandCount($requests)===0,'Editor cannot query host agent (HTTP '.(string)$code.', requests '.$commandCount($requests).')');
+    [$code,$html]=$run('GET',$owner['token']);verify114($code===200&&str_contains($html,'Fetch signed update')&&str_contains($html,'Backup / recovery'),'Owner sees prepared signed candidate and fetch button');
     $csrf=$owner['session']['csrf'];$post=['action'=>'fetch','csrf'=>$csrf,'manifest_sha256'=>$candidate['manifest_sha256']];
-    [$code]=$run('POST',$editor['token'],$post);verify114($code===403&&count($requests)===1,'Editor fetch blocked before privileged socket');
-    [$code]=$run('POST',$owner['token'],array_replace($post,['csrf'=>'invalid']));verify114($code===403&&count($requests)===1,'Bad CSRF blocks host RPC');
-    [$code]=$run('POST',$owner['token'],array_replace($post,['manifest_sha256'=>str_repeat('0',64)]));verify114($code===409&&count($requests)===2,'Manifest pin mismatch blocks host RPC');
+    [$code]=$run('POST',$editor['token'],$post);verify114($code===403&&$commandCount($requests)===1,'Editor fetch blocked before privileged socket');
+    [$code]=$run('POST',$owner['token'],array_replace($post,['csrf'=>'invalid']));verify114($code===403&&$commandCount($requests)===1,'Bad CSRF blocks host RPC');
+    [$code]=$run('POST',$owner['token'],array_replace($post,['manifest_sha256'=>str_repeat('0',64)]));verify114($code===409&&$commandCount($requests)===2,'Manifest pin mismatch blocks host RPC');
     [$code,$html]=$run('POST',$owner['token'],$post);verify114($code===200&&$stage==='fetched'&&str_contains($html,'Preflight signed update'),'Authenticated fetch reaches host agent');
     [$code,$html]=$run('POST',$owner['token'],array_replace($post,['action'=>'preflight']));verify114($code===200&&$stage==='preflight'&&str_contains($html,'Apply signed update'),'Host preflight exposed after fetch');
     [$code]=$run('POST',$owner['token'],array_replace($post,['action'=>'apply']));verify114($code===409&&$stage==='preflight','Apply without maintenance confirmation denied');
     [$code,$html]=$run('POST',$owner['token'],array_replace($post,['action'=>'apply','confirm_maintenance'=>'yes']));
     verify114($code===200&&$stage==='applied'&&str_contains($html,'Host execution status'),'Confirmed activation accepted by agent');
-    $actions=array_values(array_map(static fn($r)=>$r['action'],array_filter($requests,static fn($r)=>$r['action']!=='status')));
+    $actions=array_values(array_map(static fn($r)=>$r['action'],array_filter($requests,static fn($r)=>!in_array($r['action'],['status','recovery-status'],true))));
     verify114($actions===['fetch','preflight','apply'],'PHP sends only allowlisted host actions');
     try{$agent->call('shell',$candidate);throw new RuntimeException('Arbitrary action permitted');}catch(InvalidArgumentException){}
     verify114(true,'PHP Unix-socket client rejects arbitrary operations');
-    $identity->logout($owner['token']);$n=count($requests);
-    [$code]=$run('GET',$owner['token']);verify114($code===401&&count($requests)===$n,'Revoked session cannot query agent');
+    $identity->logout($owner['token']);$n=$commandCount($requests);
+    [$code]=$run('GET',$owner['token']);verify114($code===401&&$commandCount($requests)===$n,'Revoked session cannot query agent');
     echo "Admin Update Center 1.1.4 checks completed\n";
 }finally{
     $it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);

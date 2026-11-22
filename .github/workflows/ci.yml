@@ -35,8 +35,10 @@ jobs:
       - name: Verify secure host update agent and owner-controlled execution (1.1.4)
         run: |
           php tests/update-center-114.php
+          python3 tests/update-backup-115.py
           python3 tests/update-manager-114-overlay.py
           sudo python3 tests/update-agent-114.py
+          python3 tests/update-backup-115.py
       - run: python3 tests/release-gate.py --suite native --report-dir "$RUNNER_TEMP/book-gate-native"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -156,6 +158,7 @@ jobs:
             php tests/update-center-114.php
             python3 tests/update-manager-114-overlay.py
             sudo python3 tests/update-agent-114.py
+            python3 tests/update-backup-115.py
             php tests/security-hardening.php --require-zip
             php tests/security-lifecycle.php
             php tests/recovery-110.php
