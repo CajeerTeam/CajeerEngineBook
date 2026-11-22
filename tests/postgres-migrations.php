@@ -12,7 +12,7 @@ $pdo=P::connect();if($pdo->query('SELECT current_database()')->fetchColumn()!=='
 $dir=sys_get_temp_dir().'/book-migration-'.bin2hex(random_bytes(12));$ns=bin2hex(random_bytes(16));$binding=bin2hex(random_bytes(16));
 try{
     $pre=M::preflight($pdo);ok($pre['current']===0&&$pre['dry_run_rolled_back']&&!$pdo->query("SELECT to_regnamespace('cajeer_book') IS NOT NULL")->fetchColumn(),'fresh preflight executes and rolls back schema and index');
-    $fresh=M::apply($pdo);ok($fresh['to']===3&&$fresh['changes'][0]['operation']==='apply'&&M::status($pdo)['compatible'],'fresh schema applied and verified');
+    $fresh=M::apply($pdo);ok($fresh['to']===4&&$fresh['changes'][0]['operation']==='apply'&&M::status($pdo)['compatible'],'fresh schema applied and verified');
     // The dedicated test DB is empty: independently reproduce the pre-0.5.2 SQL schema.
     $pdo->exec('DROP SCHEMA cajeer_book CASCADE');
     foreach(['postgres-content.sql','postgres-identity.sql','postgres-audit.sql'] as $f)$pdo->exec(file_get_contents(dirname(__DIR__).'/sql/'.$f));
@@ -31,7 +31,7 @@ try{
     ok(!$pdo->query("SELECT to_regclass('cajeer_book.schema_migrations') IS NOT NULL")->fetchColumn(),'failed adoption leaves no registry');
     $pdo->exec('CREATE INDEX audit_event_actor ON cajeer_book.audit_event(installation,actor_id,at_epoch DESC,event_id DESC)');
     ok(M::preflight($pdo)['preflight']==='passed'&&$snapshot()===$before&&!$pdo->query("SELECT to_regclass('cajeer_book.audit_event_outcome') IS NOT NULL")->fetchColumn(),'legacy dry-run leaves all data and schema unchanged');
-    $result=M::apply($pdo);ok($result['to']===3&&$result['changes'][0]['operation']==='adopt'&&$snapshot()===$before,'baseline adopted and actual index built without data changes');
+    $result=M::apply($pdo);ok($result['to']===4&&$result['changes'][0]['operation']==='adopt'&&$snapshot()===$before,'baseline adopted and actual index built without data changes');
     ok(M::apply($pdo)['changes']===[]&&M::status($pdo)['compatible'],'repeat migration no-op');
     $runtime=P::runtimeConnect();deny(fn()=>M::rollback($pdo,1),'runtime session pins schema across separate connection');$runtime=null;
     $pdo->query('SELECT pg_advisory_lock(1128416305,1)')->fetchColumn();$other=P::connect();deny(fn()=>M::apply($other),'another migrator excluded');deny(fn()=>P::runtimeConnect(),'runtime fails closed while migration lock held');$pdo->query('SELECT pg_advisory_unlock(1128416305,1)')->fetchColumn();$other=null;
@@ -40,7 +40,7 @@ try{
     $pdo->exec("CREATE FUNCTION cajeer_book.test_migration_fail() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'injected ledger failure'; END \$\$; CREATE TRIGGER test_migration_fail BEFORE INSERT ON cajeer_book.schema_migration_history FOR EACH ROW EXECUTE FUNCTION cajeer_book.test_migration_fail()");
     deny(fn()=>M::apply($pdo),'history failure rolls back DDL and ledger together');ok(M::status($pdo)['current']===1&&!$pdo->query("SELECT to_regclass('cajeer_book.audit_event_outcome') IS NOT NULL")->fetchColumn()&&$snapshot()===$before,'failed upgrade leaves schema/data unchanged');
     $pdo->exec('DROP TRIGGER test_migration_fail ON cajeer_book.schema_migration_history; DROP FUNCTION cajeer_book.test_migration_fail()');
-    ok(M::apply($pdo)['to']===3,'failed migration can be retried');
+    ok(M::apply($pdo)['to']===4,'failed migration can be retried');
     $pdo->exec("UPDATE cajeer_book.schema_migrations SET checksum=repeat('a',64) WHERE version=2");deny(fn()=>P::runtimeConnect(),'tampered checksum blocks runtime');deny(fn()=>M::apply($pdo),'tampered ledger blocks migration');$q=$pdo->prepare('UPDATE cajeer_book.schema_migrations SET checksum=? WHERE version=2');$q->execute([M::catalog()[2]['checksum']]);
     $pdo->exec('DROP INDEX cajeer_book.audit_event_actor');deny(fn()=>M::status($pdo),'verify detects baseline catalog drift');$pdo->exec('CREATE INDEX audit_event_actor ON cajeer_book.audit_event(installation,actor_id,at_epoch DESC,event_id DESC)');
     ok(M::status($pdo)['compatible'],'verified restored baseline');
@@ -49,9 +49,9 @@ try{
     $i=new IdentityStore($dir);ok($i->login('owner','fixture-password-050','192.0.2.1')['status']==='ok','existing SQL identity authenticates');
     $store->createBook('new-book','New book');ok(isset($store->read()['books']['new-book']),'runtime writes after successful migration');
     ok(AuditLog::verify($pdo,$ns)[$scope]['head']>=1,'real audit chain preserved');
-    ok((int)$pdo->query('SELECT count(*) FROM cajeer_book.schema_migration_history')->fetchColumn()===7,'history retains baseline adoption, apply, rollback, reapply');
+    ok((int)$pdo->query('SELECT count(*) FROM cajeer_book.schema_migration_history')->fetchColumn()===10,'history retains baseline adoption, apply, rollback, reapply');
     unset($store,$i); // release runtime PDO before offline schema change
-    $v3=$snapshot();ok(M::rollback($pdo,2)['to']===2&&$snapshot()===$v3,'0.5.4 schema rollback removes only read indexes');
+    $v4=$snapshot();ok(M::rollback($pdo,2)['to']===2&&$snapshot()===$v4,'0.5.4 schema rollback removes analytics and read indexes');
     ok(M::preflight($pdo)['preflight']==='passed'&&M::status($pdo)['current']===2,'schema 2 upgrade preflight rolls back index builds');
-    ok(M::apply($pdo)['to']===3&&$snapshot()===$v3,'real populated schema 2 upgraded to 3 without changing data');
+    ok(M::apply($pdo)['to']===4&&$snapshot()===$v4,'real populated schema 2 upgraded to 4 without changing data');
 }finally{if($pdo->inTransaction())$pdo->rollBack();clean($dir);}

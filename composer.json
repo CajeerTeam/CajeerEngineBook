@@ -52,6 +52,8 @@
             "@php tests/oidc-policy.php",
             "@php tests/skif4er-id.php",
             "@php tests/oidc-linking.php",
+            "@php tests/analytics.php",
+            "python3 tests/analytics-http.py",
             "python3 tests/oidc-linking-http.py",
             "python3 tests/oidc-http.py",
             "@php tests/redis-policy.php",

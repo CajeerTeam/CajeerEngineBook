@@ -84,6 +84,6 @@ final class CustomDomains
     }
     public static function readerPath(string $path):bool
     {
-        return in_array($path,['/','/search','/api/v1/search','/api/v1/pages','/diagram-frame','/sitemap.xml','/robots.txt'],true)||preg_match('~\A/(?:docs|media|api/v1/pages|l/(?:en|ru)/docs)/[^\\\\\x00-\x20]*\z~D',$path)===1;
+        return in_array($path,['/','/search','/api/v1/search','/api/v1/pages','/diagram-frame','/sitemap.xml','/robots.txt','/analytics/collect'],true)||preg_match('~\A/(?:docs|media|api/v1/pages|l/(?:en|ru)/docs)/[^\\\\\x00-\x20]*\z~D',$path)===1;
     }
 }

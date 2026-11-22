@@ -1,6 +1,10 @@
 # CajeerEngine Book Edition
 
-Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.4** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+Self-hosted documentation and knowledge-base platform using the embedded **CajeerEngine 2.1.0** core components (updated from the 1.3.0 baseline using the supplied 2.1.0 source archive). **Book 1.0.5** remains a separate, focused edition: it reuses the upstream CJR template engine, ServiceContainer and durable filesystem primitives, **not** the full CajeerEngine CMS, its database, or its GitHub Auto-Updater. Apache-2.0; see LICENSE and NOTICE. See [embedded engine compatibility](docs/admin/engine-core.md) for the exact integration scope, verification and deployment.
+
+## 1.0.5 — Workspace analytics, GA4, Metrica and consent
+
+A workspace manager can enable anonymous first-party daily page/event counters, configure Google Analytics 4 and Yandex Metrica (including Webvisor), and inspect a 30-day aggregate report at `/analytics?id=WORKSPACE_ID`. The Reader loads no external analytics until visitors explicitly accept. Preferences are per workspace, can be rejected or withdrawn, and Google Consent Mode v2 defaults to denied. Book stores aggregate counters, not IP addresses or visitor IDs. **Existing PostgreSQL installations require an offline schema 3 → 4 migration before starting 1.0.5**; file-backed installations require no SQL migration. See [analytics deployment, privacy, limitations and verification](docs/admin/analytics.md).
 
 ## 1.0.4 — Provider linking and multiple OIDC clients
 

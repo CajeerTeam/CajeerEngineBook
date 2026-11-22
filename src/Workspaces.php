@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace CajeerBook;
 use CajeerEngine\Update\OperationFiles as Files;
+require_once __DIR__.'/Analytics.php';
 
 /** Workspace registry shares the identity lock; content stores have separate locks and quotas. */
 final class Workspaces
@@ -19,6 +20,7 @@ final class Workspaces
             $o=$db['organizations'][$w['organization']];foreach($w['roles']??[] as $uid=>$role){$r=Permissions::organization($o,$uid);if(!in_array($r,Permissions::MEMBER_ROLES,true)||!in_array($role,['none','viewer','editor','admin'],true)||Permissions::workspace($o,$w,$uid)!==$role)throw new \RuntimeException('Invalid workspace assignment');}
             if(!in_array($w['visibility']??null,Visibility::WORKSPACE,true))throw new \RuntimeException('Invalid workspace visibility');
             if($w['legacy']&&$w['archived'])throw new \RuntimeException('Legacy workspace cannot be archived');
+            try{Analytics::validate(Analytics::settings($w));}catch(\InvalidArgumentException $e){throw new \RuntimeException('Invalid workspace analytics settings.',0,$e);}
         }
     }
     /** Do not silently omit orphan stores, which may contain otherwise unrecoverable data. */

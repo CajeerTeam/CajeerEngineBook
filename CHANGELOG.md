@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5 — Working Workspace analytics and consent
+
+- Persist and enforce GA4, Yandex Metrica and Webvisor settings independently for every Workspace, with server-side role checks, CSRF protection, optimistic revisions and an administrative management/report page.
+- Collect anonymous public Reader page views, searches, link clicks, downloads and opt-in feedback through a same-origin, opt-in JSON endpoint. Aggregate in private, locked, atomically written per-workspace daily files, or a PostgreSQL upsert counter keyed by installation and workspace. Validate consent, Origin, event types and paths, disallow identifiers and query strings.
+- Add an opt-in banner, per-workspace preference storage and withdrawal UI. Load external tags only after acceptance. GA4 uses Consent Mode v2 (ad signals denied) with manual page views; Metrica uses defer/hit/reachGoal with optional Webvisor.
+- Add real database-wide schema migration 4 with guarded rollback, browser assets, regression tests, HTTP tests and deployment documentation. Existing PostgreSQL deployments must migrate offline; no mixed-version rolling upgrades. External providers and production infrastructure need live verification.
+
 ## 1.0.4 — Linked accounts, multiple OIDC providers, bounded roles
 
 - Allow explicit, local-password-confirmed link/unlink of SkiF4er ID and other separately configured OIDC issuers from an existing non-owner account. Verify signed issuer, audience, nonce, state and PKCE before persisting an issuer/subject link. No automatic merges by email.

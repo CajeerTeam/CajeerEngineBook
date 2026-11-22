@@ -183,3 +183,10 @@ html[data-theme=dark] .book-callout{--callout-tone:#8daeff}html[data-theme=dark]
 
 /* Language controls remain keyboard-accessible on narrow Reader/Studio layouts. */
 .locale-switch{display:inline-flex;gap:6px;white-space:nowrap;font-size:13px}.locale-switch a[aria-current=true]{font-weight:700;text-decoration:underline}.top[lang=ru]{gap:12px;flex-wrap:wrap}.top[lang=ru] .search input[name=q]{max-width:220px}.versions[aria-label]{margin-block:8px 18px}.versions[aria-label] a[aria-current=page]{font-weight:700}.editor select,.actions select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-width:100%}
+/* Optional analytics consent controls; deliberately visible without JavaScript frameworks. */
+.book-consent {position:fixed;z-index:10000;bottom:1.2rem;left:1.2rem;max-width:min(32rem,calc(100vw - 2.4rem));background:var(--surface,#fff);color:var(--text,#171717);border:1px solid currentColor;border-radius:.6rem;padding:1rem 1.2rem;box-shadow:0 5px 24px #0003}
+.book-consent[hidden]{display:none!important}
+.book-consent p{margin:0 0 .8rem}
+.book-consent div{display:flex;gap:.6rem;flex-wrap:wrap}
+.book-consent button,.book-consent-pref{cursor:pointer}
+.book-consent-pref{margin-left:1rem}

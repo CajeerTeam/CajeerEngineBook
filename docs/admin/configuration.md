@@ -23,7 +23,7 @@ The authoritative configuration is the selected release's source and Compose fil
 | `BOOK_PG_NAMESPACE` | Permanent unique 32 lowercase hex digits. Generate once (`openssl rand -hex 16`). |
 | `BOOK_MIGRATION_PG_USER`, `BOOK_MIGRATION_PG_PASSWORD` | Optional pair for the migration CLI, not ordinary app. Own relevant SQL objects/DDL and database CREATE where needed. |
 
-Schema version 3 is shared across all namespaces in a database. PostgreSQL 16 is the tested major. The standard Compose app role owns the database but has no superuser/role/database creation privileges. Separate migration and least-privilege runtime roles require deliberate grants/ownership management; do not grant superuser to fix failed migration. Preserve SQL role credentials and namespace/binding markers together. App connections require writable primary. Do not connect with transaction-mode PgBouncer: session advisory locks must survive until connection close. Review [PostgreSQL migration](postgres-performance.md) and [distributed reliability](distributed-reliability.md).
+Schema version 4 is shared across all namespaces in a database. PostgreSQL 16 is the tested major. The standard Compose app role owns the database but has no superuser/role/database creation privileges. Separate migration and least-privilege runtime roles require deliberate grants/ownership management; do not grant superuser to fix failed migration. Preserve SQL role credentials and namespace/binding markers together. App connections require writable primary. Do not connect with transaction-mode PgBouncer: session advisory locks must survive until connection close. Review [PostgreSQL migration](postgres-performance.md) and [distributed reliability](distributed-reliability.md).
 
 ## Redis / Sentinel
 

@@ -513,6 +513,19 @@ final class IdentityStore
         }
         return $w;});}
     public function mutateWorkspace(string $token,string $id,int $rev,string $action,string $name,string $slug):void{$this->transaction(function(&$db)use($token,$id,$rev,$action,$name,$slug){$uid=self::requireSession($db,$token)['user'];Workspaces::mutate($db,$uid,$id,$rev,$action,$name,$slug);$w=$db['workspaces'][$id];ActivityJournal::record($db,$db['users'][$uid],'workspace.'.$action,$w['name'],$id,$w['organization'],$id,[],$action==='visibility'?$w['visibility']:'');});}
+    /** Optimistic concurrency and live manage permissions protect each workspace's tracker IDs. */
+    public function configureAnalytics(string $token,string $id,int $revision,array $config):void
+    {
+        Analytics::validate($config);
+        $this->transaction(function(&$db)use($token,$id,$revision,$config){
+            $uid=self::requireSession($db,$token)['user'];$w=$db['workspaces'][$id]??null;
+            $org=$w?($db['organizations'][$w['organization']]??null):null;
+            if(!$w||!$org||$w['archived']||$org['archived']||!Permissions::allows(Permissions::workspace($org,$w,$uid),'manage'))throw new OrganizationAccessException('Workspace analytics management denied.');
+            if($w['revision']!==$revision)throw new \DomainException('Workspace changed. Reload.');
+            $w['analytics']=$config;$w['revision']++;$db['workspaces'][$id]=$w;
+            ActivityJournal::record($db,$db['users'][$uid],'workspace.analytics',$w['name'],$id,$w['organization'],$id);
+        });
+    }
     public function assignWorkspaceRole(string $token,string $id,int $rev,string $target,string $role):void{
         $this->transaction(function(&$db)use($token,$id,$rev,$target,$role){
             $uid=self::requireSession($db,$token)['user'];$w=$db['workspaces'][$id]??null;$o=$w?$db['organizations'][$w['organization']]:null;

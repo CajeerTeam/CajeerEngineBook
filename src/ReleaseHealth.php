@@ -27,7 +27,7 @@ final class ReleaseHealth
         foreach (['runtime.mjs','runtime.py','Runtime.php'] as $file) {
             if (!is_readable($root.'/resources/sdk/'.$file)) throw new \RuntimeException('SDK runtime files are missing');
         }
-        foreach (['book.css','book.js','studio-editor.js','media.js','studio-media.js','page-tree.js','organizations.js','markdown-import.js','api-playground.js','diagrams.js','diagram-frame.js','static.css','static-search.js'] as $file) {
+        foreach (['book.css','book.js','analytics.js','studio-editor.js','media.js','studio-media.js','page-tree.js','organizations.js','markdown-import.js','api-playground.js','diagrams.js','diagram-frame.js','static.css','static-search.js'] as $file) {
             $path=$root.'/public/assets/'.$file;
             if (!is_file($path)||!is_readable($path)||filesize($path)===0) throw new \RuntimeException('Required browser asset missing: '.$file);
         }
