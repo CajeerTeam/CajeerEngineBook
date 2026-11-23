@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Policy regressions with real Git history and explicitly synthetic evidence."""
 import copy
+import json
 import hashlib
 import os
 import stat
@@ -8,6 +9,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('production_qualification',ROOT/'tests/production-qualification.py')
@@ -64,6 +66,57 @@ class Qualification(unittest.TestCase):
             finally:os.umask(previous)
             for path in (root/'export',root/'export/src'):self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o755)
             self.assertEqual((root/'export/src/main.php').read_bytes(),(repo/'src/main.php').read_bytes())
+
+    def test_replica_recovery_accepts_only_transient_failures_then_30_stable_reads(self):
+        page = {'body': 'Mixed release content', 'version': '1.0'}
+        raw = json.dumps(page).encode()
+        digest = hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()
+        expected = {'page': digest, 'media': D}
+        client = mock.Mock()
+        client.request.side_effect = [(504, {}, b''), (502, {}, b'')] + [(200, {}, raw)] * 33
+        with mock.patch.object(q.life.http, 'Client', return_value=client), \
+             mock.patch.object(q.life, 'same_snapshot') as verify, \
+             mock.patch.object(q.life.time, 'sleep'):
+            q.life.wait_replica_recovery('http://test.invalid', expected)
+        self.assertEqual(client.request.call_count, 35)
+        verify.assert_called_once_with('http://test.invalid', expected)
+
+    def test_replica_recovery_rejects_interleaved_failures_after_convergence(self):
+        page = {'body': 'Mixed release content'}
+        raw = json.dumps(page).encode()
+        expected = {'page': hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()}
+        client = mock.Mock()
+        client.request.side_effect = [(200, {}, raw)] * 3 + [AssertionError('GET expected 200, got 504')]
+        with mock.patch.object(q.life.http, 'Client', return_value=client), \
+             mock.patch.object(q.life, 'same_snapshot') as verify:
+            with self.assertRaises(AssertionError):
+                q.life.wait_replica_recovery('http://test.invalid', expected)
+        verify.assert_not_called()
+
+    def test_replica_recovery_rejects_wrong_published_content_immediately(self):
+        client = mock.Mock()
+        client.request.return_value = (200, {}, b'{"body":"changed"}')
+        with mock.patch.object(q.life.http, 'Client', return_value=client), \
+             mock.patch.object(q.life, 'same_snapshot') as verify:
+            with self.assertRaises(RuntimeError):
+                q.life.wait_replica_recovery('http://test.invalid', {'page': D})
+        self.assertEqual(client.request.call_count, 1)
+        verify.assert_not_called()
+
+    def test_replica_recovery_rejects_nontransient_http_status(self):
+        client = mock.Mock()
+        client.request.return_value = (401, {}, b'')
+        with mock.patch.object(q.life.http, 'Client', return_value=client):
+            with self.assertRaises(RuntimeError):
+                q.life.wait_replica_recovery('http://test.invalid', {'page': D})
+        self.assertEqual(client.request.call_count, 1)
+
+    def test_replica_recovery_deadline_is_enforced(self):
+        client = mock.Mock()
+        client.request.return_value = (504, {}, b'')
+        with mock.patch.object(q.life.http, 'Client', return_value=client):
+            with self.assertRaises(RuntimeError):
+                q.life.wait_replica_recovery('http://test.invalid', {'page': D}, seconds=0.05)
 
     def test_lifecycle_valid(self):self.assertEqual(q.validate_lifecycle(lifecycle(),V,C,P)['rto_seconds'],120)
     def test_lifecycle_missing_step(self):

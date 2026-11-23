@@ -119,6 +119,47 @@ def same_snapshot(base, expected):
     require(snapshot(base)==expected, 'Published page or media changed across transition')
 
 
+def wait_replica_recovery(base, expected, seconds=20):
+    """Verify bounded edge failover before running strict persisted-content checks.
+
+    Docker removes a stopped container's DNS record asynchronously. An immediate
+    request can still reach its withdrawn address via Nginx's short DNS cache.
+    Allow only transient upstream failures during the recovery interval; a
+    successful response must match the *exact* previously published content.
+    """
+    client = http.Client(base)
+    path = '/api/v1/pages/' + http.NEW
+    deadline = time.monotonic() + seconds
+    consecutive = 0
+    while time.monotonic() < deadline:
+        try:
+            code, _, raw = client.request(path, expected=None)
+        except OSError:  # Connection reset/refused while Docker withdraws the replica.
+            consecutive = 0
+        else:
+            if code in (502, 503, 504):
+                consecutive = 0
+            else:
+                require(code == 200, f'Unexpected HTTP {code} during replica recovery')
+                page = json.loads(raw)
+                require(hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest() == expected['page'],
+                        'Published page changed during replica recovery')
+                consecutive += 1
+                if consecutive == 3:
+                    break
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+    require(consecutive == 3 and time.monotonic() <= deadline,
+            'Replica failover did not recover three consecutive reads within 20 seconds')
+    # No retries at this layer: a flaky edge fails qualification even if it
+    # briefly recovered. Nginx retains its normal read-only upstream retries.
+    for _ in range(30):
+        _, _, raw = client.request(path)
+        page = json.loads(raw)
+        require(hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest() == expected['page'],
+                'Published page changed during stable failover checks')
+    same_snapshot(base, expected)  # Also verify original media, search and redirect.
+
+
 def publication(base, slug, text):
     admin = http.Client(base, True)
     _,_,b = admin.request('/studio')
@@ -256,9 +297,19 @@ def main():
                 same_snapshot(base,expected);return s
             s=step('upgrade',lambda:transition(s,target));s=step('rollback',lambda:transition(s,initial,True));require(s['highest']==target,'Downgrade watermark lost');s=step('reupgrade',lambda:transition(s,target));current,m=manager.load(cfg,target)
             def failover():
-                ids=current.call('ps','-q','book').decode().split();require(len(ids)==2,'Expected two app replicas');docker('stop','-t','1',ids[0]);require(docker('inspect','--format','{{.State.Running}}',ids[0])=='false','Replica did not stop');same_snapshot(base,expected);docker('start',ids[0]);current.call('up','-d','--wait','--wait-timeout','180','--scale','book=2','book',timeout=300)
-                current.call('restart','redis',timeout=120);current.call('up','-d','--wait','--wait-timeout','120','redis',timeout=240);same_snapshot(base,expected)
-                current.one('php','bin/admin.php','check','--deep')
+                ids = current.call('ps', '-q', 'book').decode().split()
+                require(len(ids) == 2, 'Expected two app replicas')
+                docker('stop', '-t', '1', ids[0])
+                require(docker('inspect', '--format', '{{.State.Running}}', ids[0]) == 'false',
+                        'Replica did not stop')
+                wait_replica_recovery(base, expected)
+                docker('start', ids[0])
+                current.call('up', '-d', '--wait', '--wait-timeout', '180', '--scale', 'book=2',
+                             'book', timeout=300)
+                current.call('restart', 'redis', timeout=120)
+                current.call('up', '-d', '--wait', '--wait-timeout', '120', 'redis', timeout=240)
+                same_snapshot(base, expected)
+                current.one('php', 'bin/admin.php', 'check', '--deep')
             step('replica-redis-recovery',failover)
             def pgexec(*args, data=None): return current.call('exec','-T','-u','postgres','postgres',*args,stdin=None if data is None else data,timeout=1200).decode().strip()
             def pgjson(*args, data=None):
