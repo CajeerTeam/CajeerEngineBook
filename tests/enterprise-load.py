@@ -70,7 +70,7 @@ def external(base, args):
             assert status == 200 and 'Mixed release content' in json.loads(body)['body'] and b'Unpublished secret release' not in body
         else:
             status, body = request(base, '/docs/'+key)
-            assert status == 200 and b'Mixed release content' in body and b'Unpublished secret release' not in body
+            assert status == 200 and b'Mixed release content' in body and b'Unpublished secret release' not in body, (status, len(body))
     benchmark(operation, args.requests, args.concurrency, args.max_p95_ms)
 
 
