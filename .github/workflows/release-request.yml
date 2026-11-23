@@ -1,0 +1,56 @@
+name: Request certified CajeerEngineBook v1.2.0
+on:
+  push:
+    branches:
+      - release-request/v1.2.0
+permissions:
+  contents: read
+jobs:
+  request-release:
+    if: github.repository == 'CajeerTeam/CajeerEngineBook' && github.ref == 'refs/heads/release-request/v1.2.0'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Create protected annotated v1.2.0 tag and dispatch original certified release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          tag=v1.2.0
+          main_sha="$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+          parent_sha="$(git rev-parse 'HEAD^')"
+          [[ "$parent_sha" == "$main_sha" ]] || { echo '::error::Main changed; refusing to tag'; exit 1; }
+          changed="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+          [[ "$changed" == '.github/workflows/release-request.yml' ]] || { echo '::error::Request branch modified release sources'; exit 1; }
+          [[ "$(cat VERSION)" == '1.2.0' ]] || { echo '::error::Unexpected release version'; exit 1; }
+          python3 bin/release-github.py absent --repository "$repo" --version 1.2.0
+          # This repository requires a protected tag; never generate a release tag without the rule.
+          gh api "repos/$repo/rulesets?includes_parents=true" > /tmp/book-tag-rulesets.json
+          python3 - <<'PY'
+          import json,sys
+          rules=json.load(open('/tmp/book-tag-rulesets.json'))
+          if not any(r.get('target')=='tag' and r.get('enforcement')=='active' for r in rules):
+              sys.exit('::error::Protected v* tag ruleset is missing; release request blocked')
+          PY
+          err="$(mktemp)"
+          if gh api "repos/$repo/git/ref/tags/$tag" >/dev/null 2>"$err"; then
+            echo '::error::Release tag already exists; refusing to overwrite'
+            exit 1
+          elif ! grep -q 'HTTP 404' "$err"; then
+            cat "$err" >&2; exit 1
+          fi
+          object_sha="$(gh api -X POST "repos/$repo/git/tags" -f "tag=$tag" -f 'message=CajeerEngine Book 1.2.0' -f "object=$main_sha" -f type=commit --jq '.sha')"
+          gh api -X POST "repos/$repo/git/refs" -f "ref=refs/tags/$tag" -f "sha=$object_sha" >/dev/null
+          [[ "$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')" == "$object_sha" ]]
+          [[ "$(gh api "repos/$repo/git/tags/$object_sha" --jq '.object.sha')" == "$main_sha" ]]
+          # A tag created with GITHUB_TOKEN will not fire push workflows: explicitly dispatch CI on the tag.
+          gh workflow run ci.yml --repo "$repo" --ref "$tag"
+          echo "Certified v1.2.0 qualification and signed release requested for $main_sha"
