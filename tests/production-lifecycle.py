@@ -31,13 +31,13 @@ u = load('qualification_update', ROOT/'bin/update.py')
 http = load('qualification_http', ROOT/'tests/release-http.py')
 fixture = load('qualification_fixture', ROOT/'tests/production-qualification-fixture.py')
 DOCKER = ['docker', '--host', 'unix:///var/run/docker.sock']
-PREVIOUS = '0.8.2'
+PREVIOUS = '1.1.7'
 http.PASSWORD = 'release-test-only-password'
 SAFE_ENV = {k:os.environ[k] for k in ('PATH','HOME','LANG','LC_ALL','DOCKER_CONFIG','SSL_CERT_FILE','SSL_CERT_DIR') if k in os.environ}
 os.environ.pop('DOCKER_CONTEXT',None)
 os.environ['DOCKER_HOST']='unix:///var/run/docker.sock'
 os.environ['COMPOSE_DISABLE_ENV_FILE']='1'
-STEPS = ('source-history','docker-preflight','build-actual-0.8.2','build-actual-target','build-physical-postgres','seed-historical-http','enroll','upgrade','rollback','reupgrade','replica-redis-recovery','physical-backup-and-wal','destroy-source','physical-restore-and-http','cleanup')
+STEPS = ('source-history','docker-preflight','build-actual-1.1.7','build-actual-target','build-physical-postgres','seed-historical-http','enroll','upgrade','rollback','reupgrade','replica-redis-recovery','physical-backup-and-wal','destroy-source','physical-restore-and-http','cleanup')
 
 
 def require(ok, message):
@@ -59,7 +59,7 @@ def git(root, *args): return call(['git','-c','safe.directory='+str(root),*args]
 
 def revisions(root, ref=None):
     head = git(root,'rev-parse','HEAD'); version = git(root,'show',head+':VERSION')
-    require(version == (root/'VERSION').read_text().strip() and u.version(version) > u.version(PREVIOUS), 'Expected committed qualification version newer than 0.8.2')
+    require(version == (root/'VERSION').read_text().strip() and u.version(version) > u.version(PREVIOUS), 'Expected committed qualification version newer than 1.1.7')
     require(not git(root,'status','--porcelain','--untracked-files=no'), 'Use a clean committed checkout')
     if ref:
         prior = git(root,'rev-parse','--verify',ref+'^{commit}')
@@ -68,7 +68,7 @@ def revisions(root, ref=None):
     else:
         prior = next((c for c in git(root,'log','--format=%H',head,'--','VERSION').splitlines()
                       if git(root,'show',c+':VERSION') == PREVIOUS), None)
-    require(prior and prior != head and git(root,'show',prior+':VERSION') == PREVIOUS, 'Actual 0.8.2 source commit is required (full Git history or --previous-ref)')
+    require(prior and prior != head and git(root,'show',prior+':VERSION') == PREVIOUS, 'Actual 1.1.7 source commit is required (full Git history or --previous-ref)')
     git(root,'merge-base','--is-ancestor',prior,head)
     return prior, head, version
 
@@ -134,7 +134,7 @@ def publication(base, slug, text):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--report-dir',type=Path,required=True)
-    p.add_argument('--previous-ref',help='Trusted ancestor commit containing VERSION 0.8.2; otherwise find version in Git history')
+    p.add_argument('--previous-ref',help='Trusted ancestor commit containing VERSION 1.1.7; otherwise find version in Git history')
     p.add_argument('--candidate-book'); p.add_argument('--candidate-pitr')
     a=p.parse_args(); report=a.report_dir.resolve(); report.mkdir(mode=0o700,parents=True,exist_ok=False)
     os.umask(0o077)
@@ -189,7 +189,7 @@ def main():
                 require(docker('image','inspect','--format','{{.Id}}',immutable)==image_id,'Registry image ID changed')
                 evidence.setdefault('images',{})[role]={'id':image_id,'test_ref':immutable,'candidate_ref':candidate};save()
                 return immutable
-            old=step('build-actual-0.8.2',lambda:build(oldsrc,'old',PREVIOUS))
+            old=step('build-actual-1.1.7',lambda:build(oldsrc,'old',PREVIOUS))
             new=step('build-actual-target',lambda:build(newsrc,'new',version,a.candidate_book))
             pg=step('build-physical-postgres',lambda:build(newsrc,'pitr',None,a.candidate_pitr))
             # Test-only signed bundles, with actual deployment files from each respective commit.
@@ -346,7 +346,7 @@ def main():
                     subprocess.run(DOCKER+['image','rm',ref],env=SAFE_ENV,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120)
                 require(not failures,'Disposable infrastructure cleanup failed: '+','.join(failures))
             step('cleanup',cleanup)
-        evidence['status']='passed';save();print('PASS historical upgrade, rollback, app/Redis failure and physical recovery',flush=True)
+        evidence['status']='passed';save();print('PASS schema-compatible historical upgrade, rollback, app/Redis failure and physical recovery',flush=True)
 
 
 if __name__=='__main__': main()

@@ -73,28 +73,51 @@ def require(condition, reason):
 
 
 def proc_resources(pids):
-    result = {'rss_bytes': 0, 'cpu_seconds': 0.0, 'read_bytes': 0, 'write_bytes': 0, 'processes': 0}
-    for pid in pids:
+    """Charge PHP worker RSS/CPU/I/O to each benchmark node, not just its parent.
+
+    Linux PHP_CLI_SERVER_WORKERS forks worker processes. The root-process count
+    remains an availability check for the expected benchmark nodes; child workers
+    are included in resource totals so concurrency cannot hide memory regressions.
+    """
+    result = {'rss_bytes': 0, 'cpu_seconds': 0.0, 'read_bytes': 0, 'write_bytes': 0,
+              'processes': 0, 'worker_processes': 0}
+    roots = set(pids)
+    parents = {}
+    stats = {}
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit(): continue
+        pid = int(entry.name)
         try:
-            stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
-            result['cpu_seconds'] += (int(stat[11])+int(stat[12]))/os.sysconf('SC_CLK_TCK')
-            result['rss_bytes'] += int(stat[21])*os.sysconf('SC_PAGE_SIZE')
-            result['processes'] += 1
-        except (OSError, ValueError, IndexError):
-            continue
+            fields = (entry/'stat').read_text().rsplit(')', 1)[1].split()
+            parents[pid] = int(fields[1])
+            stats[pid] = fields
+        except (OSError, ValueError, IndexError): continue
+    descendants = set(roots)
+    # Iterative closure handles worker grandchildren without double-counting.
+    while True:
+        added = {pid for pid, ppid in parents.items() if ppid in descendants} - descendants
+        if not added: break
+        descendants.update(added)
+    result['processes'] = len(roots & set(stats))
+    result['worker_processes'] = len((descendants - roots) & set(stats))
+    for pid in descendants & set(stats):
+        fields = stats[pid]
+        try:
+            result['cpu_seconds'] += (int(fields[11])+int(fields[12]))/os.sysconf('SC_CLK_TCK')
+            result['rss_bytes'] += int(fields[21])*os.sysconf('SC_PAGE_SIZE')
+        except (ValueError, IndexError): continue
         try:
             io = dict(line.split(':',1) for line in Path(f'/proc/{pid}/io').read_text().splitlines())
             for key in ('read_bytes','write_bytes'):
                 result[key] += int(io[key])
-        except (OSError, ValueError, KeyError):
-            pass
+        except (OSError, ValueError, KeyError): pass
     return result
 
 
 def start_node(env, log, bounded=False):
     with socket.socket() as s:
         s.bind(('127.0.0.1',0)); port=s.getsockname()[1]
-    p=subprocess.Popen(['php','-S',f'127.0.0.1:{port}','-t','public','tests/oidc-bootstrap.php'], cwd=ROOT, env=env, stdout=subprocess.PIPE if bounded else log, stderr=subprocess.STDOUT if bounded else log)
+    p=subprocess.Popen(['php','-S',f'127.0.0.1:{port}','-t','public','tests/oidc-bootstrap.php'], cwd=ROOT, env=env, stdout=subprocess.PIPE if bounded else log, stderr=subprocess.STDOUT if bounded else log, start_new_session=True)
     if bounded:
         def drain():
             remaining=8*1024*1024
@@ -117,10 +140,15 @@ def start_node(env, log, bounded=False):
 
 
 def stop_node(proc):
-    if proc.poll() is None:
-        proc.terminate()
-        try:proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:proc.kill();proc.wait(timeout=10)
+    # PHP CLI multiworker children inherit the log pipe and listener. Terminating
+    # only the parent leaves orphan workers holding the port and the pipe open.
+    try:os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:pass
+    try:proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:pass
+        proc.wait(timeout=10)
     if hasattr(proc,'log_thread'):proc.log_thread.join(timeout=5)
 
 
@@ -237,7 +265,7 @@ def main():
     if a.redis and (not a.postgres or (not a.qualify and a.requests>120)):p.error('Redis requires PostgreSQL and <=120 requests per phase to stay within real shared API quota')
     if a.full and not (ROOT/'vendor/autoload.php').is_file():p.error('Install Composer dependencies before --full')
     dest=a.report_dir.resolve();dest.mkdir(mode=0o700,parents=True,exist_ok=False)
-    profile={'pages':a.pages,'per_workspace':a.per_workspace,'requests_per_phase':a.requests,'concurrency':a.concurrency,'nodes':a.nodes,'seed':a.seed,'backend':'postgresql' if a.postgres else 'file','redis':a.redis,'full':a.full,'telemetry':a.telemetry,'rate':a.rate,'engine':'php-cli-server','maintenance':a.maintenance}
+    profile={'pages':a.pages,'per_workspace':a.per_workspace,'requests_per_phase':a.requests,'concurrency':a.concurrency,'nodes':a.nodes,'seed':a.seed,'backend':'postgresql' if a.postgres else 'file','redis':a.redis,'full':a.full,'telemetry':a.telemetry,'rate':a.rate,'engine':'php-cli-server','php_workers_per_node':2 if a.qualify else 1,'maintenance':a.maintenance}
     if a.qualify:profile['qualification']={k:getattr(a,k) for k in ('phase_seconds','soak_seconds','offered_rps','stress_multiplier','p99_ms','error_budget','min_samples','rss_growth_mib','source_ips','sample_seconds','background_maintenance','maintenance_interval','maintenance_timeout','pg_max_connections','redis_max_memory_mib','redis_max_keys')}
     if a.qualify:profile['qualification']['latency_limits']={'api':min(a.max_p95_ms,300),'media':min(a.max_p95_ms,300),'isolation':min(a.max_p95_ms,300),'reader':a.reader_p95_ms or 300,'search':a.search_p95_ms or 200,'publish':a.write_p95_ms or 500,'save':a.write_p95_ms or 500}
     environment={'system':platform.system(),'machine':platform.machine(),'cpu_count':os.cpu_count(),'php':subprocess.check_output(['php','-r','echo PHP_VERSION;'],text=True),'python':platform.python_version(),'kernel':platform.release(),'php_extensions':subprocess.check_output(['php','-r','echo json_encode(get_loaded_extensions());'],text=True).strip()}
@@ -265,6 +293,14 @@ def main():
         root=Path(tmp)/'data';root.mkdir(mode=0o700);(root/'.benchmark-disposable').touch()
         env={k:v for k,v in os.environ.items() if not k.startswith(('BOOK_','PG','REDIS','PHP_CLI_SERVER_WORKERS'))}
         env.update(BOOK_DATA_DIR=str(root),BOOK_BENCHMARK_DISPOSABLE='1',BOOK_SECURE_COOKIE='0',BOOK_OBSERVABILITY='1' if a.telemetry else '0')
+        # The qualification gate uses concurrent HTTP arrivals. Use real PHP CLI
+        # workers per node so the test measures application capacity rather than
+        # serial queueing behind a single PHP development-server process.
+        if a.qualify:
+            env['PHP_CLI_SERVER_WORKERS']='2'
+            # Runner setup-php may load Xdebug. Production PHP should not run
+            # debugger instrumentation during release latency measurements.
+            env['XDEBUG_MODE']='off'
         def helper(action,*args):
             return subprocess.check_output(['php','tests/performance-seed.php',action,*map(str,args)],cwd=ROOT,env=env,text=True,timeout=7200)
         try:

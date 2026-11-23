@@ -6,7 +6,7 @@ import stat
 import subprocess
 from pathlib import Path, PurePosixPath
 
-STEPS = ('source-history','docker-preflight','build-actual-0.8.2','build-actual-target','build-physical-postgres','seed-historical-http','enroll','upgrade','rollback','reupgrade','replica-redis-recovery','physical-backup-and-wal','destroy-source','physical-restore-and-http','cleanup')
+STEPS = ('source-history','docker-preflight','build-actual-1.1.7','build-actual-target','build-physical-postgres','seed-historical-http','enroll','upgrade','rollback','reupgrade','replica-redis-recovery','physical-backup-and-wal','destroy-source','physical-restore-and-http','cleanup')
 
 def require(value, message):
     if not value: raise ValueError(message)

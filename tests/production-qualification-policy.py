@@ -46,9 +46,9 @@ class Qualification(unittest.TestCase):
     def test_real_git_history(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);repo=root/'source';repo.mkdir();git=lambda *a:q.life.git(repo,*a)
-            git('init','-q');(repo/'VERSION').write_text('0.8.2\n');(repo/'application.php').write_text('old real bytes');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','historical');prior=git('rev-parse','HEAD')
-            (repo/'VERSION').write_text(V+'\n');(repo/'application.php').write_text('new real bytes');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','target');head=git('rev-parse','HEAD')
-            self.assertEqual(q.life.revisions(repo), (prior,head,V));self.assertEqual(q.life.revisions(repo,prior),(prior,head,V))
+            git('init','-q');(repo/'VERSION').write_text(q.life.PREVIOUS+'\n');(repo/'application.php').write_text('old real bytes');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','historical');prior=git('rev-parse','HEAD')
+            (repo/'VERSION').write_text('1.2.0\n');(repo/'application.php').write_text('new real bytes');git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','target');head=git('rev-parse','HEAD')
+            self.assertEqual(q.life.revisions(repo), (prior,head,'1.2.0'));self.assertEqual(q.life.revisions(repo,prior),(prior,head,'1.2.0'))
             q.life.archive(repo,prior,root/'old');q.life.archive(repo,head,root/'new');self.assertEqual((root/'old/application.php').read_text(),'old real bytes');self.assertEqual((root/'new/application.php').read_text(),'new real bytes')
             with self.assertRaises(RuntimeError):q.life.revisions(repo,head)
             (repo/'application.php').write_text('dirty')
