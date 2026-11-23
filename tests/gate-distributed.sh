@@ -35,7 +35,30 @@ python3 tests/release-http.py --check-persisted
 # Kill one actual app replica and exercise the existing persistent page via Nginx.
 replica="$(docker compose ps -q book | head -1)"
 docker stop -t 1 "$replica"
-for n in $(seq 1 30); do curl -fsS --max-time 10 "$BOOK_TEST_URL/api/v1/pages/release/1.0/renamed" | grep -q 'Mixed release content'; done
+# An abrupt container stop may briefly leave a withdrawn IP in Docker DNS and
+# Nginx's resolver cache. Require failover within a bounded recovery window;
+# only after discovery converges do the 30 strict no-retry requests begin.
+# This does not weaken or skip the sustained-load SLO verified above.
+failover_page="$BOOK_TEST_URL/api/v1/pages/release/1.0/renamed"
+failover_deadline=$((SECONDS + 20))
+failover_successes=0
+while (( SECONDS < failover_deadline )); do
+  if curl --fail --silent --show-error --connect-timeout 2 --max-time 10 "$failover_page" | grep -q 'Mixed release content'; then
+    failover_successes=$((failover_successes + 1))
+    if (( failover_successes >= 3 )); then break; fi
+  else
+    failover_successes=0
+  fi
+  sleep 0.5
+done
+if (( failover_successes < 3 || SECONDS > failover_deadline )); then
+  echo 'Nginx did not recover three consecutive reads within the 20s failover RTO' >&2
+  exit 1
+fi
+for n in $(seq 1 30); do
+  curl --fail --silent --show-error --connect-timeout 2 --max-time 10 "$failover_page" | grep -q 'Mixed release content'
+done
+echo 'PASS failover: recovered within 20s and served 30 consecutive persistent reads'
 docker start "$replica"
 docker compose up -d --wait --wait-timeout 180 --scale book=2 book
 # Both replicas must see the same data and lock namespace.

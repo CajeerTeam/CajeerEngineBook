@@ -56,7 +56,7 @@ def main():
                 log=(t/f'php-{p}.log').open('w+');logs.append(log)
                 proc=subprocess.Popen(['php','-S',f'127.0.0.1:{p}','-t','public','tests/oidc-bootstrap.php'],cwd=ROOT,env=env,stdout=log,stderr=log);processes.append(proc);ready(p)
             source=(ROOT/'deploy/book-nginx.conf').read_text()
-            source=source.replace('resolver 127.0.0.11 valid=5s ipv6=off;','').replace('server book:80 resolve max_fails=1 fail_timeout=5s;', '\n'.join(f'server 127.0.0.1:{p} max_fails=1 fail_timeout=5s;' for p in ports)).replace('listen 80;',f'listen 127.0.0.1:{edge};').replace('/var/log/nginx/access.log',str(t/'access.log'))
+            source=source.replace('resolver 127.0.0.11 valid=1s ipv6=off;','').replace('server book:80 resolve max_fails=1 fail_timeout=2s;', '\n'.join(f'server 127.0.0.1:{p} max_fails=1 fail_timeout=5s;' for p in ports)).replace('listen 80;',f'listen 127.0.0.1:{edge};').replace('/var/log/nginx/access.log',str(t/'access.log'))
             config=t/'nginx.conf';config.write_text(f'pid {t}/nginx.pid; error_log {t}/nginx-error.log; worker_processes 1; events {{ worker_connections 256; }} http {{ client_body_temp_path {t}/client_body; proxy_temp_path {t}/proxy; fastcgi_temp_path {t}/fastcgi; uwsgi_temp_path {t}/uwsgi; scgi_temp_path {t}/scgi; {source} }}')
             subprocess.run([nginx,'-t','-c',str(config),'-p',temp],check=True)
             log=(t/'nginx.log').open('w+');logs.append(log);p=subprocess.Popen([nginx,'-c',str(config),'-p',temp,'-g','daemon off;'],stdout=log,stderr=log);processes.append(p);ready(edge)
@@ -105,7 +105,7 @@ def transport_replay_test():
     with tempfile.TemporaryDirectory(prefix='book-proxy-replay-') as temp:
         t=Path(temp);edge=port();nginx=shutil.which('nginx');p=None
         try:
-            source=(ROOT/'deploy/book-nginx.conf').read_text().replace('resolver 127.0.0.11 valid=5s ipv6=off;','').replace('server book:80 resolve max_fails=1 fail_timeout=5s;',f'server 127.0.0.1:{servers[0].server_port} max_fails=0; server 127.0.0.1:{servers[1].server_port} backup;').replace('listen 80;',f'listen 127.0.0.1:{edge};').replace('/var/log/nginx/access.log',str(t/'access.log'))
+            source=(ROOT/'deploy/book-nginx.conf').read_text().replace('resolver 127.0.0.11 valid=1s ipv6=off;','').replace('server book:80 resolve max_fails=1 fail_timeout=2s;',f'server 127.0.0.1:{servers[0].server_port} max_fails=0; server 127.0.0.1:{servers[1].server_port} backup;').replace('listen 80;',f'listen 127.0.0.1:{edge};').replace('/var/log/nginx/access.log',str(t/'access.log'))
             cfg=t/'nginx.conf';cfg.write_text(f'pid {t}/nginx.pid; error_log {t}/error.log; events {{ worker_connections 64; }} http {{ client_body_temp_path {t}/client; proxy_temp_path {t}/proxy; fastcgi_temp_path {t}/fastcgi; uwsgi_temp_path {t}/uwsgi; scgi_temp_path {t}/scgi; {source} }}')
             p=subprocess.Popen([nginx,'-c',str(cfg),'-p',temp,'-g','daemon off;'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             for _ in range(100):
