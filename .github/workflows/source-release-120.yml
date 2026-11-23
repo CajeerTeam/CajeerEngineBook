@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
       - name: Publish explicitly uncertified source-only v1.2.0 GitHub release
         shell: bash
@@ -26,17 +26,14 @@ jobs:
           tag='v1.2.0'
           expected_main='7c8d52c0fd95eb8683a925df8a8cefad5c21fd75'
           [[ "$(cat VERSION)" == '1.2.0' ]] || { echo 'Unexpected version' >&2; exit 1; }
-          [[ "$(git rev-parse HEAD^)" == "$expected_main" ]] || { echo 'Publisher branch parent mismatch' >&2; exit 1; }
-          [[ "$(git diff-tree --no-commit-id --name-only -r HEAD)" == '.github/workflows/source-release-120.yml' ]] || { echo 'Publisher branch modifies application sources' >&2; exit 1; }
+          git merge-base --is-ancestor "$expected_main" HEAD || { echo 'Publisher branch does not descend from release commit' >&2; exit 1; }
+          [[ "$(git diff --name-only "$expected_main" HEAD)" == '.github/workflows/source-release-120.yml' ]] || { echo 'Publisher branch modifies application sources' >&2; exit 1; }
           [[ "$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')" == "$expected_main" ]] || { echo 'Main moved; refuse to release unknown source' >&2; exit 1; }
           tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
           [[ "$tag_type" == 'tag' ]] || { echo 'Expected annotated tag' >&2; exit 1; }
           tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
           [[ "$(gh api "repos/$repo/git/tags/$tag_sha" --jq '.object.sha')" == "$expected_main" ]] || { echo 'Release tag target mismatch' >&2; exit 1; }
-          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-            echo 'Release already exists. Refusing to overwrite or alter its assets.' >&2
-            exit 1
-          fi
+          # Existing releases are never replaced. The final readback verifies published state.
           cat > /tmp/book-source-release-notes.md <<'EOF'
           ## CajeerEngineBook 1.2.0 — source-only release
 
@@ -48,5 +45,11 @@ jobs:
 
           Do not interpret this release as production deployment certification. The original `Book CI` signed-release pipeline retains its required gates and has **not** been disabled.
           EOF
-          gh release create "$tag" --repo "$repo" --verify-tag --title 'CajeerEngine Book 1.2.0 (source-only, uncertified)' --notes-file /tmp/book-source-release-notes.md --latest=false
-          gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease,tagName,url,title --jq '{isDraft,isPrerelease,tagName,url,title}'
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            echo 'Existing published release detected. Will validate without changing it.'
+          else
+            gh release create "$tag" --repo "$repo" --verify-tag --title 'CajeerEngine Book 1.2.0 (source-only, uncertified)' --notes-file /tmp/book-source-release-notes.md --latest=false
+          fi
+          gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease,tagName,url,name,assets,body \
+            | jq -e --arg tag "$tag" --arg sha "$expected_main" \
+                '(.isDraft == false) and (.isPrerelease == false) and (.tagName == $tag) and (.name == "CajeerEngine Book 1.2.0 (source-only, uncertified)") and ((.assets | length) == 0) and (.body | contains($sha))'
