@@ -1,0 +1,52 @@
+name: Publish v1.2.0 source-only GitHub release (uncertified)
+on:
+  push:
+    branches:
+      - release-source/v1.2.0
+permissions:
+  contents: read
+jobs:
+  publish-source-only:
+    if: github.repository == 'CajeerTeam/CajeerEngineBook' && github.ref == 'refs/heads/release-source/v1.2.0'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Publish explicitly uncertified source-only v1.2.0 GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          tag='v1.2.0'
+          expected_main='7c8d52c0fd95eb8683a925df8a8cefad5c21fd75'
+          [[ "$(cat VERSION)" == '1.2.0' ]] || { echo 'Unexpected version' >&2; exit 1; }
+          [[ "$(git rev-parse HEAD^)" == "$expected_main" ]] || { echo 'Publisher branch parent mismatch' >&2; exit 1; }
+          [[ "$(git diff-tree --no-commit-id --name-only -r HEAD)" == '.github/workflows/source-release-120.yml' ]] || { echo 'Publisher branch modifies application sources' >&2; exit 1; }
+          [[ "$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')" == "$expected_main" ]] || { echo 'Main moved; refuse to release unknown source' >&2; exit 1; }
+          tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
+          [[ "$tag_type" == 'tag' ]] || { echo 'Expected annotated tag' >&2; exit 1; }
+          tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
+          [[ "$(gh api "repos/$repo/git/tags/$tag_sha" --jq '.object.sha')" == "$expected_main" ]] || { echo 'Release tag target mismatch' >&2; exit 1; }
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            echo 'Release already exists. Refusing to overwrite or alter its assets.' >&2
+            exit 1
+          fi
+          cat > /tmp/book-source-release-notes.md <<'EOF'
+          ## CajeerEngineBook 1.2.0 — source-only release
+
+          This release makes the existing `v1.2.0` source tag available through GitHub Releases.
+
+          **Important:** This is an **uncertified, unsigned source-only** publication requested without the full production-qualification run. It is **not** the signed production release described in `docs/admin/signed-releases.md`. No Ed25519-signed ZIPs, signed container images, production qualification evidence, or verified deployment bundles are attached.
+
+          Source commit: `7c8d52c0fd95eb8683a925df8a8cefad5c21fd75`.
+
+          Do not interpret this release as production deployment certification. The original `Book CI` signed-release pipeline retains its required gates and has **not** been disabled.
+          EOF
+          gh release create "$tag" --repo "$repo" --verify-tag --title 'CajeerEngine Book 1.2.0 (source-only, uncertified)' --notes-file /tmp/book-source-release-notes.md --latest=false
+          gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease,tagName,url,title --jq '{isDraft,isPrerelease,tagName,url,title}'
