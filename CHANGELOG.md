@@ -1,3 +1,12 @@
+# История изменений CajeerEngineBook
+
+**Русскоязычная навигация:** [Все релизы](docs/releases/README.md) · [Book 1.2.0](docs/releases/v1.2.0.md) · [Ветка 1.1.x](docs/releases/v1.1.x.md) · [Ветка 1.0.x](docs/releases/v1.0.x.md)
+
+> [!NOTE]
+> Ниже сохранён исходный подробный технический журнал на английском языке — включая исторические ограничения и процедуры обновления. Обзор изменений на русском языке находится в [центре релизов](docs/releases/README.md). Запись о версии не подтверждает прохождение protected CI и публикацию подписанного релиза.
+
+---
+
 ## 1.2.0 — Production Auto Update Release (2026-11-22)
 
 - Bind the actual 24-hour SQL/Redis qualification and release signing to a full tracked-source digest, including Compose, Dockerfile, updater, dependencies, frontend and CI—not just selected PHP/tests. Reject missing/duplicated fingerprint entries and mismatched releases.

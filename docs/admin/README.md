@@ -1,48 +1,69 @@
-# Administrator handbook — CajeerEngine Book 1.2.0
+# Руководство администратора · CajeerEngine Book 1.2.0
 
-**Current PostgreSQL schema: 7.** This handbook is the entry point for deploying, operating, upgrading and recovering Book. It supersedes the version-specific installation snippets in the project README; the linked specialist guides retain their original release context. Do not repeat an old migration solely because its guide mentions it.
+**Установка, эксплуатация, обновления и восстановление CajeerEngineBook.**
 
-## Start here
+[Главная](../../README.md) · [Продукт](../product/README.md) · [Развёртывание](../product/deployment.md) · [Центр релизов](../releases/README.md)
 
-| Task | Instructions |
+<!-- Compatibility marker for tests/admin-docs.py: Current PostgreSQL schema: 7. -->
+
+> [!IMPORTANT]
+> Текущая требуемая схема PostgreSQL — **7**; встроенное ядро CajeerEngine — **2.1.0**. Руководства старых выпусков сохраняют контекст своих версий. Не запускайте описанные в них миграции повторно только из-за их присутствия в документации.
+
+## С чего начать
+
+| Задача | Руководство |
 | --- | --- |
-| Production Auto Update 1.2.0 | [Full release gates, trusted installation, operational rollback](release-120.md) |
-| Update history and operations 1.1.7 | [Owner history, safe retries, diagnostic export and recovery boundaries](update-history-117.md) |
-| Scheduled GitHub updates and notifications 1.1.6 | [Signed checks, owner alerts and staging without activation](update-scheduler-116.md) |
-| Backup, recovery and rollback 1.1.5 | [Attested update backups, offline recovery and rollback](update-recovery-115.md) |
-| Host-side secure execution 1.1.4 | [Root-owned update agent, Unix socket and operator approval](update-execution-114.md) |
-| Admin Update Center 1.1.3 | [Owner-only GitHub update administration](update-center-113.md) |
-| GitHub Release discovery 1.1.2 | [Secure version discovery via GitHub Releases](update-discovery-112.md) |
-| GitHub Release Infrastructure 1.1.1 | [GitHub Release qualification and public asset verification](release-111.md) |
-| Acceptance for 1.1.0: regression, security, recovery, load and rollback | [1.1.0 release acceptance](release-110.md) |
-| Choose topology, install, initialize owner, validate deployment | [Installation and operations](operations.md) |
-| Configure storage, PostgreSQL, Redis, secrets, TLS, SSO | [Configuration reference](configuration.md), [SkiF4er ID integration](skif4er-id.md) |
-| Diagnose faults and run maintenance safely | [Incident runbook](incidents.md), [CLI reference](cli-reference.md) |
-| Review access, rotate credentials and revoke sessions | [Security lifecycle](security-lifecycle.md), [security hardening](security-hardening.md), [release candidate retest](release-candidate.md) |
-| Run replicas, Redis Sentinel and repair media | [Distributed reliability](distributed-reliability.md) |
-| Monitor metrics, logs, alerts and RPO | [Observability](observability.md) |
-| Physical backups, WAL, named restore points and total-loss recovery | [Disaster recovery](disaster-recovery.md) |
-| Verify signed ZIP/OCI, publish a release | [Signed releases](signed-releases.md), [embedded engine compatibility](engine-core.md) |
-| Install a signed release, recover interrupted upgrade or rollback | [Secure updates](secure-updates.md) |
-| Historical SQL migration to schema 3 and performance | [PostgreSQL performance](postgres-performance.md) |
-| Workspace analytics and schema 5 migration | [Analytics, dashboards and vendor integrations](analytics.md) |
-| Documentation embeddings, hybrid search and schema 6 | [Semantic search and indexing](search-embeddings.md) |
-| OpenAI documentation chat, SSE, sources and schema 7 quotas | [Documentation chat](documentation-chat.md) |
-| Editor AI, coverage analysis, migration errors and review-bound fixes | [Editor AI assistant](editor-ai.md) |
-| Import Mintlify docs.json/mint.json, MDX and media into drafts | [Mintlify migration guide](mintlify-import.md) |
-| Import Docusaurus sidebars, versions, languages, admonitions, MDX and media | [Docusaurus migration guide](docusaurus-import.md) |
-| Migrate GitBook Spaces, pages, Git Sync exports, API content, navigation and attachments | [GitBook migration guide](gitbook-import.md) |
-| Import ReadMe Guides, API Reference, OpenAPI, Recipes, versions and attachments | [ReadMe migration guide](readme-import.md) |
-| Import Fumadocs content collections, meta.json, locales and static MDX | [Fumadocs migration guide](fumadocs-import.md) |
-| Measure capacity and qualify production SLOs | [Performance](performance.md), [load qualification](load-qualification.md) |
-| Qualify historical upgrade, total-loss recovery and long load | [Production qualification](production-qualification.md) |
-| Reproduce documentation checks | [Verification](verification.md) |
+| Подготовить и принять выпуск `1.2.0` | [Условия выпуска, установка, rollback и recovery](release-120.md) |
+| Развернуть новую установку | [Установка и текущая эксплуатация](operations.md) |
+| Настроить секреты, PostgreSQL, Redis, TLS и SSO | [Справочник конфигурации](configuration.md) · [SkiF4er ID](skif4er-id.md) |
+| Проверить состояние и выполнить диагностику | [CLI-команды](cli-reference.md) · [проверки](verification.md) |
+| Реагировать на неисправности | [Инциденты и troubleshooting](incidents.md) |
+| Подготовить допуск к production | [Production qualification](production-qualification.md) · [нагрузочные тесты](load-qualification.md) |
+| Проверить и опубликовать подписанные артефакты | [Подписанные релизы](signed-releases.md) · [встроенное ядро](engine-core.md) |
 
-## Support boundaries
+## Обновления и восстановление
 
-- File mode is for one host, with persistent private filesystem; SQL mode is PostgreSQL 16 plus the same private media volume. Distributed app replicas require PostgreSQL and shared POSIX storage. Redis is optional for single node and required for the documented distributed runtime. Sentinel is an externally operated cluster, not supplied by Book.
-- The SQL runtime requires schema 7 and a writable primary. PostgreSQL HA promotion, shared storage replication and external secret-manager lifecycle belong to the infrastructure operator. Do not use transaction-mode connection pooling with session advisory locks.
-- Production builds contain the CLI but not tests or this handbook; use the matching signed source ZIP for documentation. The deployment ZIP uses immutable own-image digests; do not rebuild it. Some optional services depend on upstream images; inspect and qualify those separately.
-- A documentation smoke test is not production certification. Readiness is not a backup drill. Passing a file-mode benchmark does not demonstrate PostgreSQL throughput. Complete the release, security, PITR and load gates for your infrastructure before exposing production traffic.
+**Путь релиза:** подписанный GitHub Release → проверка владельцем → доверенный host-agent → проверенный пакет → техническое окно обслуживания → активация → контроль состояния.
 
-Use an independently trusted release public key, maintain an offline backup of configuration/keys and keep a separate operator account. Never publish diagnostics containing identifiers, backup archives or credentials. The new `bin/admin.php report` gives a deliberately redacted local summary and `check` supplies a nonzero exit code for failed checks. See [operations](operations.md) for exact usage and limits.
+| Версия | Что добавлено | Инструкция |
+| --- | --- | --- |
+| **1.2.0** | Production Auto Update Release | [Приёмка и безопасный переход](release-120.md) |
+| **1.1.7** | История операций и очищенная диагностика | [Операции и история](update-history-117.md) |
+| **1.1.6** | Проверки по расписанию и уведомления | [Планировщик](update-scheduler-116.md) |
+| **1.1.5** | Верифицируемые резервные копии | [Backup / recovery / rollback](update-recovery-115.md) |
+| **1.1.4** | Доверенный root-owned агент | [Безопасное выполнение](update-execution-114.md) |
+| **1.1.3** | Панель обновлений владельца | [Admin Update Center](update-center-113.md) |
+| **1.1.2** | Обнаружение подписанных релизов | [GitHub discovery](update-discovery-112.md) |
+| **1.1.1** | Проверка официальной публикации GitHub Release | [Инфраструктура релизов](release-111.md) |
+| **1.1.0** | Совокупные проверки выпуска | [Release acceptance](release-110.md) |
+| **Ранние версии** | Контролируемые обновления и повторные проверки безопасности | [Secure updates](secure-updates.md) · [release candidate](release-candidate.md) |
+
+> [!WARNING]
+> `Fetch` и `Preflight` не активируют выпуск. Для `Apply`, отката и recovery оператор обязан проверить резервные копии, остановить **все** источники записи и обеспечить разрешённое окно обслуживания. Веб-интерфейс не заменяет права оператора хоста.
+
+## Данные, безопасность и надёжность
+
+| Область | Руководства |
+| --- | --- |
+| Безопасность | [Жизненный цикл ключей и сессий](security-lifecycle.md) · [защитные настройки](security-hardening.md) |
+| Резервирование и аварийное восстановление | [Disaster recovery / PITR](disaster-recovery.md) |
+| Наблюдаемость | [Метрики и алерты](observability.md) |
+| Распределённый режим | [Реплики, Sentinel, воркеры, media](distributed-reliability.md) |
+| Производительность | [Бенчмарки](performance.md) · [SQL-производительность](postgres-performance.md) |
+| Аналитика и приватность | [Аналитика Workspace](analytics.md) |
+| Семантический поиск | [Embeddings и hybrid search](search-embeddings.md) |
+| AI-функции | [Чат документации](documentation-chat.md) · [AI-помощник редактора](editor-ai.md) |
+
+## Импорт существующей документации
+
+| Источник | Руководство |
+| --- | --- |
+| Mintlify | [Импорт `docs.json` / MDX](mintlify-import.md) |
+| Docusaurus | [Sidebars, версии, локализации](docusaurus-import.md) |
+| GitBook | [Spaces, Git Sync, API и вложения](gitbook-import.md) |
+| ReadMe | [Guides, API Reference, Recipes](readme-import.md) |
+| Fumadocs | [Content Collections и `meta.json`](fumadocs-import.md) |
+
+**Обязательные границы эксплуатации:** файловый режим рассчитан на один хост с приватным постоянным хранилищем. PostgreSQL-режиму нужны PostgreSQL 16, схема 7 и primary с правом записи. Реплики приложения требуют общего POSIX-хранилища; в документированном распределённом режиме необходим Redis. Sentinel, HA PostgreSQL, внешние секреты и резервирование остаются обязанностью оператора.
+
+Проверка `/health/ready`, «зелёный» CI и короткий file-mode benchmark **не** заменяют тест восстановления и нагрузочную квалификацию инфраструктуры. Используйте независимый доверенный ключ релиза и храните секреты, ключи и бэкапы вне публичных каталогов.
