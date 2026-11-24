@@ -1,4 +1,6 @@
-# CajeerEngineBook
+<div align="center">
+
+# CajeerEngine Book Edition
 
 **Документация, знания и API — в одной самостоятельной платформе.**
 
@@ -6,6 +8,10 @@
 [![CajeerEngine Core](https://img.shields.io/badge/Engine_Core-2.1.0-4C6D92?style=flat-square)](core/ENGINE_VERSION)
 [![PHP](https://img.shields.io/badge/PHP-8.4%2B-777BB4?style=flat-square)](docs/admin/operations.md)
 [![Лицензия](https://img.shields.io/badge/License-Apache--2.0-445A67?style=flat-square)](LICENSE)
+
+</div>
+
+---
 
 > [!NOTE]
 > **Версия исходников ≠ опубликованный релиз.** В этом дереве указан Book `1.2.0`, PostgreSQL schema `7` и встроенное ядро `2.1.0`. Установка в production допускается только из независимо проверенного **подписанного релиза** после соответствующих проверок. Архив изменённых файлов и ZIP исходников сами по себе таким релизом не являются.
